@@ -132,9 +132,33 @@ export function identifyJunctions(walls: WallSegment[]): Junction[] {
 
 /**
  * Calculate webs per row based on rebar spacing
+ * Simplified rule: 20cm = 2 webs, 15cm = 3 webs, 10cm = 4 webs
  */
 export function calculateWebsPerRow(rebarSpacingCm: number): number {
-  return Math.ceil(20 / rebarSpacingCm) * 2;
+  if (rebarSpacingCm <= 10) return 4;
+  if (rebarSpacingCm <= 15) return 3;
+  return 2; // 20cm or more
+}
+
+/**
+ * Calculate grid rows for stabilization
+ * Default: bottom, middle, and top rows
+ */
+export function calculateGridRows(numberOfRows: number): number[] {
+  if (numberOfRows <= 1) return [0];
+  if (numberOfRows === 2) return [0, 1];
+  
+  const middleRow = Math.floor(numberOfRows / 2);
+  return [0, middleRow, numberOfRows - 1];
+}
+
+/**
+ * Calculate grids per row based on total wall length
+ * Grids are sold in 3m units
+ */
+export function calculateGridsPerRow(totalWallLengthMm: number): number {
+  const totalLengthM = totalWallLengthMm / 1000;
+  return Math.ceil(totalLengthM / 3.0);
 }
 
 /**
@@ -219,11 +243,14 @@ export function calculateBOM(
   // Injection tarugos (1 per meter of wall per row)
   const tarugosInjection = Math.ceil((totalWallLength / 1000) * numberOfRows);
   
-  // Calculate webs
+  // Calculate webs (simplified: same for all rows)
   const websPerRow = calculateWebsPerRow(rebarSpacingCm);
   const websTotal = websPerRow * numberOfRows * walls.length;
-  const websExtra = rebarSpacingCm < 20 ? 
-    Math.ceil((20 - rebarSpacingCm) / rebarSpacingCm) * numberOfRows * walls.length : 0;
+  
+  // Calculate grids (stabilization)
+  const gridRows = calculateGridRows(numberOfRows);
+  const gridsPerRow = calculateGridsPerRow(totalWallLength);
+  const gridsTotal = gridsPerRow * gridRows.length;
   
   // Calculate topos
   let toposByReason = {
@@ -267,9 +294,12 @@ export function calculateBOM(
     toposUnits,
     toposMeters,
     toposByReason,
-    websTotal: websTotal + websExtra,
+    websTotal,
     websPerRow,
-    websExtra,
+    gridsTotal,
+    gridsPerRow,
+    gridRows,
+    gridType: concreteThickness,
     cutsCount: totalCuts,
     cutsLengthMm: totalCutLength,
     numberOfRows,

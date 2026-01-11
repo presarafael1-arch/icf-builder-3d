@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { WallSegment, ViewerSettings } from '@/types/icf';
+import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
 
 interface Project {
@@ -55,9 +55,12 @@ export default function ProjectEditor() {
     showOpenings: true,
     showJunctions: true,
     showGrid: true,
+    showGrids: true,
     currentRow: 1,
     maxRows: 7,
-    wireframe: false
+    wireframe: false,
+    rebarSpacing: 20,
+    concreteThickness: '150'
   });
   
   useEffect(() => {
@@ -78,9 +81,15 @@ export default function ProjectEditor() {
       if (error) throw error;
       setProject(data);
       
-      // Update max rows based on wall height
+      // Update settings based on project
       const rows = calculateNumberOfRows(data.wall_height_mm);
-      setViewerSettings(prev => ({ ...prev, maxRows: rows, currentRow: rows }));
+      setViewerSettings(prev => ({ 
+        ...prev, 
+        maxRows: rows, 
+        currentRow: rows,
+        rebarSpacing: data.rebar_spacing_cm as RebarSpacing,
+        concreteThickness: data.concrete_thickness as ConcreteThickness
+      }));
     } catch (error) {
       console.error('Error fetching project:', error);
       toast({

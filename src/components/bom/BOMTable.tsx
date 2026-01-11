@@ -1,4 +1,4 @@
-import { Package, Box, CircleDot, Layers, Scissors, ArrowDownToLine } from 'lucide-react';
+import { Package, Box, CircleDot, Layers, Scissors, ArrowDownToLine, Grid3X3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -13,7 +13,7 @@ export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
   return (
     <div className="space-y-6">
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card className="card-highlight">
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
@@ -57,6 +57,18 @@ export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
               <div>
                 <span className="data-label">Webs</span>
                 <p className="data-value">{bom.websTotal}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="card-technical">
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
+              <Grid3X3 className="h-8 w-8 text-grid" />
+              <div>
+                <span className="data-label">Grids</span>
+                <p className="data-value">{bom.gridsTotal}<span className="data-unit">×3m</span></p>
               </div>
             </div>
           </CardContent>
@@ -218,10 +230,26 @@ export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
                 <TableCell className="text-right font-mono">{bom.websTotal}</TableCell>
                 <TableCell className="text-right">un</TableCell>
                 <TableCell className="text-muted-foreground text-sm">
-                  {bom.websPerRow} por fiada
-                  {bom.websExtra > 0 && (
-                    <Badge variant="outline" className="ml-2">+{bom.websExtra} extra</Badge>
-                  )}
+                  {bom.websPerRow} por fiada (espaçamento ferros)
+                </TableCell>
+              </TableRow>
+              
+              {/* Grids */}
+              <TableRow className="bom-row-highlight">
+                <TableCell className="font-medium">6</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Grid3X3 className="h-4 w-4 text-grid" />
+                    Grid Estabilização ({bom.gridType}mm)
+                  </div>
+                </TableCell>
+                <TableCell className="text-right font-mono">{bom.gridsTotal}</TableCell>
+                <TableCell className="text-right">un (3m)</TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {bom.gridsPerRow} por fiada × {bom.gridRows.length} fiadas
+                  <Badge variant="outline" className="ml-2">
+                    Fiadas: {bom.gridRows.map(r => r + 1).join(', ')}
+                  </Badge>
                 </TableCell>
               </TableRow>
               

@@ -71,7 +71,7 @@
     --web-color: 35 80% 50%;
     --tarugo-color: 200 60% 45%;
     --opening-color: 0 70% 50%;
-    --grid-color: 220 15% 20%;
+    --grid-color: 0 80% 50%; /* Red for stabilization grids */
 
     /* Gradients */
     --gradient-hero: linear-gradient(135deg, hsl(190 90% 50% / 0.15), hsl(185 100% 40% / 0.05));
