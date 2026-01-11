@@ -106,6 +106,9 @@ export interface WebPlacement {
   rotationY: number;
 }
 
+// Rebar spacing options
+export type RebarSpacing = 10 | 15 | 20;
+
 // BOM (Bill of Materials) calculation result
 export interface BOMResult {
   // Panels
@@ -132,7 +135,12 @@ export interface BOMResult {
   // Webs
   websTotal: number;
   websPerRow: number;
-  websExtra: number;
+  
+  // Grids (stabilization)
+  gridsTotal: number;
+  gridsPerRow: number;
+  gridRows: number[]; // Which rows have grids (0-indexed)
+  gridType: ConcreteThickness; // 150 or 200
   
   // Cuts
   cutsCount: number;
@@ -158,9 +166,12 @@ export interface ViewerSettings {
   showOpenings: boolean;
   showJunctions: boolean;
   showGrid: boolean;
+  showGrids: boolean; // Stabilization grids
   currentRow: number;
   maxRows: number;
   wireframe: boolean;
+  rebarSpacing: RebarSpacing;
+  concreteThickness: ConcreteThickness;
 }
 
 // DXF parsing result

@@ -74,6 +74,7 @@ export default {
         web: "hsl(var(--web-color))",
         tarugo: "hsl(var(--tarugo-color))",
         opening: "hsl(var(--opening-color))",
+        grid: "hsl(var(--grid-color))",
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { WallSegment, ViewerSettings, BOMResult, ConcreteThickness, CornerMode } from '@/types/icf';
+import { WallSegment, ViewerSettings, BOMResult, ConcreteThickness, CornerMode, RebarSpacing } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateBOM, calculateNumberOfRows } from '@/lib/icf-calculations';
 
 interface Project {
@@ -43,14 +43,17 @@ export default function ProjectEstimate() {
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
     showPanels: true,
     showTopos: true,
-    showWebs: false,
+    showWebs: true,
     showTarugos: false,
     showOpenings: true,
     showJunctions: true,
     showGrid: true,
+    showGrids: true,
     currentRow: 1,
     maxRows: 7,
-    wireframe: false
+    wireframe: false,
+    rebarSpacing: 20,
+    concreteThickness: '150'
   });
   
   useEffect(() => {
@@ -71,9 +74,15 @@ export default function ProjectEstimate() {
       if (projectError) throw projectError;
       setProject(projectData);
       
-      // Update max rows
+      // Update settings based on project
       const rows = calculateNumberOfRows(projectData.wall_height_mm);
-      setViewerSettings(prev => ({ ...prev, maxRows: rows, currentRow: rows }));
+      setViewerSettings(prev => ({ 
+        ...prev, 
+        maxRows: rows, 
+        currentRow: rows,
+        rebarSpacing: projectData.rebar_spacing_cm as RebarSpacing,
+        concreteThickness: projectData.concrete_thickness as ConcreteThickness
+      }));
       
       // Fetch walls
       const { data: wallsData, error: wallsError } = await supabase
@@ -182,14 +191,15 @@ export default function ProjectEstimate() {
           </div>
           
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="gap-2" onClick={exportCSV} disabled={!bom}>
+            <Button variant="outline" className="gap-2" disabled>
               <FileSpreadsheet className="h-4 w-4" />
               Exportar CSV
+              <span className="text-xs text-muted-foreground">(em breve)</span>
             </Button>
             <Button variant="outline" className="gap-2" disabled>
               <Download className="h-4 w-4" />
               Exportar PDF
-              <span className="text-xs">(em breve)</span>
+              <span className="text-xs text-muted-foreground">(em breve)</span>
             </Button>
           </div>
         </div>

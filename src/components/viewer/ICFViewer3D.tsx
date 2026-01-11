@@ -1,9 +1,9 @@
-import { useRef, useMemo, useState } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { useRef, useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
-import { calculateWallAngle, calculateWallLength } from '@/lib/icf-calculations';
+import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
@@ -89,9 +89,132 @@ function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
   );
 }
 
-function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
-  const controlsRef = useRef(null);
+// Webs visualization component
+function WebsInstances({ walls, settings }: ICFPanelInstancesProps) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
   
+  const websPerRow = calculateWebsPerRow(settings.rebarSpacing);
+  
+  const { positions, count } = useMemo(() => {
+    const positions: THREE.Matrix4[] = [];
+    
+    walls.forEach(wall => {
+      const length = calculateWallLength(wall);
+      const angle = calculateWallAngle(wall);
+      
+      for (let row = 0; row < Math.min(settings.currentRow, settings.maxRows); row++) {
+        // Distribute webs evenly along the wall
+        for (let w = 0; w < websPerRow; w++) {
+          const progress = (w + 0.5) / websPerRow;
+          const x = wall.startX + (wall.endX - wall.startX) * progress;
+          const y = wall.startY + (wall.endY - wall.startY) * progress;
+          const z = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+          
+          const matrix = new THREE.Matrix4();
+          matrix.compose(
+            new THREE.Vector3(x * SCALE, z * SCALE, y * SCALE),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+            new THREE.Vector3(1, 1, 1)
+          );
+          
+          positions.push(matrix);
+        }
+      }
+    });
+    
+    return { positions, count: positions.length };
+  }, [walls, settings.currentRow, settings.maxRows, websPerRow]);
+  
+  useMemo(() => {
+    if (!meshRef.current || count === 0) return;
+    positions.forEach((matrix, i) => {
+      meshRef.current!.setMatrixAt(i, matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [positions, count]);
+  
+  if (count === 0) return null;
+  
+  // Small cylinder for webs
+  const webGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8);
+  
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[webGeometry, undefined, count]}
+      frustumCulled={false}
+    >
+      <meshStandardMaterial color="#e8a645" roughness={0.6} metalness={0.3} />
+    </instancedMesh>
+  );
+}
+
+// Grids (Stabilization) visualization component
+function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  
+  const gridRows = calculateGridRows(settings.maxRows);
+  
+  const { positions, count } = useMemo(() => {
+    const positions: THREE.Matrix4[] = [];
+    
+    // Only show grids for rows that are visible and are grid rows
+    const visibleGridRows = gridRows.filter(row => row < settings.currentRow);
+    
+    walls.forEach(wall => {
+      const length = calculateWallLength(wall);
+      const angle = calculateWallAngle(wall);
+      const numGridSegments = Math.ceil(length / 3000); // 3m segments
+      
+      visibleGridRows.forEach(row => {
+        // Distribute grid segments along the wall
+        for (let g = 0; g < numGridSegments; g++) {
+          const segmentLength = Math.min(3000, length - g * 3000);
+          const progress = (g * 3000 + segmentLength / 2) / length;
+          const x = wall.startX + (wall.endX - wall.startX) * progress;
+          const y = wall.startY + (wall.endY - wall.startY) * progress;
+          const z = row * PANEL_HEIGHT + PANEL_HEIGHT * 0.9; // Near top of panel
+          
+          const matrix = new THREE.Matrix4();
+          matrix.compose(
+            new THREE.Vector3(x * SCALE, z * SCALE, y * SCALE),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+            new THREE.Vector3(segmentLength / 3000, 1, 1) // Scale based on segment length
+          );
+          
+          positions.push(matrix);
+        }
+      });
+    });
+    
+    return { positions, count: positions.length };
+  }, [walls, settings.currentRow, settings.maxRows, gridRows]);
+  
+  useMemo(() => {
+    if (!meshRef.current || count === 0) return;
+    positions.forEach((matrix, i) => {
+      meshRef.current!.setMatrixAt(i, matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [positions, count]);
+  
+  if (count === 0) return null;
+  
+  // Flat box for grid representation (3m long, thin)
+  const gridGeometry = new THREE.BoxGeometry(3, 0.05, 0.15);
+  
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[gridGeometry, undefined, count]}
+      frustumCulled={false}
+    >
+      <meshStandardMaterial color="#e53935" roughness={0.5} metalness={0.2} />
+    </instancedMesh>
+  );
+}
+
+function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
   // Calculate center of the scene
   const center = useMemo(() => {
     if (walls.length === 0) return new THREE.Vector3(0, 0, 0);
@@ -113,7 +236,6 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
     <>
       <PerspectiveCamera makeDefault position={[10, 8, 10]} fov={50} />
       <OrbitControls
-        ref={controlsRef}
         target={center}
         enableDamping
         dampingFactor={0.05}
@@ -150,6 +272,12 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
       
       {/* ICF Panels */}
       {settings.showPanels && <ICFPanelInstances walls={walls} settings={settings} />}
+      
+      {/* Webs */}
+      {settings.showWebs && <WebsInstances walls={walls} settings={settings} />}
+      
+      {/* Stabilization Grids */}
+      {settings.showGrids && <GridsInstances walls={walls} settings={settings} />}
       
       {/* Environment for reflections */}
       <Environment preset="city" />

@@ -1,4 +1,4 @@
-import { Box, Eye, EyeOff, Grid3X3, Layers, Maximize2, RotateCcw } from 'lucide-react';
+import { Box, Eye, Grid3X3, Layers, Maximize2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -34,16 +34,16 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
           <PopoverTrigger asChild>
             <Button variant="secondary" size="sm" className="gap-2">
               <Eye className="h-4 w-4" />
-              Visibility
+              Visibilidade
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-56" align="start">
             <div className="space-y-4">
-              <h4 className="text-sm font-medium">Layer Visibility</h4>
+              <h4 className="text-sm font-medium">Camadas Visíveis</h4>
               
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="show-panels" className="text-sm">Panels</Label>
+                  <Label htmlFor="show-panels" className="text-sm">Painéis</Label>
                   <Switch
                     id="show-panels"
                     checked={settings.showPanels}
@@ -70,7 +70,16 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="show-junctions" className="text-sm">Junctions</Label>
+                  <Label htmlFor="show-grids" className="text-sm text-grid">Grids (Estabilização)</Label>
+                  <Switch
+                    id="show-grids"
+                    checked={settings.showGrids}
+                    onCheckedChange={() => toggleSetting('showGrids')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-junctions" className="text-sm">Nós</Label>
                   <Switch
                     id="show-junctions"
                     checked={settings.showJunctions}
@@ -79,7 +88,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="show-grid" className="text-sm">Grid</Label>
+                  <Label htmlFor="show-grid" className="text-sm">Grelha Base</Label>
                   <Switch
                     id="show-grid"
                     checked={settings.showGrid}
@@ -105,6 +114,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
           size="icon"
           onClick={() => toggleSetting('showGrid')}
           className={settings.showGrid ? 'bg-primary/20 text-primary' : ''}
+          title="Grelha Base"
         >
           <Grid3X3 className="h-4 w-4" />
         </Button>
@@ -114,6 +124,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
           size="icon"
           onClick={() => toggleSetting('wireframe')}
           className={settings.wireframe ? 'bg-primary/20 text-primary' : ''}
+          title="Wireframe"
         >
           <Box className="h-4 w-4" />
         </Button>
@@ -140,11 +151,11 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
       {/* Right side - Actions */}
       <div className="flex items-center gap-2">
         {onReset && (
-          <Button variant="ghost" size="icon" onClick={onReset}>
+          <Button variant="ghost" size="icon" onClick={onReset} title="Reset">
             <RotateCcw className="h-4 w-4" />
           </Button>
         )}
-        <Button variant="ghost" size="icon">
+        <Button variant="ghost" size="icon" title="Maximizar">
           <Maximize2 className="h-4 w-4" />
         </Button>
       </div>
