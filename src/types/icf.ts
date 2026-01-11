@@ -1,0 +1,182 @@
+// ICF System Types for OMNI ICF WALLS 3D PLANNER
+
+// Panel dimensions (in mm)
+export const PANEL_WIDTH = 1200;
+export const PANEL_HEIGHT = 400;
+export const PANEL_THICKNESS = 70.59; // 1200 / 17
+
+// Core thickness options
+export type ConcreteThickness = '150' | '200';
+
+// Corner modes
+export type CornerMode = 'overlap_cut' | 'topo';
+
+// Junction types
+export type JunctionType = 'L' | 'T' | 'X' | 'end';
+
+// Row types for T-junction alternation
+export type RowType = 'type1' | 'type2';
+
+// Opening types
+export type OpeningType = 'door' | 'window';
+
+// Project parameters
+export interface ProjectParams {
+  id: string;
+  name: string;
+  description?: string;
+  concreteThickness: ConcreteThickness;
+  wallHeightMm: number;
+  rebarSpacingCm: number;
+  cornerMode: CornerMode;
+  dxfFileUrl?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Wall segment from DXF/editor
+export interface WallSegment {
+  id: string;
+  projectId: string;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  layerName?: string;
+  length: number; // Calculated
+  angle: number; // Calculated
+}
+
+// Opening (door/window)
+export interface Opening {
+  id: string;
+  wallId: string;
+  type: OpeningType;
+  widthMm: number;
+  heightMm: number;
+  sillHeightMm: number;
+  positionMm: number; // Position along the wall
+}
+
+// Junction node in the wall graph
+export interface Junction {
+  id: string;
+  x: number;
+  y: number;
+  type: JunctionType;
+  connectedWallIds: string[];
+  angles: number[]; // Angles of connected walls
+}
+
+// Panel placement in 3D
+export interface PanelPlacement {
+  id: string;
+  wallId: string;
+  row: number;
+  positionAlongWall: number;
+  isCut: boolean;
+  cutLength?: number;
+  x: number;
+  y: number;
+  z: number;
+  rotationY: number;
+}
+
+// Topo placement in 3D
+export interface TopoPlacement {
+  id: string;
+  row: number;
+  reason: 'T_junction' | 'X_junction' | 'opening' | 'corner';
+  x: number;
+  y: number;
+  z: number;
+  rotationY: number;
+  width: number; // Based on concrete thickness
+}
+
+// Web placement
+export interface WebPlacement {
+  id: string;
+  wallId: string;
+  row: number;
+  positionAlongWall: number;
+  x: number;
+  y: number;
+  z: number;
+  rotationY: number;
+}
+
+// BOM (Bill of Materials) calculation result
+export interface BOMResult {
+  // Panels
+  panelsCount: number;
+  
+  // Tarugos
+  tarugosBase: number;
+  tarugosAdjustments: number; // Sum of L, T, X adjustments
+  tarugosTotal: number;
+  
+  // Injection tarugos
+  tarugosInjection: number;
+  
+  // Topos
+  toposUnits: number;
+  toposMeters: number;
+  toposByReason: {
+    tJunction: number;
+    xJunction: number;
+    openings: number;
+    corners: number;
+  };
+  
+  // Webs
+  websTotal: number;
+  websPerRow: number;
+  websExtra: number;
+  
+  // Cuts
+  cutsCount: number;
+  cutsLengthMm: number;
+  
+  // Summary
+  numberOfRows: number;
+  totalWallLength: number;
+  junctionCounts: {
+    L: number;
+    T: number;
+    X: number;
+    end: number;
+  };
+}
+
+// 3D Viewer settings
+export interface ViewerSettings {
+  showPanels: boolean;
+  showTopos: boolean;
+  showWebs: boolean;
+  showTarugos: boolean;
+  showOpenings: boolean;
+  showJunctions: boolean;
+  showGrid: boolean;
+  currentRow: number;
+  maxRows: number;
+  wireframe: boolean;
+}
+
+// DXF parsing result
+export interface DXFParseResult {
+  walls: Array<{
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+    layer: string;
+  }>;
+  layers: string[];
+  bounds: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+}

@@ -1,0 +1,153 @@
+import { Box, Eye, EyeOff, Grid3X3, Layers, Maximize2, RotateCcw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { ViewerSettings } from '@/types/icf';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+
+interface ViewerControlsProps {
+  settings: ViewerSettings;
+  onSettingsChange: (settings: ViewerSettings) => void;
+  onReset?: () => void;
+}
+
+export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerControlsProps) {
+  const toggleSetting = (key: keyof ViewerSettings) => {
+    if (typeof settings[key] === 'boolean') {
+      onSettingsChange({
+        ...settings,
+        [key]: !settings[key]
+      });
+    }
+  };
+  
+  return (
+    <div className="toolbar absolute bottom-4 left-4 right-4 flex flex-wrap justify-between gap-2">
+      {/* Left side - View toggles */}
+      <div className="flex items-center gap-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="secondary" size="sm" className="gap-2">
+              <Eye className="h-4 w-4" />
+              Visibility
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-56" align="start">
+            <div className="space-y-4">
+              <h4 className="text-sm font-medium">Layer Visibility</h4>
+              
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-panels" className="text-sm">Panels</Label>
+                  <Switch
+                    id="show-panels"
+                    checked={settings.showPanels}
+                    onCheckedChange={() => toggleSetting('showPanels')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-topos" className="text-sm">Topos</Label>
+                  <Switch
+                    id="show-topos"
+                    checked={settings.showTopos}
+                    onCheckedChange={() => toggleSetting('showTopos')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-webs" className="text-sm">Webs</Label>
+                  <Switch
+                    id="show-webs"
+                    checked={settings.showWebs}
+                    onCheckedChange={() => toggleSetting('showWebs')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-junctions" className="text-sm">Junctions</Label>
+                  <Switch
+                    id="show-junctions"
+                    checked={settings.showJunctions}
+                    onCheckedChange={() => toggleSetting('showJunctions')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-grid" className="text-sm">Grid</Label>
+                  <Switch
+                    id="show-grid"
+                    checked={settings.showGrid}
+                    onCheckedChange={() => toggleSetting('showGrid')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="wireframe" className="text-sm">Wireframe</Label>
+                  <Switch
+                    id="wireframe"
+                    checked={settings.wireframe}
+                    onCheckedChange={() => toggleSetting('wireframe')}
+                  />
+                </div>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+        
+        <Button 
+          variant="ghost" 
+          size="icon"
+          onClick={() => toggleSetting('showGrid')}
+          className={settings.showGrid ? 'bg-primary/20 text-primary' : ''}
+        >
+          <Grid3X3 className="h-4 w-4" />
+        </Button>
+        
+        <Button 
+          variant="ghost" 
+          size="icon"
+          onClick={() => toggleSetting('wireframe')}
+          className={settings.wireframe ? 'bg-primary/20 text-primary' : ''}
+        >
+          <Box className="h-4 w-4" />
+        </Button>
+      </div>
+      
+      {/* Center - Row slider */}
+      <div className="flex items-center gap-4 flex-1 max-w-md mx-4">
+        <Layers className="h-4 w-4 text-muted-foreground" />
+        <div className="flex-1">
+          <Slider
+            value={[settings.currentRow]}
+            min={1}
+            max={settings.maxRows}
+            step={1}
+            onValueChange={([value]) => onSettingsChange({ ...settings, currentRow: value })}
+            className="cursor-pointer"
+          />
+        </div>
+        <span className="text-sm font-mono text-muted-foreground min-w-[4rem] text-right">
+          {settings.currentRow}/{settings.maxRows} fiadas
+        </span>
+      </div>
+      
+      {/* Right side - Actions */}
+      <div className="flex items-center gap-2">
+        {onReset && (
+          <Button variant="ghost" size="icon" onClick={onReset}>
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        )}
+        <Button variant="ghost" size="icon">
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
