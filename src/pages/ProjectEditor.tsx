@@ -214,13 +214,13 @@ export default function ProjectEditor() {
     }
   };
   
-  const handleDXFImport = async (segments: DXFSegment[], selectedLayers: string[]) => {
+  const handleDXFImport = async (segments: DXFSegment[], selectedLayers: string[], totalLengthMM: number) => {
     if (!id || segments.length === 0) return;
     
     setImportingDXF(true);
     
     try {
-      // Insert all walls from DXF
+      // Insert all walls from DXF (segments are already in mm)
       const wallsToInsert = segments.map(seg => ({
         project_id: id,
         start_x: seg.startX,
@@ -256,9 +256,12 @@ export default function ProjectEditor() {
       
       setWalls([...walls, ...newWalls]);
       
+      // Format total length for display
+      const totalMeters = totalLengthMM / 1000;
+      
       toast({
         title: 'DXF importado',
-        description: `${newWalls.length} paredes importadas com sucesso.`
+        description: `${newWalls.length} paredes importadas (${totalMeters.toFixed(1)} m total).`
       });
     } catch (error) {
       console.error('Error importing DXF:', error);
@@ -359,31 +362,51 @@ export default function ProjectEditor() {
           
           {/* Wall List */}
           <div className="flex-1 overflow-auto p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Layers className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Paredes ({walls.length})</span>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Paredes ({walls.length})</span>
+              </div>
+              {walls.length > 0 && (
+                <span className="text-xs text-primary font-mono">
+                  {(() => {
+                    const totalMM = walls.reduce((sum, w) => sum + w.length, 0);
+                    const totalM = totalMM / 1000;
+                    return totalM < 0.01 
+                      ? `${totalMM.toFixed(0)} mm`
+                      : `${totalM.toFixed(1)} m`;
+                  })()}
+                </span>
+              )}
             </div>
             
             <div className="space-y-2">
-              {walls.map((wall, index) => (
-                <div 
-                  key={wall.id} 
-                  className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors group"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-muted-foreground">#{index + 1}</span>
-                    <span className="text-sm font-mono">{(wall.length / 1000).toFixed(2)} m</span>
-                  </div>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={() => deleteWall(wall.id)}
+              {walls.map((wall, index) => {
+                const lengthM = wall.length / 1000;
+                const displayLength = lengthM < 0.01 
+                  ? (wall.length > 0 ? `${wall.length.toFixed(0)} mm` : '0 m')
+                  : `${lengthM.toFixed(2)} m`;
+                
+                return (
+                  <div 
+                    key={wall.id} 
+                    className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors group"
                   >
-                    <Trash2 className="h-3 w-3 text-destructive" />
-                  </Button>
-                </div>
-              ))}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground">#{index + 1}</span>
+                      <span className="text-sm font-mono">{displayLength}</span>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => deleteWall(wall.id)}
+                    >
+                      <Trash2 className="h-3 w-3 text-destructive" />
+                    </Button>
+                  </div>
+                );
+              })}
               
               {walls.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
