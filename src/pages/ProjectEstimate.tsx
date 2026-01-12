@@ -1,16 +1,19 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Download, FileSpreadsheet, Box } from 'lucide-react';
+import { ArrowLeft, Download, FileSpreadsheet, Box, Loader2 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { BOMTable } from '@/components/bom/BOMTable';
 import { ICFViewer3D } from '@/components/viewer/ICFViewer3D';
 import { ViewerControls } from '@/components/viewer/ViewerControls';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { WallSegment, ViewerSettings, BOMResult, ConcreteThickness, CornerMode, RebarSpacing } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateBOM, calculateNumberOfRows } from '@/lib/icf-calculations';
+import { generateBOMCSV, downloadCSV, generateFilename } from '@/lib/export-csv';
+import { generateBOMPDF, captureCanvasScreenshot } from '@/lib/export-pdf';
 
 interface Project {
   id: string;
@@ -38,6 +41,8 @@ export default function ProjectEstimate() {
   const [project, setProject] = useState<Project | null>(null);
   const [walls, setWalls] = useState<WallSegment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exportingCSV, setExportingCSV] = useState(false);
+  const [exportingPDF, setExportingPDF] = useState(false);
   
   // Viewer settings
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
@@ -135,32 +140,75 @@ export default function ProjectEstimate() {
     );
   }, [project, walls]);
   
-  const exportCSV = () => {
+  const handleExportCSV = () => {
     if (!bom || !project) return;
     
-    const rows = [
-      ['Item', 'Descrição', 'Quantidade', 'Unidade'],
-      ['1', 'Painel Standard 1200x400mm', bom.panelsCount, 'un'],
-      ['2', 'Tarugos (total)', bom.tarugosTotal, 'un'],
-      ['3', 'Tarugos de Injeção', bom.tarugosInjection, 'un'],
-      ['4', `Topo (${project.concrete_thickness}mm)`, bom.toposUnits, 'un'],
-      ['5', 'Webs Distanciadoras', bom.websTotal, 'un'],
-      ['', 'Cortes', bom.cutsCount, 'cortes']
-    ];
+    setExportingCSV(true);
+    try {
+      const csvContent = generateBOMCSV(
+        bom,
+        project.name,
+        project.concrete_thickness as ConcreteThickness,
+        project.rebar_spacing_cm
+      );
+      const filename = generateFilename(project.name, 'csv');
+      downloadCSV(csvContent, filename);
+      
+      toast({
+        title: 'CSV Exportado',
+        description: `Ficheiro ${filename} descarregado.`
+      });
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível exportar o CSV.',
+        variant: 'destructive'
+      });
+    } finally {
+      setExportingCSV(false);
+    }
+  };
+  
+  const handleExportPDF = async () => {
+    if (!bom || !project) return;
     
-    const csv = rows.map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${project.name.replace(/\s+/g, '_')}_BOM.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    
-    toast({
-      title: 'Exportado',
-      description: 'Ficheiro CSV exportado com sucesso.'
-    });
+    setExportingPDF(true);
+    try {
+      // Wait a bit for the 3D view to be fully rendered
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const screenshot = await captureCanvasScreenshot();
+      
+      await generateBOMPDF(bom, {
+        name: project.name,
+        concreteThickness: project.concrete_thickness as ConcreteThickness,
+        wallHeightMm: project.wall_height_mm,
+        rebarSpacingCm: project.rebar_spacing_cm,
+        cornerMode: project.corner_mode,
+        numberOfRows: bom.numberOfRows
+      }, screenshot);
+      
+      toast({
+        title: 'PDF Exportado',
+        description: 'Ficheiro PDF descarregado.'
+      });
+    } catch (error) {
+      console.error('Error exporting PDF:', error);
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível exportar o PDF.',
+        variant: 'destructive'
+      });
+    } finally {
+      setExportingPDF(false);
+    }
+  };
+  
+  const getRebarLabel = (spacing: number) => {
+    if (spacing === 20) return '20 cm (Standard)';
+    if (spacing === 15) return '15 cm (+1 web extra)';
+    if (spacing === 10) return '10 cm (+2 webs extra)';
+    return `${spacing} cm`;
   };
   
   if (loading || !project) {
@@ -191,16 +239,55 @@ export default function ProjectEstimate() {
           </div>
           
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="gap-2" disabled>
-              <FileSpreadsheet className="h-4 w-4" />
-              Exportar CSV
-              <span className="text-xs text-muted-foreground">(em breve)</span>
-            </Button>
-            <Button variant="outline" className="gap-2" disabled>
-              <Download className="h-4 w-4" />
-              Exportar PDF
-              <span className="text-xs text-muted-foreground">(em breve)</span>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button 
+                    variant="outline" 
+                    className="gap-2" 
+                    onClick={handleExportCSV}
+                    disabled={!bom || exportingCSV}
+                  >
+                    {exportingCSV ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="h-4 w-4" />
+                    )}
+                    Exportar CSV
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {!bom && (
+                <TooltipContent>
+                  <p>Sem paredes para orçamentar</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+            
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button 
+                    variant="outline" 
+                    className="gap-2" 
+                    onClick={handleExportPDF}
+                    disabled={!bom || exportingPDF}
+                  >
+                    {exportingPDF ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    Exportar PDF
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {!bom && (
+                <TooltipContent>
+                  <p>Sem paredes para orçamentar</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
           </div>
         </div>
         
@@ -246,7 +333,7 @@ export default function ProjectEstimate() {
                 </div>
                 <div>
                   <span className="data-label">Espaçamento Ferros</span>
-                  <p className="data-value">{project.rebar_spacing_cm}<span className="data-unit">cm</span></p>
+                  <p className="data-value text-sm">{getRebarLabel(project.rebar_spacing_cm)}</p>
                 </div>
                 <div>
                   <span className="data-label">Modo Cantos</span>

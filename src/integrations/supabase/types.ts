@@ -153,6 +153,44 @@ export type Database = {
         }
         Relationships: []
       }
+      uploads: {
+        Row: {
+          file_type: string
+          filename: string
+          id: string
+          project_id: string
+          selected_layers: string[] | null
+          storage_path: string
+          uploaded_at: string
+        }
+        Insert: {
+          file_type?: string
+          filename: string
+          id?: string
+          project_id: string
+          selected_layers?: string[] | null
+          storage_path: string
+          uploaded_at?: string
+        }
+        Update: {
+          file_type?: string
+          filename?: string
+          id?: string
+          project_id?: string
+          selected_layers?: string[] | null
+          storage_path?: string
+          uploaded_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "uploads_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       walls: {
         Row: {
           created_at: string

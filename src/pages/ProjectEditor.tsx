@@ -4,6 +4,7 @@ import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer } from 'luc
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ICFViewer3D } from '@/components/viewer/ICFViewer3D';
 import { ViewerControls } from '@/components/viewer/ViewerControls';
+import { DXFImportDialog } from '@/components/dxf/DXFImportDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
+import { DXFSegment } from '@/lib/dxf-parser';
 
 interface Project {
   id: string;
@@ -37,6 +39,8 @@ export default function ProjectEditor() {
   const [project, setProject] = useState<Project | null>(null);
   const [walls, setWalls] = useState<WallSegment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dxfDialogOpen, setDxfDialogOpen] = useState(false);
+  const [importingDXF, setImportingDXF] = useState(false);
   
   // New wall form
   const [newWall, setNewWall] = useState({
@@ -210,6 +214,64 @@ export default function ProjectEditor() {
     }
   };
   
+  const handleDXFImport = async (segments: DXFSegment[], selectedLayers: string[]) => {
+    if (!id || segments.length === 0) return;
+    
+    setImportingDXF(true);
+    
+    try {
+      // Insert all walls from DXF
+      const wallsToInsert = segments.map(seg => ({
+        project_id: id,
+        start_x: seg.startX,
+        start_y: seg.startY,
+        end_x: seg.endX,
+        end_y: seg.endY,
+        layer_name: seg.layerName
+      }));
+      
+      const { data, error } = await supabase
+        .from('walls')
+        .insert(wallsToInsert)
+        .select();
+      
+      if (error) throw error;
+      
+      // Map to WallSegment
+      const newWalls: WallSegment[] = (data || []).map((wall: any) => {
+        const segment: WallSegment = {
+          id: wall.id,
+          projectId: wall.project_id,
+          startX: Number(wall.start_x),
+          startY: Number(wall.start_y),
+          endX: Number(wall.end_x),
+          endY: Number(wall.end_y),
+          length: 0,
+          angle: 0
+        };
+        segment.length = calculateWallLength(segment);
+        segment.angle = calculateWallAngle(segment);
+        return segment;
+      });
+      
+      setWalls([...walls, ...newWalls]);
+      
+      toast({
+        title: 'DXF importado',
+        description: `${newWalls.length} paredes importadas com sucesso.`
+      });
+    } catch (error) {
+      console.error('Error importing DXF:', error);
+      toast({
+        title: 'Erro na importação',
+        description: 'Não foi possível importar as paredes do DXF.',
+        variant: 'destructive'
+      });
+    } finally {
+      setImportingDXF(false);
+    }
+  };
+  
   if (loading || !project) {
     return (
       <MainLayout fullHeight>
@@ -284,10 +346,14 @@ export default function ProjectEditor() {
           
           {/* DXF Import */}
           <div className="p-4 border-b border-border">
-            <Button variant="outline" className="w-full gap-2" disabled>
+            <Button 
+              variant="outline" 
+              className="w-full gap-2" 
+              onClick={() => setDxfDialogOpen(true)}
+              disabled={importingDXF}
+            >
               <Upload className="h-4 w-4" />
-              Importar DXF
-              <span className="text-xs text-muted-foreground">(em breve)</span>
+              {importingDXF ? 'A importar...' : 'Importar DXF'}
             </Button>
           </div>
           
@@ -363,6 +429,13 @@ export default function ProjectEditor() {
           </div>
         </div>
       </div>
+      
+      {/* DXF Import Dialog */}
+      <DXFImportDialog
+        open={dxfDialogOpen}
+        onOpenChange={setDxfDialogOpen}
+        onImport={handleDXFImport}
+      />
     </MainLayout>
   );
 }
