@@ -188,37 +188,64 @@ export function NewProjectForm() {
           
           {/* Rebar Spacing */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Label>Espaçamento dos Ferros</Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Espaçamento entre ferros da armadura. Afeta o número de webs.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <span className="text-sm font-mono text-primary">
-                {formData.rebarSpacingCm} cm
-                {formData.rebarSpacingCm < 20 && (
-                  <span className="text-warning ml-2">(+webs extra)</span>
-                )}
-              </span>
+            <div className="flex items-center gap-2">
+              <Label>Espaçamento dos Ferros</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Espaçamento entre ferros da armadura. Afeta o número de webs.</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
-            <Slider
-              value={[formData.rebarSpacingCm]}
-              min={10}
-              max={25}
-              step={1}
-              onValueChange={([value]) => setFormData({ ...formData, rebarSpacingCm: value })}
-            />
-            <div className="flex justify-between text-xs text-muted-foreground font-mono">
-              <span>10 cm</span>
-              <span>20 cm (standard)</span>
-              <span>25 cm</span>
-            </div>
+            <RadioGroup
+              value={String(formData.rebarSpacingCm)}
+              onValueChange={(value) => setFormData({ ...formData, rebarSpacingCm: Number(value) })}
+              className="grid grid-cols-3 gap-3"
+            >
+              <Label
+                htmlFor="rebar-20"
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
+                  formData.rebarSpacingCm === 20 
+                    ? 'border-primary bg-primary/5' 
+                    : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <RadioGroupItem value="20" id="rebar-20" className="sr-only" />
+                <span className="text-lg font-bold">20 cm</span>
+                <span className="text-xs text-muted-foreground">Standard</span>
+              </Label>
+              
+              <Label
+                htmlFor="rebar-15"
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
+                  formData.rebarSpacingCm === 15 
+                    ? 'border-primary bg-primary/5' 
+                    : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <RadioGroupItem value="15" id="rebar-15" className="sr-only" />
+                <span className="text-lg font-bold">15 cm</span>
+                <span className="text-xs text-warning">+1 web extra</span>
+              </Label>
+              
+              <Label
+                htmlFor="rebar-10"
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
+                  formData.rebarSpacingCm === 10 
+                    ? 'border-primary bg-primary/5' 
+                    : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <RadioGroupItem value="10" id="rebar-10" className="sr-only" />
+                <span className="text-lg font-bold">10 cm</span>
+                <span className="text-xs text-warning">+2 webs extra</span>
+              </Label>
+            </RadioGroup>
+            <p className="text-xs text-muted-foreground text-center">
+              20 cm = standard | 15 cm = +1 web extra | 10 cm = +2 webs extra
+            </p>
           </div>
           
           {/* Corner Mode */}
