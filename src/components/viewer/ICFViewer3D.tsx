@@ -1,5 +1,5 @@
-import { useRef, useMemo } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { useRef, useMemo, useEffect } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
@@ -12,6 +12,36 @@ interface ICFPanelInstancesProps {
 
 // Scale factor: convert mm to 3D units (1 unit = 1 meter)
 const SCALE = 0.001;
+
+// Calculate bounding box of walls in 3D space
+function calculateWallsBoundingBox(walls: WallSegment[], maxRows: number) {
+  if (walls.length === 0) return null;
+  
+  let minX = Infinity, minY = Infinity, minZ = 0;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = maxRows * PANEL_HEIGHT;
+  
+  walls.forEach(wall => {
+    minX = Math.min(minX, wall.startX, wall.endX);
+    maxX = Math.max(maxX, wall.startX, wall.endX);
+    minY = Math.min(minY, wall.startY, wall.endY);
+    maxY = Math.max(maxY, wall.startY, wall.endY);
+  });
+  
+  return {
+    min: new THREE.Vector3(minX * SCALE, minZ * SCALE, minY * SCALE),
+    max: new THREE.Vector3(maxX * SCALE, maxZ * SCALE, maxY * SCALE),
+    center: new THREE.Vector3(
+      ((minX + maxX) / 2) * SCALE,
+      ((minZ + maxZ) / 2) * SCALE,
+      ((minY + maxY) / 2) * SCALE
+    ),
+    size: new THREE.Vector3(
+      (maxX - minX) * SCALE,
+      (maxZ - minZ) * SCALE,
+      (maxY - minY) * SCALE
+    )
+  };
+}
 
 function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -214,34 +244,78 @@ function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
   );
 }
 
+// Camera controller that auto-fits to walls
+function CameraController({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
+  const { camera, controls } = useThree();
+  const prevWallCountRef = useRef(0);
+  
+  useEffect(() => {
+    // Only auto-fit when walls are added (not on every change)
+    if (walls.length > prevWallCountRef.current && walls.length > 0) {
+      const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+      if (bbox && controls) {
+        // Set orbit controls target to center of walls
+        (controls as any).target.copy(bbox.center);
+        
+        // Calculate optimal camera distance based on bounding box size
+        const maxDim = Math.max(bbox.size.x, bbox.size.y, bbox.size.z);
+        const distance = maxDim * 1.8 + 5; // Add some padding
+        
+        // Position camera at an angle
+        const angle = Math.PI / 4; // 45 degrees
+        camera.position.set(
+          bbox.center.x + distance * Math.cos(angle),
+          bbox.center.y + distance * 0.6,
+          bbox.center.z + distance * Math.sin(angle)
+        );
+        
+        (controls as any).update();
+      }
+    }
+    prevWallCountRef.current = walls.length;
+  }, [walls, settings.maxRows, camera, controls]);
+  
+  return null;
+}
+
 function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
-  // Calculate center of the scene
+  // Calculate center of the scene for initial view
   const center = useMemo(() => {
-    if (walls.length === 0) return new THREE.Vector3(0, 0, 0);
+    if (walls.length === 0) return new THREE.Vector3(0, 1, 0);
     
-    let sumX = 0, sumY = 0;
-    walls.forEach(wall => {
-      sumX += (wall.startX + wall.endX) / 2;
-      sumY += (wall.startY + wall.endY) / 2;
-    });
+    const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+    return bbox ? bbox.center : new THREE.Vector3(0, 1, 0);
+  }, [walls, settings.maxRows]);
+  
+  // Calculate initial camera position based on bbox
+  const initialCameraPosition = useMemo(() => {
+    if (walls.length === 0) return new THREE.Vector3(10, 8, 10);
+    
+    const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+    if (!bbox) return new THREE.Vector3(10, 8, 10);
+    
+    const maxDim = Math.max(bbox.size.x, bbox.size.y, bbox.size.z);
+    const distance = maxDim * 1.8 + 5;
+    const angle = Math.PI / 4;
     
     return new THREE.Vector3(
-      (sumX / walls.length) * SCALE,
-      (settings.maxRows * PANEL_HEIGHT * SCALE) / 2,
-      (sumY / walls.length) * SCALE
+      bbox.center.x + distance * Math.cos(angle),
+      bbox.center.y + distance * 0.6,
+      bbox.center.z + distance * Math.sin(angle)
     );
   }, [walls, settings.maxRows]);
   
   return (
     <>
-      <PerspectiveCamera makeDefault position={[10, 8, 10]} fov={50} />
+      <PerspectiveCamera makeDefault position={initialCameraPosition} fov={50} />
       <OrbitControls
         target={center}
         enableDamping
         dampingFactor={0.05}
         minDistance={2}
-        maxDistance={50}
+        maxDistance={200}
       />
+      <CameraController walls={walls} settings={settings} />
       
       {/* Lighting */}
       <ambientLight intensity={0.4} />
@@ -256,15 +330,15 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
       {/* Grid */}
       {settings.showGrid && (
         <Grid
-          position={[0, 0, 0]}
-          args={[50, 50]}
+          position={[center.x, 0, center.z]}
+          args={[100, 100]}
           cellSize={1}
           cellThickness={0.5}
           cellColor="#1e3a5f"
           sectionSize={5}
           sectionThickness={1}
           sectionColor="#2a5280"
-          fadeDistance={50}
+          fadeDistance={100}
           fadeStrength={1}
           followCamera={false}
         />

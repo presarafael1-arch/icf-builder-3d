@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, Layers, Check, X, FileText, AlertCircle } from 'lucide-react';
+import { Upload, Layers, Check, FileText, AlertCircle, Info, Ruler } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -14,34 +14,40 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { parseDXF, filterSegmentsByLayers, DXFSegment } from '@/lib/dxf-parser';
+import { 
+  parseDXF, 
+  filterSegmentsByLayers, 
+  convertSegmentsToMM,
+  calculateTotalLength,
+  formatLength,
+  DXFSegment, 
+  DXFParseResult 
+} from '@/lib/dxf-parser';
 
 interface DXFImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImport: (segments: DXFSegment[], selectedLayers: string[]) => void;
+  onImport: (segments: DXFSegment[], selectedLayers: string[], totalLengthMM: number) => void;
 }
 
-type ImportStep = 'upload' | 'layers' | 'confirm';
+type ImportStep = 'upload' | 'layers';
 
 export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<ImportStep>('upload');
   const [file, setFile] = useState<File | null>(null);
-  const [layers, setLayers] = useState<string[]>([]);
-  const [segments, setSegments] = useState<DXFSegment[]>([]);
+  const [parseResult, setParseResult] = useState<DXFParseResult | null>(null);
   const [selectedLayers, setSelectedLayers] = useState<string[]>([]);
-  const [unitFactor, setUnitFactor] = useState<'1' | '1000'>('1');
+  const [selectedUnit, setSelectedUnit] = useState<'mm' | 'm'>('m');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const reset = () => {
     setStep('upload');
     setFile(null);
-    setLayers([]);
-    setSegments([]);
+    setParseResult(null);
     setSelectedLayers([]);
-    setUnitFactor('1');
+    setSelectedUnit('m');
     setError(null);
     setLoading(false);
   };
@@ -66,8 +72,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
 
     try {
       const content = await selectedFile.text();
-      const factor = unitFactor === '1000' ? 1000 : 1;
-      const result = parseDXF(content, factor);
+      const result = parseDXF(content);
 
       if (result.error) {
         setError(result.error);
@@ -75,9 +80,9 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
         return;
       }
 
-      setLayers(result.layers);
-      setSegments(result.segments);
-      setSelectedLayers(result.layers); // Select all by default
+      setParseResult(result);
+      setSelectedLayers(result.layers);
+      setSelectedUnit(result.suggestedUnit);
       setStep('layers');
     } catch (err) {
       console.error('Error reading file:', err);
@@ -96,7 +101,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
   };
 
   const handleSelectAll = () => {
-    setSelectedLayers([...layers]);
+    if (parseResult) setSelectedLayers([...parseResult.layers]);
   };
 
   const handleDeselectAll = () => {
@@ -104,16 +109,43 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
   };
 
   const handleConfirm = () => {
-    const filteredSegments = filterSegmentsByLayers(segments, selectedLayers);
-    onImport(filteredSegments, selectedLayers);
+    if (!parseResult) return;
+    
+    const filteredSegments = filterSegmentsByLayers(parseResult.segments, selectedLayers);
+    const segmentsInMM = convertSegmentsToMM(filteredSegments, selectedUnit);
+    const totalLength = calculateTotalLength(segmentsInMM);
+    
+    onImport(segmentsInMM, selectedLayers, totalLength);
     handleClose();
   };
 
-  const filteredCount = filterSegmentsByLayers(segments, selectedLayers).length;
+  const filteredSegments = parseResult 
+    ? filterSegmentsByLayers(parseResult.segments, selectedLayers)
+    : [];
+  const filteredCount = filteredSegments.length;
+  
+  const previewSegmentsInMM = parseResult && filteredSegments.length > 0
+    ? convertSegmentsToMM(filteredSegments, selectedUnit)
+    : [];
+  const previewTotalLength = calculateTotalLength(previewSegmentsInMM);
+  
+  const bbox = parseResult?.boundingBox;
+
+  // Calculate dimensions of converted segments
+  const getConvertedDimensions = () => {
+    if (previewSegmentsInMM.length === 0) return { width: 0, height: 0 };
+    const allX = previewSegmentsInMM.flatMap(s => [s.startX, s.endX]);
+    const allY = previewSegmentsInMM.flatMap(s => [s.startY, s.endY]);
+    return {
+      width: Math.max(...allX) - Math.min(...allX),
+      height: Math.max(...allY) - Math.min(...allY)
+    };
+  };
+  const convertedDims = getConvertedDimensions();
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="h-5 w-5 text-primary" />
@@ -121,8 +153,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
           </DialogTitle>
           <DialogDescription>
             {step === 'upload' && 'Carregue um ficheiro DXF para importar paredes.'}
-            {step === 'layers' && 'Selecione as layers que contêm paredes.'}
-            {step === 'confirm' && 'Confirme a importação das paredes.'}
+            {step === 'layers' && 'Selecione as layers e confirme a unidade.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -135,26 +166,6 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
 
         {step === 'upload' && (
           <div className="space-y-4">
-            {/* Unit selector */}
-            <div className="space-y-2">
-              <Label>Unidade do DXF</Label>
-              <RadioGroup
-                value={unitFactor}
-                onValueChange={(v) => setUnitFactor(v as '1' | '1000')}
-                className="flex gap-4"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="1" id="unit-mm" />
-                  <Label htmlFor="unit-mm" className="cursor-pointer">Milímetros (mm)</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="1000" id="unit-m" />
-                  <Label htmlFor="unit-m" className="cursor-pointer">Metros (m)</Label>
-                </div>
-              </RadioGroup>
-            </div>
-
-            {/* File upload */}
             <div
               className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
               onClick={() => fileInputRef.current?.click()}
@@ -171,7 +182,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                 Clique para selecionar ou arraste um ficheiro DXF
               </p>
               <p className="text-xs text-muted-foreground">
-                Suporta entidades LINE e LWPOLYLINE
+                Suporta entidades LINE, LWPOLYLINE e POLYLINE
               </p>
             </div>
 
@@ -183,48 +194,104 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
           </div>
         )}
 
-        {step === 'layers' && (
+        {step === 'layers' && parseResult && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">
-                {layers.length} layers encontradas
-              </span>
-              <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={handleSelectAll}>
-                  Todas
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleDeselectAll}>
-                  Nenhuma
-                </Button>
+            {/* Unit selector */}
+            <div className="space-y-2 p-3 bg-muted/30 rounded-md">
+              <div className="flex items-center gap-2">
+                <Ruler className="h-4 w-4 text-primary" />
+                <Label className="font-medium">Unidade do DXF</Label>
               </div>
+              
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                <Info className="h-3 w-3" />
+                <span>
+                  Auto-deteção: provavelmente em <strong>{parseResult.suggestedUnit === 'm' ? 'metros' : 'milímetros'}</strong>
+                  {bbox && ` (bbox: ${bbox.width.toFixed(1)} × ${bbox.height.toFixed(1)})`}
+                </span>
+              </div>
+              
+              <RadioGroup
+                value={selectedUnit}
+                onValueChange={(v) => setSelectedUnit(v as 'mm' | 'm')}
+                className="flex gap-4"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="mm" id="unit-mm" />
+                  <Label htmlFor="unit-mm" className="cursor-pointer">
+                    Milímetros (mm)
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="m" id="unit-m" />
+                  <Label htmlFor="unit-m" className="cursor-pointer">
+                    Metros (m) → ×1000
+                  </Label>
+                </div>
+              </RadioGroup>
             </div>
 
-            <ScrollArea className="h-[200px] border rounded-md p-3">
-              <div className="space-y-2">
-                {layers.map((layer) => (
-                  <div key={layer} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`layer-${layer}`}
-                      checked={selectedLayers.includes(layer)}
-                      onCheckedChange={(checked) => handleLayerToggle(layer, checked === true)}
-                    />
-                    <Label
-                      htmlFor={`layer-${layer}`}
-                      className="flex-1 cursor-pointer text-sm font-mono"
-                    >
-                      {layer}
-                    </Label>
-                    <span className="text-xs text-muted-foreground">
-                      {segments.filter(s => s.layerName === layer).length} segs
-                    </span>
-                  </div>
-                ))}
+            {/* Layers */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground flex items-center gap-2">
+                  <Layers className="h-4 w-4" />
+                  {parseResult.layers.length} layers encontradas
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={handleSelectAll}>
+                    Todas
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleDeselectAll}>
+                    Nenhuma
+                  </Button>
+                </div>
               </div>
-            </ScrollArea>
 
-            <div className="flex items-center justify-between p-3 bg-muted/30 rounded-md">
-              <span className="text-sm">Segmentos a importar:</span>
-              <span className="text-sm font-bold text-primary">{filteredCount}</span>
+              <ScrollArea className="h-[180px] border rounded-md p-3">
+                <div className="space-y-2">
+                  {parseResult.layers.map((layer) => (
+                    <div key={layer} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`layer-${layer}`}
+                        checked={selectedLayers.includes(layer)}
+                        onCheckedChange={(checked) => handleLayerToggle(layer, checked === true)}
+                      />
+                      <Label
+                        htmlFor={`layer-${layer}`}
+                        className="flex-1 cursor-pointer text-sm font-mono truncate"
+                      >
+                        {layer}
+                      </Label>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {parseResult.layerCounts[layer] || 0} segs
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+
+            {/* Import summary */}
+            <div className="p-3 bg-primary/10 border border-primary/20 rounded-md space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Segmentos a importar:</span>
+                <span className="text-sm font-bold text-primary">{filteredCount}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Comprimento total:</span>
+                <span className="text-sm font-bold text-primary">
+                  {formatLength(previewTotalLength)}
+                </span>
+              </div>
+              {filteredCount > 0 && (
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Dimensões (em mm):</span>
+                  <span>
+                    {formatLength(convertedDims.width)} × {formatLength(convertedDims.height)}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
