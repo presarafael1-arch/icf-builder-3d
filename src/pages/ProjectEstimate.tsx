@@ -46,6 +46,11 @@ export default function ProjectEstimate() {
   
   // Viewer settings
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
+    // Debug
+    showDXFLines: true,
+    showHelpers: false,
+
+    // Layers
     showPanels: true,
     showTopos: true,
     showWebs: true,
@@ -54,6 +59,8 @@ export default function ProjectEstimate() {
     showJunctions: true,
     showGrid: true,
     showGrids: true,
+
+    // View / params
     currentRow: 1,
     maxRows: 7,
     wireframe: false,
