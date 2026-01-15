@@ -38,13 +38,22 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
               Visibilidade
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-56" align="start">
+          <PopoverContent className="w-64" align="start">
             <div className="space-y-4">
               <h4 className="text-sm font-medium">Camadas Visíveis</h4>
               
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="show-dxf-lines" className="text-sm">Linhas DXF (debug)</Label>
+                  <Label htmlFor="show-chains" className="text-sm font-medium text-cyan-400">Cadeias (chains)</Label>
+                  <Switch
+                    id="show-chains"
+                    checked={settings.showChains}
+                    onCheckedChange={() => toggleSetting('showChains')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-dxf-lines" className="text-sm text-muted-foreground">Segmentos (debug)</Label>
                   <Switch
                     id="show-dxf-lines"
                     checked={settings.showDXFLines}
@@ -53,7 +62,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="show-helpers" className="text-sm">Helpers (eixos/bbox)</Label>
+                  <Label htmlFor="show-helpers" className="text-sm text-muted-foreground">Helpers (eixos/bbox)</Label>
                   <Switch
                     id="show-helpers"
                     checked={settings.showHelpers}

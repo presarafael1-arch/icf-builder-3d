@@ -166,7 +166,8 @@ export interface BOMResult {
 // 3D Viewer settings
 export interface ViewerSettings {
   // Debug / sanity layers
-  showDXFLines: boolean; // Draw imported walls as line segments (debug layer)
+  showDXFLines: boolean; // Draw imported walls as line segments (gray, debug)
+  showChains: boolean; // Draw consolidated chains (cyan, thicker)
   showHelpers: boolean; // Axes + bbox helpers (debug)
 
   // Render layers

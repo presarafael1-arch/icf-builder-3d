@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer } from 'lucide-react';
+import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer, Link2, AlertTriangle } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ICFViewer3D } from '@/components/viewer/ICFViewer3D';
 import { ViewerControls } from '@/components/viewer/ViewerControls';
@@ -9,10 +9,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
+import { buildWallChains, ChainsResult } from '@/lib/wall-chains';
 import { DXFSegment } from '@/lib/dxf-parser';
 
 interface Project {
@@ -30,6 +33,120 @@ interface Wall {
   start_y: number;
   end_x: number;
   end_y: number;
+}
+
+// Wall List Panel with Chains/Segments toggle
+function WallListPanel({ walls, onDeleteWall }: { walls: WallSegment[]; onDeleteWall: (id: string) => void }) {
+  const [showChains, setShowChains] = useState(true);
+  
+  const chainsResult = useMemo(() => buildWallChains(walls), [walls]);
+  const { chains, stats, junctionCounts } = chainsResult;
+  
+  const totalMM = walls.reduce((sum, w) => sum + w.length, 0);
+  const totalM = totalMM / 1000;
+  
+  // Warn if merge is weak (chains close to segments count)
+  const isWeakMerge = stats.chainsCount > stats.originalSegments * 0.85;
+  
+  return (
+    <div className="flex-1 overflow-auto p-4">
+      {/* Toggle header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          {showChains ? <Link2 className="h-4 w-4 text-cyan-400" /> : <Layers className="h-4 w-4 text-muted-foreground" />}
+          <button 
+            onClick={() => setShowChains(!showChains)}
+            className="text-sm font-medium hover:underline"
+          >
+            {showChains ? `Cadeias (${stats.chainsCount})` : `Segmentos (${walls.length})`}
+          </button>
+        </div>
+        {walls.length > 0 && (
+          <span className="text-xs text-primary font-mono">
+            {totalM < 0.01 ? `${totalMM.toFixed(0)} mm` : `${totalM.toFixed(1)} m`}
+          </span>
+        )}
+      </div>
+      
+      {/* Chain stats (when showing chains) */}
+      {showChains && chains.length > 0 && (
+        <div className="mb-3 p-2 rounded bg-cyan-950/30 border border-cyan-800/30 text-xs space-y-1">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Redução:</span>
+            <span className="font-mono">{stats.reductionPercent}%</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">min/avg/max:</span>
+            <span className="font-mono">
+              {(stats.minChainLengthMm/1000).toFixed(2)}m / {(stats.avgChainLengthMm/1000).toFixed(2)}m / {(stats.maxChainLengthMm/1000).toFixed(2)}m
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Nós:</span>
+            <span className="font-mono">{junctionCounts.L}L {junctionCounts.T}T {junctionCounts.X}X</span>
+          </div>
+          {isWeakMerge && (
+            <div className="flex items-center gap-1 text-yellow-500 mt-1">
+              <AlertTriangle className="h-3 w-3" />
+              <span>Merge fraco</span>
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* List items */}
+      <div className="space-y-1">
+        {showChains ? (
+          // Show top 20 chains sorted by length
+          chains
+            .slice()
+            .sort((a, b) => b.lengthMm - a.lengthMm)
+            .slice(0, 20)
+            .map((chain, idx) => (
+              <div key={chain.id} className="flex items-center justify-between p-2 rounded-md bg-cyan-950/20 text-xs">
+                <span className="font-mono text-muted-foreground">#{idx + 1}</span>
+                <span className="font-mono text-cyan-400">{(chain.lengthMm / 1000).toFixed(2)} m</span>
+              </div>
+            ))
+        ) : (
+          // Show segments
+          walls.slice(0, 50).map((wall, index) => (
+            <div 
+              key={wall.id} 
+              className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors group text-xs"
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-muted-foreground">#{index + 1}</span>
+                <span className="font-mono">{(wall.length / 1000).toFixed(2)} m</span>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => onDeleteWall(wall.id)}
+              >
+                <Trash2 className="h-3 w-3 text-destructive" />
+              </Button>
+            </div>
+          ))
+        )}
+        
+        {walls.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground">
+            <MousePointer className="h-8 w-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">Sem paredes</p>
+            <p className="text-xs">Adicione paredes manualmente ou importe um DXF</p>
+          </div>
+        )}
+        
+        {((showChains && chains.length > 20) || (!showChains && walls.length > 50)) && (
+          <div className="text-center text-xs text-muted-foreground py-2">
+            ... e mais {showChains ? chains.length - 20 : walls.length - 50}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function ProjectEditor() {
@@ -53,7 +170,8 @@ export default function ProjectEditor() {
   // Viewer settings
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
     // Debug
-    showDXFLines: true,
+    showDXFLines: false, // Segments (gray)
+    showChains: true, // Chains (cyan)
     showHelpers: false,
 
     // Layers
@@ -425,63 +543,8 @@ export default function ProjectEditor() {
             </Button>
           </div>
           
-          {/* Wall List */}
-          <div className="flex-1 overflow-auto p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Paredes ({walls.length})</span>
-              </div>
-              {walls.length > 0 && (
-                <span className="text-xs text-primary font-mono">
-                  {(() => {
-                    const totalMM = walls.reduce((sum, w) => sum + w.length, 0);
-                    const totalM = totalMM / 1000;
-                    return totalM < 0.01 
-                      ? `${totalMM.toFixed(0)} mm`
-                      : `${totalM.toFixed(1)} m`;
-                  })()}
-                </span>
-              )}
-            </div>
-            
-            <div className="space-y-2">
-              {walls.map((wall, index) => {
-                const lengthM = wall.length / 1000;
-                const displayLength = lengthM < 0.01 
-                  ? (wall.length > 0 ? `${wall.length.toFixed(0)} mm` : '0 m')
-                  : `${lengthM.toFixed(2)} m`;
-                
-                return (
-                  <div 
-                    key={wall.id} 
-                    className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-muted-foreground">#{index + 1}</span>
-                      <span className="text-sm font-mono">{displayLength}</span>
-                    </div>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => deleteWall(wall.id)}
-                    >
-                      <Trash2 className="h-3 w-3 text-destructive" />
-                    </Button>
-                  </div>
-                );
-              })}
-              
-              {walls.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <MousePointer className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">Sem paredes</p>
-                  <p className="text-xs">Adicione paredes manualmente ou importe um DXF</p>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Wall List with Chains/Segments toggle */}
+          <WallListPanel walls={walls} onDeleteWall={deleteWall} />
           
           {/* Go to Estimate */}
           <div className="p-4 border-t border-border">

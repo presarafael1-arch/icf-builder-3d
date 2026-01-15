@@ -46,9 +46,10 @@ export interface ChainsResult {
   };
 }
 
-// Tolerances
-const ENDPOINT_TOL_MM = 15; // Tolerance for matching endpoints
-const ANGLE_TOL_RAD = 0.05; // ~3 degrees
+// Tolerances - increased for better merging of fragmented DXF
+const ENDPOINT_TOL_MM = 20; // Tolerance for matching endpoints (was 15)
+const ANGLE_TOL_RAD = 0.0524; // ~3 degrees (was 0.05)
+const MIN_SEGMENT_MM = 80; // Segments shorter than this are noise
 
 /**
  * Calculate segment length
@@ -105,14 +106,17 @@ function getPointKey(x: number, y: number, tol: number = ENDPOINT_TOL_MM): strin
  * Groups colinear adjacent segments into logical wall chains
  */
 export function buildWallChains(walls: WallSegment[]): ChainsResult {
-  if (walls.length === 0) {
+  // Filter out noise segments (too short)
+  const filteredWalls = walls.filter(w => calculateLength(w) >= MIN_SEGMENT_MM);
+  
+  if (filteredWalls.length === 0) {
     return {
       chains: [],
       nodes: [],
       stats: {
-        originalSegments: 0,
+        originalSegments: walls.length,
         chainsCount: 0,
-        reductionPercent: 0,
+        reductionPercent: 100,
         totalLengthMm: 0,
         minChainLengthMm: 0,
         maxChainLengthMm: 0,
@@ -121,11 +125,14 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
       junctionCounts: { L: 0, T: 0, X: 0, end: 0 }
     };
   }
+  
+  // Use filtered walls from now on
+  const workingWalls = filteredWalls;
 
   // Step 1: Cluster endpoints (snap nearby points together)
   const pointClusters = new Map<string, { x: number; y: number; segmentEnds: { segIndex: number; isStart: boolean }[] }>();
   
-  walls.forEach((wall, idx) => {
+  workingWalls.forEach((wall, idx) => {
     const startKey = getPointKey(wall.startX, wall.startY);
     const endKey = getPointKey(wall.endX, wall.endY);
     
@@ -143,7 +150,7 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
   // Step 2: Build adjacency for segments by endpoint
   // For each segment, find which other segments share an endpoint
   const segmentAdjacency: Map<number, { neighborIdx: number; viaStart: boolean; neighborViaStart: boolean }[]> = new Map();
-  walls.forEach((_, idx) => segmentAdjacency.set(idx, []));
+  workingWalls.forEach((_, idx) => segmentAdjacency.set(idx, []));
 
   pointClusters.forEach((cluster) => {
     const ends = cluster.segmentEnds;
@@ -171,10 +178,10 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
   const chains: WallChain[] = [];
   let chainId = 0;
 
-  walls.forEach((_, startIdx) => {
+  workingWalls.forEach((_, startIdx) => {
     if (used.has(startIdx)) return;
     
-    const startAngle = calculateNormalizedAngle(walls[startIdx]);
+    const startAngle = calculateNormalizedAngle(workingWalls[startIdx]);
     const chain: number[] = [startIdx];
     used.add(startIdx);
 
@@ -184,13 +191,13 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
       changed = false;
       
       // Try to extend from start of chain
-      const firstSeg = walls[chain[0]];
+      const firstSeg = workingWalls[chain[0]];
       const firstAngle = calculateNormalizedAngle(firstSeg);
       const neighbors = segmentAdjacency.get(chain[0]) || [];
       
       for (const neighbor of neighbors) {
         if (used.has(neighbor.neighborIdx)) continue;
-        const neighborSeg = walls[neighbor.neighborIdx];
+        const neighborSeg = workingWalls[neighbor.neighborIdx];
         const neighborAngle = calculateNormalizedAngle(neighborSeg);
         
         // Check if colinear
@@ -203,13 +210,13 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
       }
       
       // Try to extend from end of chain
-      const lastSeg = walls[chain[chain.length - 1]];
+      const lastSeg = workingWalls[chain[chain.length - 1]];
       const lastAngle = calculateNormalizedAngle(lastSeg);
       const endNeighbors = segmentAdjacency.get(chain[chain.length - 1]) || [];
       
       for (const neighbor of endNeighbors) {
         if (used.has(neighbor.neighborIdx)) continue;
-        const neighborSeg = walls[neighbor.neighborIdx];
+        const neighborSeg = workingWalls[neighbor.neighborIdx];
         const neighborAngle = calculateNormalizedAngle(neighborSeg);
         
         // Check if colinear
@@ -223,7 +230,7 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
     }
 
     // Build the chain object
-    const chainSegments = chain.map(idx => walls[idx]);
+    const chainSegments = chain.map(idx => workingWalls[idx]);
     
     // Calculate total length of chain
     const totalLength = chainSegments.reduce((sum, seg) => sum + calculateLength(seg), 0);
@@ -364,6 +371,19 @@ export function buildWallChains(walls: WallSegment[]): ChainsResult {
   const reductionPercent = walls.length > 0 
     ? Math.round((1 - chains.length / walls.length) * 100) 
     : 0;
+    
+  // Log chain stats for debugging
+  console.log('[WallChains] Stats:', {
+    originalSegments: walls.length,
+    afterNoiseFilter: workingWalls.length,
+    chainsCount: chains.length,
+    reductionPercent: reductionPercent + '%',
+    totalLengthM: (totalLengthMm / 1000).toFixed(2) + 'm',
+    minChainM: (minLength / 1000).toFixed(2) + 'm',
+    maxChainM: (maxLength / 1000).toFixed(2) + 'm',
+    avgChainM: (avgLength / 1000).toFixed(2) + 'm',
+    junctions: junctionCounts
+  });
 
   return {
     chains,
