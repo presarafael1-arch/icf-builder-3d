@@ -1,21 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer, Link2, AlertTriangle } from 'lucide-react';
+import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer, Link2, AlertTriangle, DoorOpen } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ICFViewer3D } from '@/components/viewer/ICFViewer3D';
 import { ViewerControls } from '@/components/viewer/ViewerControls';
 import { DXFImportDialog } from '@/components/dxf/DXFImportDialog';
+import { OpeningsPanel } from '@/components/openings/OpeningsPanel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useOpenings } from '@/hooks/useOpenings';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
+import { OpeningData } from '@/types/openings';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
-import { buildWallChains, ChainsResult } from '@/lib/wall-chains';
+import { buildWallChains, ChainsResult, WallChain } from '@/lib/wall-chains';
 import { DXFSegment } from '@/lib/dxf-parser';
 
 interface Project {
@@ -158,6 +161,16 @@ export default function ProjectEditor() {
   const [loading, setLoading] = useState(true);
   const [dxfDialogOpen, setDxfDialogOpen] = useState(false);
   const [importingDXF, setImportingDXF] = useState(false);
+  const [activeTab, setActiveTab] = useState('walls');
+  
+  // Openings management
+  const { 
+    openings, 
+    addOpening, 
+    updateOpening, 
+    deleteOpening,
+    setOpenings 
+  } = useOpenings(id);
   
   // New wall form
   const [newWall, setNewWall] = useState({
@@ -191,6 +204,10 @@ export default function ProjectEditor() {
     rebarSpacing: 20,
     concreteThickness: '150'
   });
+  
+  // Build chains from walls
+  const chainsResult = useMemo(() => buildWallChains(walls), [walls]);
+  const chains = chainsResult.chains;
   
   useEffect(() => {
     if (id) {
@@ -467,84 +484,116 @@ export default function ProjectEditor() {
             <p className="text-sm text-muted-foreground">Editor 2D</p>
           </div>
           
-          {/* Add Wall Form */}
-          <div className="p-4 border-b border-border space-y-4">
-            <div className="flex items-center gap-2">
-              <Plus className="h-4 w-4 text-primary" />
-              <span className="font-medium text-sm">Nova Parede</span>
-            </div>
+          {/* Tabs for Walls/Openings */}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+            <TabsList className="mx-4 mt-2 grid w-auto grid-cols-2">
+              <TabsTrigger value="walls" className="gap-1 text-xs">
+                <Layers className="h-3 w-3" />
+                Paredes
+              </TabsTrigger>
+              <TabsTrigger value="openings" className="gap-1 text-xs">
+                <DoorOpen className="h-3 w-3" />
+                Aberturas
+                {openings.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                    {openings.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
             
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-xs">Início X (mm)</Label>
-                <Input
-                  type="number"
-                  value={newWall.startX}
-                  onChange={(e) => setNewWall({ ...newWall, startX: Number(e.target.value) })}
-                  className="h-8 text-sm font-mono"
-                />
+            <TabsContent value="walls" className="flex-1 flex flex-col m-0 data-[state=inactive]:hidden">
+              {/* Add Wall Form */}
+              <div className="p-4 border-b border-border space-y-4">
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-primary" />
+                  <span className="font-medium text-sm">Nova Parede</span>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-xs">Início X (mm)</Label>
+                    <Input
+                      type="number"
+                      value={newWall.startX}
+                      onChange={(e) => setNewWall({ ...newWall, startX: Number(e.target.value) })}
+                      className="h-8 text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Início Y (mm)</Label>
+                    <Input
+                      type="number"
+                      value={newWall.startY}
+                      onChange={(e) => setNewWall({ ...newWall, startY: Number(e.target.value) })}
+                      className="h-8 text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Fim X (mm)</Label>
+                    <Input
+                      type="number"
+                      value={newWall.endX}
+                      onChange={(e) => setNewWall({ ...newWall, endX: Number(e.target.value) })}
+                      className="h-8 text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Fim Y (mm)</Label>
+                    <Input
+                      type="number"
+                      value={newWall.endY}
+                      onChange={(e) => setNewWall({ ...newWall, endY: Number(e.target.value) })}
+                      className="h-8 text-sm font-mono"
+                    />
+                  </div>
+                </div>
+                
+                <Button onClick={addWall} className="w-full gap-2" size="sm">
+                  <Plus className="h-4 w-4" />
+                  Adicionar Parede
+                </Button>
               </div>
-              <div>
-                <Label className="text-xs">Início Y (mm)</Label>
-                <Input
-                  type="number"
-                  value={newWall.startY}
-                  onChange={(e) => setNewWall({ ...newWall, startY: Number(e.target.value) })}
-                  className="h-8 text-sm font-mono"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Fim X (mm)</Label>
-                <Input
-                  type="number"
-                  value={newWall.endX}
-                  onChange={(e) => setNewWall({ ...newWall, endX: Number(e.target.value) })}
-                  className="h-8 text-sm font-mono"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Fim Y (mm)</Label>
-                <Input
-                  type="number"
-                  value={newWall.endY}
-                  onChange={(e) => setNewWall({ ...newWall, endY: Number(e.target.value) })}
-                  className="h-8 text-sm font-mono"
-                />
-              </div>
-            </div>
-            
-            <Button onClick={addWall} className="w-full gap-2" size="sm">
-              <Plus className="h-4 w-4" />
-              Adicionar Parede
-            </Button>
-          </div>
-          
-          {/* DXF Import */}
-          <div className="p-4 border-b border-border space-y-2">
-            <Button 
-              variant="outline" 
-              className="w-full gap-2" 
-              onClick={() => setDxfDialogOpen(true)}
-              disabled={importingDXF}
-            >
-              <Upload className="h-4 w-4" />
-              {importingDXF ? 'A importar...' : 'Importar DXF'}
-            </Button>
+              
+              {/* DXF Import */}
+              <div className="p-4 border-b border-border space-y-2">
+                <Button 
+                  variant="outline" 
+                  className="w-full gap-2" 
+                  onClick={() => setDxfDialogOpen(true)}
+                  disabled={importingDXF}
+                >
+                  <Upload className="h-4 w-4" />
+                  {importingDXF ? 'A importar...' : 'Importar DXF'}
+                </Button>
 
-            <Button
-              variant="ghost"
-              className="w-full gap-2"
-              onClick={clearWalls}
-              disabled={importingDXF || walls.length === 0}
-              title={walls.length === 0 ? 'Sem paredes para limpar' : 'Remover todas as paredes do projeto'}
-            >
-              <Trash2 className="h-4 w-4" />
-              Limpar paredes
-            </Button>
-          </div>
-          
-          {/* Wall List with Chains/Segments toggle */}
-          <WallListPanel walls={walls} onDeleteWall={deleteWall} />
+                <Button
+                  variant="ghost"
+                  className="w-full gap-2"
+                  onClick={clearWalls}
+                  disabled={importingDXF || walls.length === 0}
+                  title={walls.length === 0 ? 'Sem paredes para limpar' : 'Remover todas as paredes do projeto'}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Limpar paredes
+                </Button>
+              </div>
+              
+              {/* Wall List with Chains/Segments toggle */}
+              <WallListPanel walls={walls} onDeleteWall={deleteWall} />
+            </TabsContent>
+            
+            <TabsContent value="openings" className="flex-1 flex flex-col m-0 data-[state=inactive]:hidden">
+              <OpeningsPanel
+                openings={openings}
+                chains={chains}
+                onAddOpening={addOpening}
+                onUpdateOpening={updateOpening}
+                onDeleteOpening={deleteOpening}
+                maxHeight={project.wall_height_mm}
+              />
+            </TabsContent>
+          </Tabs>
           
           {/* Go to Estimate */}
           <div className="p-4 border-t border-border">
@@ -561,7 +610,8 @@ export default function ProjectEditor() {
         <div className="flex-1 relative">
           <ICFViewer3D 
             walls={walls} 
-            settings={viewerSettings} 
+            settings={viewerSettings}
+            openings={openings}
             className="w-full h-full"
           />
           <ViewerControls 
@@ -578,6 +628,11 @@ export default function ProjectEditor() {
               tc: {project.concrete_thickness}mm | 
               {(project.wall_height_mm / 1000).toFixed(1)}m
             </span>
+            {openings.length > 0 && (
+              <Badge variant="outline" className="text-xs">
+                {openings.length} aberturas
+              </Badge>
+            )}
           </div>
         </div>
       </div>

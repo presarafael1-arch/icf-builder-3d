@@ -3,11 +3,10 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
-import { OpeningData } from '@/types/openings';
+import { OpeningData, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, WallChain } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
-import { OpeningToposInstances, OpeningMarkers } from './OpeningsInstances';
 
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
@@ -153,7 +152,8 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
   );
 }
 
-function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
+// Main panel instances component - renders panels based on chains with opening gaps
+function ICFPanelInstances({ walls, settings, openings = [] }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   // IMPORTANT: render panels from CHAINS (logical runs), not raw segments
@@ -166,45 +166,63 @@ function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
   const { positions, count } = useMemo(() => {
     const positions: { matrix: THREE.Matrix4; color: THREE.Color }[] = [];
 
-    const drawItems = (chains.length > 0 ? chains : walls).map((w: any) => ({
-      startX: w.startX,
-      startY: w.startY,
-      endX: w.endX,
-      endY: w.endY,
-      length: w.lengthMm ?? calculateWallLength(w),
-      angle: w.angle ?? calculateWallAngle(w),
-    }));
+    // For each chain
+    chains.forEach((chain) => {
+      const chainLength = chain.lengthMm;
+      const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+      const dirX = (chain.endX - chain.startX) / chainLength;
+      const dirY = (chain.endY - chain.startY) / chainLength;
 
-    drawItems.forEach((wall) => {
-      const length = wall.length;
-      const angle = wall.angle;
-      const panelCount = Math.ceil(length / PANEL_WIDTH);
+      // Get openings for this chain
+      const chainOpenings = openings.filter(o => o.chainId === chain.id);
 
       // Only show up to current row
       for (let row = 0; row < Math.min(settings.currentRow, settings.maxRows); row++) {
-        for (let i = 0; i < panelCount; i++) {
-          const progress = (i + 0.5) / panelCount;
-          const x = wall.startX + (wall.endX - wall.startX) * progress;
-          const y = wall.startY + (wall.endY - wall.startY) * progress;
-          const z = row * PANEL_HEIGHT;
+        // Get remaining intervals for this row (accounting for openings)
+        const intervals = getRemainingIntervalsForRow(chainLength, chainOpenings, row);
 
-          const matrix = new THREE.Matrix4();
-          matrix.compose(
-            new THREE.Vector3(x * SCALE, z * SCALE, y * SCALE),
-            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-            new THREE.Vector3(1, 1, 1)
-          );
+        // For each interval, place panels
+        intervals.forEach((interval) => {
+          const intervalStart = interval[0];
+          const intervalEnd = interval[1];
+          const intervalLength = intervalEnd - intervalStart;
+          const panelCount = Math.ceil(intervalLength / PANEL_WIDTH);
 
-          positions.push({
-            matrix,
-            color: new THREE.Color().setHSL(0.55, 0.1, 0.7 + (row % 2) * 0.05),
-          });
-        }
+          for (let i = 0; i < panelCount; i++) {
+            // Calculate actual panel width (last panel might be cut)
+            const panelStart = intervalStart + i * PANEL_WIDTH;
+            const panelEnd = Math.min(panelStart + PANEL_WIDTH, intervalEnd);
+            const actualPanelWidth = panelEnd - panelStart;
+            
+            if (actualPanelWidth < 50) continue; // Skip very small pieces
+            
+            const panelCenter = panelStart + actualPanelWidth / 2;
+            
+            // Position along chain
+            const x = chain.startX + dirX * panelCenter;
+            const y = chain.startY + dirY * panelCenter;
+            const z = row * PANEL_HEIGHT;
+
+            const matrix = new THREE.Matrix4();
+            const scaleX = actualPanelWidth / PANEL_WIDTH; // Scale for cut panels
+            
+            matrix.compose(
+              new THREE.Vector3(x * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), y * SCALE),
+              new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+              new THREE.Vector3(scaleX, 1, 1)
+            );
+
+            positions.push({
+              matrix,
+              color: new THREE.Color().setHSL(0.55, 0.1, 0.7 + (row % 2) * 0.05),
+            });
+          }
+        });
       }
     });
 
     return { positions, count: positions.length };
-  }, [walls, chains, settings.currentRow, settings.maxRows]);
+  }, [walls, chains, openings, settings.currentRow, settings.maxRows]);
 
   // Update instance matrices
   useMemo(() => {
@@ -226,9 +244,127 @@ function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
   const panelGeometry = new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
 
   return (
-    <instancedMesh ref={meshRef} args={[panelGeometry, undefined, count]} frustumCulled={false}>
+    <instancedMesh ref={meshRef} args={[panelGeometry, undefined, Math.max(count, 1)]} frustumCulled={false}>
       <meshStandardMaterial color="#a8b4c4" roughness={0.7} metalness={0.1} wireframe={settings.wireframe} />
     </instancedMesh>
+  );
+}
+
+// Opening markers and topos visualization
+function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInstancesProps) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const topoMeshRef = useRef<THREE.InstancedMesh>(null);
+
+  const chainsResult = useMemo(
+    () => buildWallChains(walls, { snapTolMm: 5, gapTolMm: 10, angleTolDeg: 2, noiseMinMm: 100 }),
+    [walls]
+  );
+  const chains = chainsResult.chains;
+
+  // Calculate opening markers and topos
+  const { openingPositions, topoPositions } = useMemo(() => {
+    const openingPositions: THREE.Matrix4[] = [];
+    const topoPositions: THREE.Matrix4[] = [];
+
+    openings.forEach(opening => {
+      const chain = chains.find(c => c.id === opening.chainId);
+      if (!chain) return;
+
+      const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+      const dirX = (chain.endX - chain.startX) / chain.lengthMm;
+      const dirY = (chain.endY - chain.startY) / chain.lengthMm;
+
+      // Get affected rows
+      const { startRow, endRow } = getAffectedRows(opening.sillMm, opening.heightMm);
+
+      // For each affected row that's visible
+      for (let row = startRow; row < Math.min(endRow, settings.currentRow); row++) {
+        const z = row * PANEL_HEIGHT;
+        
+        // Opening center position
+        const centerOffset = opening.offsetMm + opening.widthMm / 2;
+        const centerX = chain.startX + dirX * centerOffset;
+        const centerY = chain.startY + dirY * centerOffset;
+
+        // Opening marker (red transparent box)
+        const openingMatrix = new THREE.Matrix4();
+        openingMatrix.compose(
+          new THREE.Vector3(centerX * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), centerY * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+          new THREE.Vector3(opening.widthMm / PANEL_WIDTH, 1, 1)
+        );
+        openingPositions.push(openingMatrix);
+
+        // Topos on each side of the opening
+        // Left topo
+        const leftOffset = opening.offsetMm;
+        const leftX = chain.startX + dirX * leftOffset;
+        const leftY = chain.startY + dirY * leftOffset;
+        
+        const leftTopoMatrix = new THREE.Matrix4();
+        leftTopoMatrix.compose(
+          new THREE.Vector3(leftX * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), leftY * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2),
+          new THREE.Vector3(1, 1, 1)
+        );
+        topoPositions.push(leftTopoMatrix);
+
+        // Right topo
+        const rightOffset = opening.offsetMm + opening.widthMm;
+        const rightX = chain.startX + dirX * rightOffset;
+        const rightY = chain.startY + dirY * rightOffset;
+        
+        const rightTopoMatrix = new THREE.Matrix4();
+        rightTopoMatrix.compose(
+          new THREE.Vector3(rightX * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), rightY * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2),
+          new THREE.Vector3(1, 1, 1)
+        );
+        topoPositions.push(rightTopoMatrix);
+      }
+    });
+
+    return { openingPositions, topoPositions };
+  }, [chains, openings, settings.currentRow]);
+
+  // Update opening markers
+  useMemo(() => {
+    if (!meshRef.current || openingPositions.length === 0) return;
+    openingPositions.forEach((matrix, i) => {
+      meshRef.current!.setMatrixAt(i, matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [openingPositions]);
+
+  // Update topos
+  useMemo(() => {
+    if (!topoMeshRef.current || topoPositions.length === 0) return;
+    topoPositions.forEach((matrix, i) => {
+      topoMeshRef.current!.setMatrixAt(i, matrix);
+    });
+    topoMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [topoPositions]);
+
+  const tc = parseInt(settings.concreteThickness) || 150;
+  const topoGeometry = new THREE.BoxGeometry(tc * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
+  const openingGeometry = new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 0.5);
+
+  return (
+    <>
+      {/* Opening markers (translucent) */}
+      {openingPositions.length > 0 && settings.showOpenings && (
+        <instancedMesh ref={meshRef} args={[openingGeometry, undefined, Math.max(openingPositions.length, 1)]} frustumCulled={false}>
+          <meshStandardMaterial color="#ff6b6b" opacity={0.3} transparent />
+        </instancedMesh>
+      )}
+
+      {/* Topos (dark green) */}
+      {topoPositions.length > 0 && settings.showTopos && (
+        <instancedMesh ref={topoMeshRef} args={[topoGeometry, undefined, Math.max(topoPositions.length, 1)]} frustumCulled={false}>
+          <meshStandardMaterial color="#2d5a27" roughness={0.6} metalness={0.2} />
+        </instancedMesh>
+      )}
+    </>
   );
 }
 
@@ -419,7 +555,7 @@ function CameraController({ walls, settings }: { walls: WallSegment[]; settings:
   return null;
 }
 
-function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
+function Scene({ walls, settings, openings = [] }: { walls: WallSegment[]; settings: ViewerSettings; openings?: OpeningData[] }) {
   const controlsRef = useRef<any>(null);
 
   // Calculate center of the scene for initial view
@@ -447,30 +583,6 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
       bbox.center.z + distance * Math.sin(angle)
     );
   }, [walls, settings.maxRows]);
-
-  // Sanity check in console (bbox mm vs meters) when walls change
-  useEffect(() => {
-    if (walls.length === 0) return;
-
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (const w of walls) {
-      minX = Math.min(minX, w.startX, w.endX);
-      minY = Math.min(minY, w.startY, w.endY);
-      maxX = Math.max(maxX, w.startX, w.endX);
-      maxY = Math.max(maxY, w.startY, w.endY);
-    }
-
-    const bboxWidthMm = maxX - minX;
-    const bboxHeightMm = maxY - minY;
-    const bboxWidthM = bboxWidthMm / 1000;
-    const bboxHeightM = bboxHeightMm / 1000;
-
-    console.log('[Viewer] bbox mm:', { bboxWidthMm, bboxHeightMm });
-    console.log('[Viewer] bbox m:', { bboxWidthM, bboxHeightM });
-  }, [walls]);
 
   return (
     <>
@@ -518,7 +630,10 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
       )}
 
       {/* ICF Panels */}
-      {settings.showPanels && <ICFPanelInstances walls={walls} settings={settings} />}
+      {settings.showPanels && <ICFPanelInstances walls={walls} settings={settings} openings={openings} />}
+
+      {/* Openings and Topos visualization */}
+      {openings.length > 0 && <OpeningsVisualization walls={walls} settings={settings} openings={openings} />}
 
       {/* Webs */}
       {settings.showWebs && <WebsInstances walls={walls} settings={settings} />}
@@ -561,7 +676,7 @@ export function ICFViewer3D({ walls, settings, openings = [], className = '' }: 
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
         style={{ background: 'transparent' }}
       >
-        <Scene walls={walls} settings={settings} />
+        <Scene walls={walls} settings={settings} openings={openings} />
       </Canvas>
 
       {/* Debug UI (bbox in meters) */}
