@@ -165,18 +165,26 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
   );
   const chains = chainsResult.chains;
 
+  // Stable geometry (memoized to avoid recreation on each render)
+  const panelGeometry = useMemo(() => {
+    return new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
+  }, []);
+
   const { positions, count } = useMemo(() => {
     const positions: { matrix: THREE.Matrix4; color: THREE.Color }[] = [];
 
     // For each chain
     chains.forEach((chain) => {
       const chainLength = chain.lengthMm;
+      if (chainLength < 50) return; // Skip tiny chains
+      
       const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
       const dirX = (chain.endX - chain.startX) / chainLength;
       const dirY = (chain.endY - chain.startY) / chainLength;
 
-      // Only show up to current row
-      for (let row = 0; row < Math.min(settings.currentRow, settings.maxRows); row++) {
+      // Only show up to current row (slider controls this)
+      const visibleRows = Math.min(settings.currentRow, settings.maxRows);
+      for (let row = 0; row < visibleRows; row++) {
         // Get remaining intervals for this row (accounting for openings)
         const intervals = getRemainingIntervalsForRow(chain, openings, row);
 
@@ -185,6 +193,9 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
           const intervalStart = interval.start;
           const intervalEnd = interval.end;
           const intervalLength = intervalEnd - intervalStart;
+          
+          if (intervalLength < 50) return; // Skip tiny intervals
+          
           const panelCount = Math.ceil(intervalLength / PANEL_WIDTH);
 
           for (let i = 0; i < panelCount; i++) {
@@ -197,23 +208,27 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
             
             const panelCenter = panelStart + actualPanelWidth / 2;
             
-            // Position along chain
-            const x = chain.startX + dirX * panelCenter;
-            const y = chain.startY + dirY * panelCenter;
-            const z = row * PANEL_HEIGHT;
+            // Position along chain (2D: X,Y in plan -> 3D: X,Z with Y as height)
+            const posX = chain.startX + dirX * panelCenter;
+            const posZ = chain.startY + dirY * panelCenter;
+            const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2; // Center of panel height
 
             const matrix = new THREE.Matrix4();
             const scaleX = actualPanelWidth / PANEL_WIDTH; // Scale for cut panels
             
             matrix.compose(
-              new THREE.Vector3(x * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), y * SCALE),
+              new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
               new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
               new THREE.Vector3(scaleX, 1, 1)
             );
 
+            // Alternate colors per row for visibility
+            const hue = 0.55 + (row % 2) * 0.02;
+            const lightness = 0.65 + (row % 2) * 0.08;
+            
             positions.push({
               matrix,
-              color: new THREE.Color().setHSL(0.55, 0.1, 0.7 + (row % 2) * 0.05),
+              color: new THREE.Color().setHSL(hue, 0.15, lightness),
             });
           }
         });
@@ -221,15 +236,15 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
     });
 
     return { positions, count: positions.length };
-  }, [walls, chains, openings, settings.currentRow, settings.maxRows]);
+  }, [chains, openings, settings.currentRow, settings.maxRows]);
 
   // Report count to parent
   useEffect(() => {
     onInstanceCountChange?.(count);
   }, [count, onInstanceCountChange]);
 
-  // Update instance matrices
-  useMemo(() => {
+  // Update instance matrices when positions change
+  useEffect(() => {
     if (!meshRef.current || count === 0) return;
 
     positions.forEach((pos, i) => {
@@ -243,13 +258,22 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
     }
   }, [positions, count]);
 
+  // Don't render if no panels
   if (count === 0) return null;
 
-  const panelGeometry = new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
-
   return (
-    <instancedMesh ref={meshRef} args={[panelGeometry, undefined, Math.max(count, 1)]} frustumCulled={false}>
-      <meshStandardMaterial color="#a8b4c4" roughness={0.7} metalness={0.1} wireframe={settings.wireframe} />
+    <instancedMesh 
+      ref={meshRef} 
+      args={[panelGeometry, undefined, count]} 
+      frustumCulled={false}
+      key={`panels-${count}`}
+    >
+      <meshStandardMaterial 
+        color="#b8c4d4" 
+        roughness={0.6} 
+        metalness={0.15} 
+        wireframe={settings.wireframe}
+      />
     </instancedMesh>
   );
 }
