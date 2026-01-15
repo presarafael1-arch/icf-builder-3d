@@ -214,13 +214,17 @@ export default function ProjectEditor() {
     }
   };
   
-  const handleDXFImport = async (segments: DXFSegment[], selectedLayers: string[], totalLengthMM: number) => {
+  const handleDXFImport = async (
+    segments: DXFSegment[], 
+    selectedLayers: string[], 
+    stats: { originalSegments: number; afterLayerFilter: number; removedNoise: number; mergedSegments: number; finalWalls: number; totalLengthMM: number; junctionCounts: { L: number; T: number; X: number; end: number } }
+  ) => {
     if (!id || segments.length === 0) return;
     
     setImportingDXF(true);
     
     try {
-      // Insert all walls from DXF (segments are already in mm)
+      // Insert all walls from DXF (segments are already normalized: recentered and merged)
       const wallsToInsert = segments.map(seg => ({
         project_id: id,
         start_x: seg.startX,
@@ -257,11 +261,12 @@ export default function ProjectEditor() {
       setWalls([...walls, ...newWalls]);
       
       // Format total length for display
-      const totalMeters = totalLengthMM / 1000;
+      const totalMeters = stats.totalLengthMM / 1000;
+      const { L, T, X } = stats.junctionCounts;
       
       toast({
-        title: 'DXF importado',
-        description: `${newWalls.length} paredes importadas (${totalMeters.toFixed(1)} m total).`
+        title: 'DXF importado e normalizado',
+        description: `${newWalls.length} paredes (${totalMeters.toFixed(1)}m) | ${L}L ${T}T ${X}X junções`
       });
     } catch (error) {
       console.error('Error importing DXF:', error);
