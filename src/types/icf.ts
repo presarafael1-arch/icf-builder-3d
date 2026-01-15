@@ -113,6 +113,7 @@ export type RebarSpacing = 10 | 15 | 20;
 export interface BOMResult {
   // Panels
   panelsCount: number;
+  panelsPerFiada?: number; // Panels per row
   
   // Tarugos
   tarugosBase: number;
@@ -135,6 +136,7 @@ export interface BOMResult {
   // Webs
   websTotal: number;
   websPerRow: number;
+  websPerPanel?: number; // 2, 3, or 4 based on rebar spacing
   
   // Grids (stabilization)
   gridsTotal: number;
@@ -145,6 +147,7 @@ export interface BOMResult {
   // Cuts
   cutsCount: number;
   cutsLengthMm: number;
+  wasteTotal?: number; // Total waste in mm
   
   // Summary
   numberOfRows: number;
@@ -155,6 +158,9 @@ export interface BOMResult {
     X: number;
     end: number;
   };
+  
+  // Chains (for chain-based calculation)
+  chainsCount?: number;
 }
 
 // 3D Viewer settings
