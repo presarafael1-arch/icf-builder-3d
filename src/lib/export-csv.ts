@@ -1,5 +1,6 @@
 // CSV Export utilities for OMNI ICF WALLS 3D PLANNER
 import { BOMResult, ConcreteThickness } from '@/types/icf';
+import { OpeningData, getAffectedRows, calculateOpeningTopos } from '@/types/openings';
 
 export interface CSVRow {
   itemCode: string;
@@ -19,11 +20,12 @@ export interface ExportParams {
 }
 
 /**
- * Generate CSV content from BOM with all diagnostics
+ * Generate CSV content from BOM with all diagnostics and openings
  */
 export function generateBOMCSV(
   bom: BOMResult,
-  params: ExportParams
+  params: ExportParams,
+  openings: OpeningData[] = []
 ): string {
   const { projectName, concreteThickness, wallHeightMm, rebarSpacingCm, cornerMode, numberOfRows } = params;
   
@@ -70,6 +72,28 @@ export function generateBOMCSV(
   lines.push(`Nós X;${bom.junctionCounts.X}`);
   lines.push(`Fins;${bom.junctionCounts.end}`);
   lines.push('');
+  
+  // Openings section
+  if (openings.length > 0) {
+    lines.push('=== ABERTURAS (PORTAS/JANELAS) ===');
+    lines.push('Etiqueta;Tipo;Largura (mm);Altura (mm);Peitoril (mm);Posição (mm);Chain ID;Fiadas Afetadas;Topos');
+    
+    openings.forEach(opening => {
+      const { startRow, endRow, rowsAffected } = getAffectedRows(opening.sillMm, opening.heightMm);
+      const { units: toposUnits } = calculateOpeningTopos(opening);
+      const tipo = opening.kind === 'door' ? 'Porta' : 'Janela';
+      const fiadasStr = `${startRow + 1}-${endRow} (${rowsAffected})`;
+      
+      lines.push(`${opening.label};${tipo};${opening.widthMm};${opening.heightMm};${opening.sillMm};${opening.offsetMm};${opening.chainId.slice(0, 8)};${fiadasStr};${toposUnits}`);
+    });
+    
+    // Totals
+    const totalTopos = openings.reduce((sum, o) => sum + calculateOpeningTopos(o).units, 0);
+    const totalLinearM = openings.reduce((sum, o) => sum + calculateOpeningTopos(o).metersLinear, 0);
+    lines.push('');
+    lines.push(`Total Topos (aberturas);${totalTopos} un;${totalLinearM.toFixed(2)} m lineares`);
+    lines.push('');
+  }
   
   // BOM table
   lines.push('=== LISTA DE MATERIAIS (BOM) ===');
