@@ -173,18 +173,15 @@ function ICFPanelInstances({ walls, settings, openings = [] }: ICFPanelInstances
       const dirX = (chain.endX - chain.startX) / chainLength;
       const dirY = (chain.endY - chain.startY) / chainLength;
 
-      // Get openings for this chain
-      const chainOpenings = openings.filter(o => o.chainId === chain.id);
-
       // Only show up to current row
       for (let row = 0; row < Math.min(settings.currentRow, settings.maxRows); row++) {
         // Get remaining intervals for this row (accounting for openings)
-        const intervals = getRemainingIntervalsForRow(chainLength, chainOpenings, row);
+        const intervals = getRemainingIntervalsForRow(chain, openings, row);
 
         // For each interval, place panels
         intervals.forEach((interval) => {
-          const intervalStart = interval[0];
-          const intervalEnd = interval[1];
+          const intervalStart = interval.start;
+          const intervalEnd = interval.end;
           const intervalLength = intervalEnd - intervalStart;
           const panelCount = Math.ceil(intervalLength / PANEL_WIDTH);
 
