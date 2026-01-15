@@ -46,6 +46,9 @@ export default function ProjectEstimate() {
   
   // Viewer settings
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
+    // View mode
+    viewMode: 'panels',
+
     // Debug
     showDXFLines: false, // Segments
     showChains: true, // Chains
