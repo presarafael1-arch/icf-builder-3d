@@ -5,9 +5,10 @@ import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
 import { OpeningData, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
-import { buildWallChains, WallChain } from '@/lib/wall-chains';
+import { buildWallChains } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
 import { DiagnosticsHUD } from './DiagnosticsHUD';
+import { PanelLegend } from './PanelLegend';
 
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
@@ -154,7 +155,20 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
   );
 }
 
-// Main panel instances component - renders panels based on chains with opening gaps
+// Panel type for coloring
+type PanelType = 'normal' | 'cut' | 'stagger';
+
+// Color palette for panel types
+const PANEL_COLORS = {
+  normal: new THREE.Color().setHSL(0.12, 0.65, 0.65), // Yellow-ish
+  cut: new THREE.Color().setHSL(0.08, 0.75, 0.55), // Orange
+  stagger: new THREE.Color().setHSL(0.14, 0.55, 0.60), // Light gold (for offset rows)
+};
+
+// Stagger offset for odd rows (for interlocking pattern)
+const STAGGER_OFFSET = 600; // mm
+
+// Main panel instances component - renders panels based on chains with opening gaps and stagger
 function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChange }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -171,7 +185,7 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
   }, []);
 
   const { positions, count } = useMemo(() => {
-    const positions: { matrix: THREE.Matrix4; color: THREE.Color }[] = [];
+    const positions: { matrix: THREE.Matrix4; color: THREE.Color; type: PanelType }[] = [];
 
     // For each chain
     chains.forEach((chain) => {
@@ -185,6 +199,10 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
       // Only show up to current row (slider controls this)
       const visibleRows = Math.min(settings.currentRow, settings.maxRows);
       for (let row = 0; row < visibleRows; row++) {
+        // Apply stagger offset for odd rows (interlocking pattern)
+        const isOddRow = row % 2 === 1;
+        const staggerOffset = isOddRow ? STAGGER_OFFSET : 0;
+        
         // Get remaining intervals for this row (accounting for openings)
         const intervals = getRemainingIntervalsForRow(chain, openings, row);
 
@@ -196,25 +214,55 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
           
           if (intervalLength < 50) return; // Skip tiny intervals
           
-          const panelCount = Math.ceil(intervalLength / PANEL_WIDTH);
+          // Calculate how many panels fit, considering stagger
+          const effectiveStart = intervalStart + (isOddRow && intervalStart === 0 ? staggerOffset : 0);
+          
+          // Iterate through the interval placing panels
+          let cursor = effectiveStart;
+          let panelIndex = 0;
+          
+          // Handle initial cut piece for stagger
+          if (isOddRow && intervalStart === 0 && staggerOffset > 0) {
+            // First partial panel due to stagger
+            const cutWidth = Math.min(staggerOffset, intervalEnd);
+            if (cutWidth >= 100) {
+              const panelCenter = cutWidth / 2;
+              const posX = chain.startX + dirX * panelCenter;
+              const posZ = chain.startY + dirY * panelCenter;
+              const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
 
-          for (let i = 0; i < panelCount; i++) {
-            // Calculate actual panel width (last panel might be cut)
-            const panelStart = intervalStart + i * PANEL_WIDTH;
-            const panelEnd = Math.min(panelStart + PANEL_WIDTH, intervalEnd);
-            const actualPanelWidth = panelEnd - panelStart;
+              const matrix = new THREE.Matrix4();
+              matrix.compose(
+                new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
+                new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+                new THREE.Vector3(cutWidth / PANEL_WIDTH, 1, 1)
+              );
+
+              positions.push({
+                matrix,
+                color: PANEL_COLORS.cut.clone(),
+                type: 'cut',
+              });
+            }
+            cursor = staggerOffset;
+          }
+          
+          // Place panels from cursor to end
+          while (cursor < intervalEnd) {
+            const remainingLength = intervalEnd - cursor;
+            const panelWidth = Math.min(PANEL_WIDTH, remainingLength);
             
-            if (actualPanelWidth < 50) continue; // Skip very small pieces
+            if (panelWidth < 50) break; // Skip very small pieces
             
-            const panelCenter = panelStart + actualPanelWidth / 2;
+            const panelCenter = cursor + panelWidth / 2;
             
             // Position along chain (2D: X,Y in plan -> 3D: X,Z with Y as height)
             const posX = chain.startX + dirX * panelCenter;
             const posZ = chain.startY + dirY * panelCenter;
-            const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2; // Center of panel height
+            const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
 
             const matrix = new THREE.Matrix4();
-            const scaleX = actualPanelWidth / PANEL_WIDTH; // Scale for cut panels
+            const scaleX = panelWidth / PANEL_WIDTH;
             
             matrix.compose(
               new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
@@ -222,14 +270,23 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
               new THREE.Vector3(scaleX, 1, 1)
             );
 
-            // Alternate colors per row for visibility
-            const hue = 0.55 + (row % 2) * 0.02;
-            const lightness = 0.65 + (row % 2) * 0.08;
+            // Determine panel type and color
+            const isCut = panelWidth < PANEL_WIDTH - 10;
+            const panelType: PanelType = isCut ? 'cut' : (isOddRow ? 'stagger' : 'normal');
+            const color = PANEL_COLORS[panelType].clone();
             
+            // Add slight brightness variation for visual depth
+            const rowVariation = (row % 3) * 0.03;
+            color.offsetHSL(0, 0, rowVariation);
+
             positions.push({
               matrix,
-              color: new THREE.Color().setHSL(hue, 0.15, lightness),
+              color,
+              type: panelType,
             });
+            
+            cursor += PANEL_WIDTH;
+            panelIndex++;
           }
         });
       }
@@ -269,9 +326,9 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
       key={`panels-${count}`}
     >
       <meshStandardMaterial 
-        color="#b8c4d4" 
-        roughness={0.6} 
-        metalness={0.15} 
+        vertexColors
+        roughness={0.5} 
+        metalness={0.1} 
         wireframe={settings.wireframe}
       />
     </instancedMesh>
@@ -705,6 +762,7 @@ interface ICFViewer3DProps {
 
 export function ICFViewer3D({ walls, settings, openings = [], className = '' }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
+  const [showLegend, setShowLegend] = useState(true);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
   const bboxInfo = useMemo(() => {
@@ -718,6 +776,9 @@ export function ICFViewer3D({ walls, settings, openings = [], className = '' }: 
       heightM,
     };
   }, [bbox]);
+
+  // Only show legend when in panels mode
+  const showPanelsMode = settings.viewMode === 'panels' || settings.viewMode === 'both';
 
   return (
     <div className={`viewer-container ${className} relative`}>
@@ -733,6 +794,16 @@ export function ICFViewer3D({ walls, settings, openings = [], className = '' }: 
           onPanelCountChange={setPanelInstancesCount}
         />
       </Canvas>
+
+      {/* Panel Legend - only in panels mode */}
+      {showPanelsMode && panelInstancesCount > 0 && (
+        <PanelLegend 
+          visible={showLegend}
+          onToggle={() => setShowLegend(!showLegend)}
+          showOpenings={settings.showOpenings && openings.length > 0}
+          showTopos={settings.showTopos && openings.length > 0}
+        />
+      )}
 
       {/* Diagnostics HUD */}
       <DiagnosticsHUD 
