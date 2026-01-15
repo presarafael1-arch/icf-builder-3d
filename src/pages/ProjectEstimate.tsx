@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Download, FileSpreadsheet, Box, Loader2 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { WallSegment, ViewerSettings, BOMResult, ConcreteThickness, CornerMode, RebarSpacing } from '@/types/icf';
+import { useOpenings } from '@/hooks/useOpenings';
+import { WallSegment, ViewerSettings, BOMResult, ConcreteThickness, CornerMode, RebarSpacing, Opening } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateBOM, calculateNumberOfRows } from '@/lib/icf-calculations';
 import { generateBOMCSV, downloadCSV, generateFilename } from '@/lib/export-csv';
 import { generateBOMPDF, captureCanvasScreenshot } from '@/lib/export-pdf';
@@ -43,6 +44,9 @@ export default function ProjectEstimate() {
   const [loading, setLoading] = useState(true);
   const [exportingCSV, setExportingCSV] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
+  
+  // Openings from localStorage
+  const { openings } = useOpenings(id);
   
   // Viewer settings
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
@@ -137,25 +141,40 @@ export default function ProjectEstimate() {
     }
   };
   
-  // Calculate BOM
+  // Convert OpeningData to legacy Opening format for BOM calculation
+  const bomOpenings: Opening[] = useMemo(() => {
+    return openings.map(o => ({
+      id: o.id,
+      wallId: o.chainId,
+      type: o.kind === 'door' ? 'door' : 'window',
+      widthMm: o.widthMm,
+      heightMm: o.heightMm,
+      sillHeightMm: o.sillMm,
+      positionMm: o.offsetMm,
+      chainId: o.chainId,
+    }));
+  }, [openings]);
+  
+  // Calculate BOM with openings
   const bom: BOMResult | null = useMemo(() => {
     if (!project || walls.length === 0) return null;
     
     return calculateBOM(
       walls,
-      [], // openings - will be implemented later
+      bomOpenings,
       project.wall_height_mm,
       project.rebar_spacing_cm,
       project.concrete_thickness as ConcreteThickness,
       project.corner_mode as CornerMode
     );
-  }, [project, walls]);
+  }, [project, walls, bomOpenings]);
   
   const handleExportCSV = () => {
     if (!bom || !project) return;
     
     setExportingCSV(true);
     try {
+      // Pass openings to CSV export
       const csvContent = generateBOMCSV(bom, {
         projectName: project.name,
         concreteThickness: project.concrete_thickness as ConcreteThickness,
@@ -163,7 +182,8 @@ export default function ProjectEstimate() {
         rebarSpacingCm: project.rebar_spacing_cm,
         cornerMode: project.corner_mode,
         numberOfRows: bom.numberOfRows,
-      });
+      }, openings);
+      
       const filename = generateFilename(project.name, 'csv');
       downloadCSV(csvContent, filename);
       
@@ -319,6 +339,7 @@ export default function ProjectEstimate() {
                 <ICFViewer3D 
                   walls={walls} 
                   settings={viewerSettings}
+                  openings={openings}
                   className="w-full h-full rounded-none"
                 />
                 <ViewerControls
