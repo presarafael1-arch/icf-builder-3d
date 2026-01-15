@@ -1,7 +1,8 @@
-import { Package, Box, CircleDot, Layers, Scissors, ArrowDownToLine, Grid3X3 } from 'lucide-react';
+import { Package, Box, CircleDot, Layers, Scissors, ArrowDownToLine, Grid3X3, AlertTriangle, Link } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { BOMResult } from '@/types/icf';
 
 interface BOMTableProps {
@@ -10,8 +11,48 @@ interface BOMTableProps {
 }
 
 export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
+  // Validate BOM - check for overcounting
+  const expectedPanelsApprox = Math.ceil((bom.totalWallLength / 1000) / 1.2) * bom.numberOfRows;
+  const isOvercounted = bom.panelsCount > expectedPanelsApprox * 1.35;
+  const isChainsUsed = (bom.chainsCount ?? 0) > 0;
+  const reductionPercent = bom.chainsCount && bom.chainsCount > 0 
+    ? Math.round((1 - bom.chainsCount / (bom.junctionCounts.end + bom.junctionCounts.L + bom.junctionCounts.T + bom.junctionCounts.X)) * 100)
+    : 0;
+  
   return (
     <div className="space-y-6">
+      {/* BOM Source Header */}
+      <Card className="border-primary/30 bg-primary/5">
+        <CardContent className="pt-4">
+          <div className="flex items-center gap-3">
+            <Link className="h-5 w-5 text-primary" />
+            <div className="flex-1">
+              <div className="font-medium text-sm">
+                Calculado por: {isChainsUsed ? 'CADEIAS (CHAINS)' : 'SEGMENTOS (fallback)'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {bom.chainsCount ?? 0} cadeias | {(bom.totalWallLength / 1000).toFixed(2)}m total | {bom.numberOfRows} fiadas
+              </div>
+            </div>
+            {isChainsUsed && (
+              <Badge variant="default" className="bg-green-600">Chains ✓</Badge>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Warning if overcounted */}
+      {isOvercounted && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>BOM provavelmente sobrecontado</AlertTitle>
+          <AlertDescription>
+            Esperado ~{expectedPanelsApprox} painéis, calculado {bom.panelsCount}. 
+            O merge pode não estar a consolidar corretamente os segmentos.
+          </AlertDescription>
+        </Alert>
+      )}
+      
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card className="card-highlight">

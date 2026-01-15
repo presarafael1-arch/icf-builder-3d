@@ -4,6 +4,7 @@ import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-thre
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
+import { buildWallChains, WallChain } from '@/lib/wall-chains';
 
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
@@ -43,6 +44,7 @@ function calculateWallsBoundingBox(walls: WallSegment[], maxRows: number) {
   };
 }
 
+// DXF Segments debug layer (thin gray lines)
 function DXFDebugLines({ walls }: { walls: WallSegment[] }) {
   const geometry = useMemo(() => {
     const positions = new Float32Array(walls.length * 2 * 3);
@@ -51,10 +53,10 @@ function DXFDebugLines({ walls }: { walls: WallSegment[] }) {
       const w = walls[i];
       // Plane: XZ (Y is up). We map 2D Y -> Z.
       positions[i * 6 + 0] = w.startX * SCALE;
-      positions[i * 6 + 1] = 0;
+      positions[i * 6 + 1] = 0.01; // Slightly above ground
       positions[i * 6 + 2] = w.startY * SCALE;
       positions[i * 6 + 3] = w.endX * SCALE;
-      positions[i * 6 + 4] = 0;
+      positions[i * 6 + 4] = 0.01;
       positions[i * 6 + 5] = w.endY * SCALE;
     }
 
@@ -68,7 +70,40 @@ function DXFDebugLines({ walls }: { walls: WallSegment[] }) {
 
   return (
     <lineSegments geometry={geometry} frustumCulled={false}>
-      <lineBasicMaterial color={'hsl(195 90% 55%)'} linewidth={1} />
+      <lineBasicMaterial color={'#666666'} linewidth={1} opacity={0.5} transparent />
+    </lineSegments>
+  );
+}
+
+// Chain overlay (thick cyan lines) - uses consolidated chains
+function ChainOverlay({ walls }: { walls: WallSegment[] }) {
+  const chainsResult = useMemo(() => buildWallChains(walls), [walls]);
+  
+  const geometry = useMemo(() => {
+    const chains = chainsResult.chains;
+    const positions = new Float32Array(chains.length * 2 * 3);
+
+    for (let i = 0; i < chains.length; i++) {
+      const c = chains[i];
+      positions[i * 6 + 0] = c.startX * SCALE;
+      positions[i * 6 + 1] = 0.02; // Above segments
+      positions[i * 6 + 2] = c.startY * SCALE;
+      positions[i * 6 + 3] = c.endX * SCALE;
+      positions[i * 6 + 4] = 0.02;
+      positions[i * 6 + 5] = c.endY * SCALE;
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    g.computeBoundingSphere();
+    return g;
+  }, [chainsResult]);
+
+  if (chainsResult.chains.length === 0) return null;
+
+  return (
+    <lineSegments geometry={geometry} frustumCulled={false}>
+      <lineBasicMaterial color={'#00ffff'} linewidth={2} />
     </lineSegments>
   );
 }
@@ -412,8 +447,11 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
       <directionalLight position={[10, 20, 10]} intensity={1} castShadow shadow-mapSize={[2048, 2048]} />
       <directionalLight position={[-10, 10, -10]} intensity={0.3} />
 
-      {/* Debug lines (always use imported walls) */}
+      {/* Debug lines (segments = thin gray) */}
       {settings.showDXFLines && <DXFDebugLines walls={walls} />}
+      
+      {/* Chain overlay (thick cyan) */}
+      {settings.showChains && <ChainOverlay walls={walls} />}
 
       {/* Helpers */}
       {settings.showHelpers && <DebugHelpers walls={walls} settings={settings} />}
