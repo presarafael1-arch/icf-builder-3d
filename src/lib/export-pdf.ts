@@ -2,7 +2,7 @@
 import jsPDF from 'jspdf';
 import { BOMResult, ConcreteThickness } from '@/types/icf';
 
-interface ProjectParams {
+export interface ProjectParams {
   name: string;
   concreteThickness: ConcreteThickness;
   wallHeightMm: number;
@@ -29,9 +29,9 @@ export async function captureCanvasScreenshot(): Promise<string | null> {
  * Get rebar spacing label
  */
 function getRebarLabel(spacing: number): string {
-  if (spacing === 20) return '20 cm (Standard)';
-  if (spacing === 15) return '15 cm (+1 web extra)';
-  if (spacing === 10) return '10 cm (+2 webs extra)';
+  if (spacing === 20) return '20 cm (Standard, 2 webs/painel)';
+  if (spacing === 15) return '15 cm (+1 web extra, 3 webs/painel)';
+  if (spacing === 10) return '10 cm (+2 webs extra, 4 webs/painel)';
   return `${spacing} cm`;
 }
 
@@ -58,6 +58,8 @@ export async function generateBOMPDF(
   const primaryColor: [number, number, number] = [0, 122, 140]; // Teal
   const textColor: [number, number, number] = [30, 30, 30];
   const mutedColor: [number, number, number] = [100, 100, 100];
+  const successColor: [number, number, number] = [34, 139, 34];
+  const warningColor: [number, number, number] = [200, 120, 0];
   
   // Title
   doc.setFillColor(...primaryColor);
@@ -91,6 +93,14 @@ export async function generateBOMPDF(
   doc.text(`Gerado em: ${date}`, margin, y);
   y += 15;
   
+  // BOM Calculation Source
+  const isChainsUsed = (bom.chainsCount ?? 0) > 0;
+  doc.setTextColor(...(isChainsUsed ? successColor : warningColor));
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Calculado por: ${isChainsUsed ? 'CADEIAS (CHAINS)' : 'SEGMENTOS (fallback)'}`, margin, y);
+  y += 8;
+  
   // Parameters Section
   doc.setTextColor(...primaryColor);
   doc.setFontSize(14);
@@ -108,29 +118,51 @@ export async function generateBOMPDF(
     ['Número de Fiadas:', `${project.numberOfRows}`],
     ['Espaçamento Ferros:', getRebarLabel(project.rebarSpacingCm)],
     ['Modo Cantos:', project.cornerMode === 'overlap_cut' ? 'Overlap + Corte' : 'Topo'],
-    ['Comprimento Total:', `${(bom.totalWallLength / 1000).toFixed(2)} m`]
+    ['Comprimento Total:', `${(bom.totalWallLength / 1000).toFixed(2)} m`],
+    ['Nº de Cadeias:', `${bom.chainsCount ?? 'N/A'}`],
   ];
   
   params.forEach(([label, value]) => {
     doc.setFont('helvetica', 'bold');
     doc.text(label, margin, y);
     doc.setFont('helvetica', 'normal');
-    doc.text(value, margin + 45, y);
+    doc.text(value, margin + 50, y);
     y += 6;
   });
   
   y += 5;
   
+  // Waste diagnostics
+  const wastePct = bom.wastePct ?? 0;
+  const expectedPanelsApprox = bom.expectedPanelsApprox ?? Math.ceil((bom.totalWallLength / 1200)) * bom.numberOfRows;
+  
+  doc.setTextColor(...primaryColor);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Diagnóstico de Cálculo', margin, y);
+  y += 6;
+  
+  doc.setTextColor(...textColor);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Painéis esperados (aprox): ${expectedPanelsApprox}`, margin, y);
+  y += 5;
+  doc.text(`Painéis calculados: ${bom.panelsCount}`, margin, y);
+  y += 5;
+  doc.setTextColor(wastePct > 0.15 ? warningColor[0] : textColor[0], wastePct > 0.15 ? warningColor[1] : textColor[1], wastePct > 0.15 ? warningColor[2] : textColor[2]);
+  doc.text(`Desperdício (waste): ${(wastePct * 100).toFixed(1)}%`, margin, y);
+  y += 10;
+  
   // 3D Screenshot
   if (canvasScreenshot) {
     doc.setTextColor(...primaryColor);
-    doc.setFontSize(14);
+    doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('Visualização 3D', margin, y);
     y += 5;
     
     const imgWidth = contentWidth;
-    const imgHeight = imgWidth * 0.6;
+    const imgHeight = imgWidth * 0.5;
     
     try {
       doc.addImage(canvasScreenshot, 'JPEG', margin, y, imgWidth, imgHeight);
@@ -142,7 +174,7 @@ export async function generateBOMPDF(
   }
   
   // Check if we need a new page
-  if (y > 200) {
+  if (y > 190) {
     doc.addPage();
     y = margin;
   }
@@ -171,16 +203,22 @@ export async function generateBOMPDF(
   doc.setFont('helvetica', 'normal');
   
   const bomRows = [
-    ['Painel Standard 1200x400mm', `${bom.panelsCount} un`, ''],
-    ['Webs Distanciadoras', `${bom.websTotal} un`, `${bom.websPerRow} webs/nível`],
+    ['Painel Standard 1200x400mm', `${bom.panelsCount} un`, `${bom.panelsPerFiada || '-'} painéis/fiada`],
     ['Tarugos (Total)', `${bom.tarugosTotal} un`, `Base: ${bom.tarugosBase}, Ajustes: ${bom.tarugosAdjustments}`],
-    ['Tarugos de Injeção', `${bom.tarugosInjection} un`, ''],
+    ['Tarugos de Injeção', `${bom.tarugosInjection} un`, 'Controlo betonagem'],
     [`Topo (${project.concreteThickness}mm)`, `${bom.toposUnits} un`, `${bom.toposMeters.toFixed(2)} m lineares`],
+    ['Webs Distanciadoras', `${bom.websTotal} un`, `${bom.websPerPanel || bom.websPerRow} webs/painel`],
     [`GRID ${project.concreteThickness}mm`, `${bom.gridsTotal} un`, `${bom.gridsPerRow} por fiada × ${bom.gridRows.length} fiadas`],
     ['Cortes', `${bom.cutsCount}`, `${(bom.cutsLengthMm / 1000).toFixed(2)} m total`]
   ];
   
   bomRows.forEach((row, index) => {
+    // Check if we need a new page
+    if (y > 270) {
+      doc.addPage();
+      y = margin;
+    }
+    
     if (index % 2 === 0) {
       doc.setFillColor(248, 248, 248);
       doc.rect(margin, y - 4, contentWidth, 7, 'F');
@@ -195,6 +233,19 @@ export async function generateBOMPDF(
     doc.text(row[2], margin + colWidths[0] + colWidths[1] + 2, y);
     y += 7;
   });
+  
+  // Junction summary
+  y += 5;
+  doc.setTextColor(...primaryColor);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Topologia', margin, y);
+  y += 6;
+  
+  doc.setTextColor(...textColor);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Cantos L: ${bom.junctionCounts.L}  |  Nós T: ${bom.junctionCounts.T}  |  Nós X: ${bom.junctionCounts.X}  |  Fins: ${bom.junctionCounts.end}`, margin, y);
   
   // Footer
   const pageCount = doc.internal.pages.length - 1;

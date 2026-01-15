@@ -3,12 +3,11 @@
 // Goal: consolidate fragmented DXF wall segments into *logical* straight runs (chains)
 // so BOM and 3D panel placement do not overcount due to per-segment ceil().
 //
-// Key properties:
-// - Input walls are always in mm (internal invariant)
-// - Snapping (spatial hash) unifies near-coincident endpoints
-// - Optional gap bridging closes micro-gaps
-// - Graph reduction merges degree-2 nodes that are nearly colinear
-// - Output chains are the reduced edges of this graph
+// Features:
+// - Tolerance presets (conservative, normal, aggressive)
+// - Auto-tuning based on wastePct
+// - Jog simplification for micro-breaks
+// - Robust snapping, gap bridging, graph reduction
 
 import { WallSegment, JunctionType, PANEL_WIDTH } from '@/types/icf';
 
@@ -56,6 +55,12 @@ export interface ChainsResult {
     gapTolMm: number;
     angleTolDeg: number;
     noiseMinMm: number;
+    jogMaxMm: number;
+    preset: ChainPreset;
+
+    // waste diagnostics
+    wastePct: number;
+    wastePerFiadaMm: number;
   };
   junctionCounts: {
     L: number;
@@ -65,23 +70,47 @@ export interface ChainsResult {
   };
 }
 
+export type ChainPreset = 'conservative' | 'normal' | 'aggressive' | 'auto';
+
 export type WallChainOptions = {
-  snapTolMm?: number; // default 5
-  gapTolMm?: number; // default 10
-  angleTolDeg?: number; // default 2
-  noiseMinMm?: number; // default 100
-  // if true, attempts to snap walls that are “almost” axis-aligned to perfect 0/90deg
-  // (helps interval merge / overlaps). Safe default is true.
+  snapTolMm?: number;
+  gapTolMm?: number;
+  angleTolDeg?: number;
+  noiseMinMm?: number;
+  jogMaxMm?: number; // max jog length to simplify
   snapOrthogonal?: boolean;
+  preset?: ChainPreset;
 };
 
-const DEFAULTS: Required<WallChainOptions> = {
-  snapTolMm: 5,
-  gapTolMm: 10,
-  angleTolDeg: 2,
-  noiseMinMm: 100,
-  snapOrthogonal: true,
+// Preset configurations
+const PRESETS: Record<Exclude<ChainPreset, 'auto'>, Required<Omit<WallChainOptions, 'preset'>>> = {
+  conservative: {
+    snapTolMm: 5,
+    gapTolMm: 10,
+    angleTolDeg: 2,
+    noiseMinMm: 100,
+    jogMaxMm: 50,
+    snapOrthogonal: true,
+  },
+  normal: {
+    snapTolMm: 15,
+    gapTolMm: 30,
+    angleTolDeg: 5,
+    noiseMinMm: 100,
+    jogMaxMm: 120,
+    snapOrthogonal: true,
+  },
+  aggressive: {
+    snapTolMm: 25,
+    gapTolMm: 60,
+    angleTolDeg: 8,
+    noiseMinMm: 100,
+    jogMaxMm: 200,
+    snapOrthogonal: true,
+  },
 };
+
+const DEFAULTS = PRESETS.normal;
 
 // =============== math helpers ===============
 
@@ -124,10 +153,6 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.sqrt(dist2(ax, ay, bx, by));
 }
 
-function projectScalarOnDir(x: number, y: number, dirX: number, dirY: number): number {
-  return x * dirX + y * dirY;
-}
-
 // =============== snapping via spatial hash ===============
 
 type SnapCluster = {
@@ -158,12 +183,11 @@ function neighborCellKeys(x: number, y: number, cellSize: number): string[] {
 function snapPoints(points: { x: number; y: number }[], snapTolMm: number): {
   snapped: { x: number; y: number }[];
 } {
-  // incremental clustering: assign each point to an existing cluster within tol, otherwise create a new cluster
   const cellSize = Math.max(1, snapTolMm);
   const tol2 = snapTolMm * snapTolMm;
 
   const clusters: SnapCluster[] = [];
-  const grid = new Map<string, number[]>(); // cellKey -> clusterIds
+  const grid = new Map<string, number[]>();
 
   const snapped: { x: number; y: number }[] = [];
 
@@ -196,7 +220,6 @@ function snapPoints(points: { x: number; y: number }[], snapTolMm: number): {
     }
 
     const c = clusters[bestClusterId];
-    // update cluster center (running average)
     c.x = (c.x * c.count + p.x) / (c.count + 1);
     c.y = (c.y * c.count + p.y) / (c.count + 1);
     c.count += 1;
@@ -212,11 +235,9 @@ function snapOrthogonalSegment(seg: { startX: number; startY: number; endX: numb
   const dy = seg.endY - seg.startY;
   const a = Math.atan2(dy, dx);
 
-  // snap to horizontal
   if (Math.abs(Math.sin(a)) <= Math.sin(angleTolRad)) {
     return { ...seg, endY: seg.startY };
   }
-  // snap to vertical
   if (Math.abs(Math.cos(a)) <= Math.sin(angleTolRad)) {
     return { ...seg, endX: seg.startX };
   }
@@ -224,7 +245,7 @@ function snapOrthogonalSegment(seg: { startX: number; startY: number; endX: numb
   return seg;
 }
 
-// =============== dedup / overlap merge (best-effort, safe) ===============
+// =============== dedup / overlap merge ===============
 
 function segKey(a: { x: number; y: number }, b: { x: number; y: number }): string {
   const p1 = `${Math.round(a.x)},${Math.round(a.y)}`;
@@ -246,8 +267,6 @@ function dedupSegments(segments: WallSegment[]): WallSegment[] {
   return out;
 }
 
-// Basic overlap merge for axis-aligned segments (very common in architectural DXFs).
-// This is conservative: it only merges segments that are clearly colinear *and* on the same line.
 function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: number; lineTolMm: number }): WallSegment[] {
   const angleTolRad = tol.angleTolRad;
   const lineTolMm = tol.lineTolMm;
@@ -261,7 +280,6 @@ function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: n
     const dy = s.endY - s.startY;
     const a = Math.atan2(dy, dx);
 
-    // horizontal (|dy| small)
     if (Math.abs(dy) <= lineTolMm && Math.abs(Math.sin(a)) <= Math.sin(angleTolRad)) horizontals.push(s);
     else if (Math.abs(dx) <= lineTolMm && Math.abs(Math.cos(a)) <= Math.sin(angleTolRad)) verticals.push(s);
     else others.push(s);
@@ -273,7 +291,6 @@ function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: n
     segs: WallSegment[],
     kind: 'h' | 'v'
   ) => {
-    // group by constant coordinate
     const groups = new Map<string, WallSegment[]>();
 
     for (const s of segs) {
@@ -283,7 +300,6 @@ function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: n
     }
 
     groups.forEach((group) => {
-      // normalize to [min,max] along the varying axis
       type Interval = { min: number; max: number; fixed: number; segs: WallSegment[] };
       const intervals: Interval[] = group.map((s) => {
         if (kind === 'h') {
@@ -317,7 +333,6 @@ function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: n
         }
       }
 
-      // convert back to segments
       out.forEach((it, idx) => {
         const id = `merged-${kind}-${idx}-${Math.round(it.fixed)}`;
         if (kind === 'h') {
@@ -351,16 +366,66 @@ function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: n
 
   mergeIntervals(horizontals, 'h');
   mergeIntervals(verticals, 'v');
-
-  // keep others as-is
   merged.push(...others);
 
-  // recompute length/angle for all
   return merged.map((s) => ({
     ...s,
     length: calculateLength(s),
     angle: calculateNormalizedAngle(s),
   }));
+}
+
+// =============== jog simplification ===============
+
+function simplifyJogs(segments: WallSegment[], jogMaxMm: number, angleTolRad: number): WallSegment[] {
+  if (jogMaxMm <= 0) return segments;
+  
+  // Find degree-2 nodes where one edge is very short (jog) and the other two are colinear
+  // This is a simplified approach - identify short segments that connect two longer colinear segments
+  const result = [...segments];
+  let changed = true;
+  
+  while (changed) {
+    changed = false;
+    
+    for (let i = 0; i < result.length; i++) {
+      const seg = result[i];
+      if (seg.length > jogMaxMm) continue;
+      
+      // Find segments that connect to this short segment's endpoints
+      const connectsToStart: number[] = [];
+      const connectsToEnd: number[] = [];
+      
+      for (let j = 0; j < result.length; j++) {
+        if (i === j) continue;
+        const other = result[j];
+        
+        const d1 = distance(seg.startX, seg.startY, other.startX, other.startY);
+        const d2 = distance(seg.startX, seg.startY, other.endX, other.endY);
+        const d3 = distance(seg.endX, seg.endY, other.startX, other.startY);
+        const d4 = distance(seg.endX, seg.endY, other.endX, other.endY);
+        
+        const tol = jogMaxMm * 0.5;
+        if (d1 < tol || d2 < tol) connectsToStart.push(j);
+        if (d3 < tol || d4 < tol) connectsToEnd.push(j);
+      }
+      
+      // If exactly one segment on each end, and they're colinear, remove the jog
+      if (connectsToStart.length === 1 && connectsToEnd.length === 1) {
+        const segA = result[connectsToStart[0]];
+        const segB = result[connectsToEnd[0]];
+        
+        if (anglesColinear(segA.angle, segB.angle, angleTolRad)) {
+          // Remove the short jog segment
+          result.splice(i, 1);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  
+  return result;
 }
 
 // =============== graph reduction ===============
@@ -382,7 +447,7 @@ type Node = {
   id: string;
   x: number;
   y: number;
-  edges: string[]; // edge ids
+  edges: string[];
 };
 
 function makeNodeKey(x: number, y: number, tol: number): string {
@@ -408,7 +473,6 @@ function buildGraph(segments: WallSegment[], snapTolMm: number): { nodes: Map<st
     const a = getOrCreateNode(s.startX, s.startY);
     const b = getOrCreateNode(s.endX, s.endY);
 
-    // avoid self-edge
     if (a.id === b.id) return;
 
     const id = `e-${i}`;
@@ -442,6 +506,8 @@ function reduceGraphColinear(
   angleTolRad: number
 ): void {
   let changed = true;
+  let iterations = 0;
+  const maxIterations = 1000;
 
   const nodeById = () => {
     const map = new Map<string, Node>();
@@ -449,8 +515,9 @@ function reduceGraphColinear(
     return map;
   };
 
-  while (changed) {
+  while (changed && iterations < maxIterations) {
     changed = false;
+    iterations++;
     const byId = nodeById();
 
     for (const node of byId.values()) {
@@ -460,7 +527,6 @@ function reduceGraphColinear(
       const e2 = graph.edges.get(node.edges[1]);
       if (!e1 || !e2) continue;
 
-      // If the two edges are nearly colinear, merge them into one.
       if (!anglesColinear(e1.angle, e2.angle, angleTolRad)) continue;
 
       const n1Id = otherNodeId(e1, node.id);
@@ -471,7 +537,6 @@ function reduceGraphColinear(
       const n2 = [...graph.nodes.values()].find((n) => n.id === n2Id);
       if (!n1 || !n2) continue;
 
-      // create merged edge
       const mergedId = `m-${graph.edges.size}`;
       const mergedEdge: Edge = {
         id: mergedId,
@@ -486,11 +551,9 @@ function reduceGraphColinear(
         segments: [...e1.segments, ...e2.segments],
       };
 
-      // remove old edges
       graph.edges.delete(e1.id);
       graph.edges.delete(e2.id);
 
-      // remove node from endpoints edge lists, then add merged edge
       const removeEdgeFromNode = (nodeObj: Node, edgeId: string) => {
         nodeObj.edges = nodeObj.edges.filter((id) => id !== edgeId);
       };
@@ -500,19 +563,15 @@ function reduceGraphColinear(
       removeEdgeFromNode(n2, e1.id);
       removeEdgeFromNode(n2, e2.id);
 
-      // remove the intermediate node
       const keyToDelete = [...graph.nodes.entries()].find(([, n]) => n.id === node.id)?.[0];
       if (keyToDelete) graph.nodes.delete(keyToDelete);
 
-      // also remove e1/e2 from whichever endpoint had them
-      // (note: node already removed)
-      // Add merged edge
       graph.edges.set(mergedId, mergedEdge);
       n1.edges.push(mergedId);
       n2.edges.push(mergedId);
 
       changed = true;
-      break; // restart scanning because graph mutated
+      break;
     }
   }
 }
@@ -524,14 +583,12 @@ function bridgeGaps(
   const { gapTolMm, angleTolRad, snapTolMm } = opts;
   if (gapTolMm <= 0) return segments;
 
-  // Find endpoints of degree-1 nodes and connect if close & colinear.
   const { nodes, edges } = buildGraph(segments, snapTolMm);
   const degree1 = [...nodes.values()].filter((n) => n.edges.length === 1);
   if (degree1.length < 2) return segments;
 
   const gap2 = gapTolMm * gapTolMm;
 
-  // very simple O(n^2) on degree-1 endpoints (usually small)
   const extraSegments: WallSegment[] = [];
   for (let i = 0; i < degree1.length; i++) {
     for (let j = i + 1; j < degree1.length; j++) {
@@ -544,7 +601,6 @@ function bridgeGaps(
       const eb = edges.get(b.edges[0]);
       if (!ea || !eb) continue;
 
-      // Only bridge if both rays are nearly colinear with the bridge direction
       const bridgeAngle = calculateNormalizedAngle({ startX: a.x, startY: a.y, endX: b.x, endY: b.y });
       if (!anglesColinear(ea.angle, bridgeAngle, angleTolRad)) continue;
       if (!anglesColinear(eb.angle, bridgeAngle, angleTolRad)) continue;
@@ -570,14 +626,47 @@ function bridgeGaps(
     angle: calculateNormalizedAngle(s),
   }));
 
-  // dedup again
   return dedupSegments(combined);
+}
+
+// =============== waste calculation ===============
+
+function calculateWasteStats(chains: WallChain[]): { wastePct: number; wastePerFiadaMm: number } {
+  if (chains.length === 0) return { wastePct: 0, wastePerFiadaMm: 0 };
+  
+  let wastePerFiadaMm = 0;
+  let totalLengthMm = 0;
+  
+  for (const chain of chains) {
+    const remainder = chain.lengthMm % PANEL_WIDTH;
+    if (remainder > 0) {
+      wastePerFiadaMm += PANEL_WIDTH - remainder;
+    }
+    totalLengthMm += chain.lengthMm;
+  }
+  
+  const wastePct = totalLengthMm > 0 ? wastePerFiadaMm / totalLengthMm : 0;
+  
+  return { wastePct, wastePerFiadaMm };
 }
 
 // =============== public API ===============
 
+export function getPresetOptions(preset: ChainPreset): Required<Omit<WallChainOptions, 'preset'>> {
+  if (preset === 'auto') return PRESETS.normal;
+  return PRESETS[preset];
+}
+
 export function buildWallChains(walls: WallSegment[], options: WallChainOptions = {}): ChainsResult {
-  const opts = { ...DEFAULTS, ...options };
+  const presetName = options.preset ?? 'normal';
+  const presetOpts = presetName === 'auto' ? PRESETS.normal : PRESETS[presetName];
+  
+  const opts = {
+    ...presetOpts,
+    ...options,
+    preset: presetName,
+  };
+  
   const angleTolRad = degToRad(opts.angleTolDeg);
 
   const originalSegments = walls.length;
@@ -585,7 +674,7 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
   // 1) Noise filter
   const noiseFiltered = walls.filter((w) => calculateLength(w) >= opts.noiseMinMm);
 
-  // 2) Snap endpoints (spatial hash clustering)
+  // 2) Snap endpoints
   const points: { x: number; y: number }[] = [];
   noiseFiltered.forEach((w) => {
     points.push({ x: w.startX, y: w.startY });
@@ -626,17 +715,19 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
   // 4) Best-effort overlap merge for axis-aligned geometry
   const overlapMerged = mergeAxisAlignedOverlaps(deduped, { angleTolRad, lineTolMm: Math.max(1, opts.snapTolMm) });
 
-  // 5) Gap bridging (optional) then dedup again
-  const afterGaps = bridgeGaps(overlapMerged, { gapTolMm: opts.gapTolMm, angleTolRad, snapTolMm: opts.snapTolMm });
+  // 5) Jog simplification
+  const afterJogs = simplifyJogs(overlapMerged, opts.jogMaxMm, angleTolRad);
 
-  // 6) Graph build + reduction (degree-2 colinear nodes)
+  // 6) Gap bridging
+  const afterGaps = bridgeGaps(afterJogs, { gapTolMm: opts.gapTolMm, angleTolRad, snapTolMm: opts.snapTolMm });
+
+  // 7) Graph build + reduction
   const graph = buildGraph(afterGaps, opts.snapTolMm);
   reduceGraphColinear(graph, angleTolRad);
 
-  // 7) Convert reduced edges to chains
+  // 8) Convert reduced edges to chains
   const edgeList = [...graph.edges.values()];
 
-  // Map node id -> ChainNode
   const chainNodeById = new Map<string, ChainNode>();
   const ensureChainNode = (nodeId: string): ChainNode => {
     const existing = chainNodeById.get(nodeId);
@@ -679,7 +770,7 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     };
   });
 
-  // classify nodes based on degree and angles
+  // Classify nodes based on degree and angles
   const nodes: ChainNode[] = [...chainNodeById.values()].map((n) => {
     const degree = n.connectedChainIds.length;
     let type: JunctionType = 'end';
@@ -712,6 +803,9 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
 
   const reductionPercent = originalSegments > 0 ? Math.round((1 - chains.length / originalSegments) * 100) : 0;
 
+  // Calculate waste
+  const { wastePct, wastePerFiadaMm } = calculateWasteStats(chains);
+
   const stats = {
     originalSegments,
     afterNoiseFilter: noiseFiltered.length,
@@ -730,24 +824,21 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     gapTolMm: opts.gapTolMm,
     angleTolDeg: opts.angleTolDeg,
     noiseMinMm: opts.noiseMinMm,
+    jogMaxMm: opts.jogMaxMm,
+    preset: presetName as ChainPreset,
+
+    wastePct,
+    wastePerFiadaMm,
   };
 
   console.log('[WallChains] Stats:', {
     originalSegments: stats.originalSegments,
-    afterNoiseFilter: stats.afterNoiseFilter,
-    afterDedup: stats.afterDedupSegments,
     chainsCount: stats.chainsCount,
     reductionPercent: `${stats.reductionPercent}%`,
     totalLengthM: (stats.totalLengthMm / 1000).toFixed(2),
-    minChainM: (stats.minChainLengthMm / 1000).toFixed(2),
     avgChainM: (stats.avgChainLengthMm / 1000).toFixed(2),
-    maxChainM: (stats.maxChainLengthMm / 1000).toFixed(2),
-    tolerances: {
-      snapTolMm: stats.snapTolMm,
-      gapTolMm: stats.gapTolMm,
-      angleTolDeg: stats.angleTolDeg,
-      noiseMinMm: stats.noiseMinMm,
-    },
+    wastePct: `${(stats.wastePct * 100).toFixed(1)}%`,
+    preset: stats.preset,
     junctions: junctionCounts,
   });
 
@@ -756,6 +847,32 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     nodes,
     stats,
     junctionCounts,
+  };
+}
+
+/**
+ * Auto-tune: try multiple presets and pick the one with best score
+ * Score = wastePct + 0.5 * (chainsCount / originalSegments)
+ */
+export function buildWallChainsAutoTuned(walls: WallSegment[]): ChainsResult & { triedPresets: ChainPreset[] } {
+  const presets: Exclude<ChainPreset, 'auto'>[] = ['conservative', 'normal', 'aggressive'];
+  const results: { preset: ChainPreset; result: ChainsResult; score: number }[] = [];
+  
+  for (const preset of presets) {
+    const result = buildWallChains(walls, { preset });
+    const score = result.stats.wastePct + 0.5 * (result.stats.chainsCount / Math.max(1, result.stats.originalSegments));
+    results.push({ preset, result, score });
+  }
+  
+  // Sort by score ascending (lower is better)
+  results.sort((a, b) => a.score - b.score);
+  
+  const best = results[0];
+  console.log('[WallChains] Auto-tune selected:', best.preset, 'score:', best.score.toFixed(3));
+  
+  return {
+    ...best.result,
+    triedPresets: presets,
   };
 }
 
@@ -830,7 +947,7 @@ export function calculateBOMFromChains(
   // Injection tarugos (default 1 per panel)
   const tarugosInjection = panelsTotal;
 
-  // Webs per panel
+  // Webs per panel (discrete: 10cm=4, 15cm=3, 20cm=2)
   const websPerPanel = rebarSpacingCm === 10 ? 4 : rebarSpacingCm === 15 ? 3 : 2;
   const websTotal = panelsTotal * websPerPanel;
 
@@ -843,17 +960,11 @@ export function calculateBOMFromChains(
   if (gridSettings.mid && numFiadas > 2) gridRows.push(Math.round(numFiadas / 2) - 1);
   if (gridSettings.top && numFiadas > 1) gridRows.push(numFiadas - 1);
 
-  // unique & sorted
   const uniqueGridRows = Array.from(new Set(gridRows)).sort((a, b) => a - b);
   const gridsTotal = gridsPerFiada * uniqueGridRows.length;
 
-  // Topos (T/X junction logic placeholder; concreteThicknessMm used for meters)
-  // Keep existing behavior: topo units from T + X + corners (if mode topo)
+  // Topos
   const topoWidthM = concreteThicknessMm / 1000;
-
-  // Rule used so far in app:
-  // - T junctions: floor(numFiadas/2)
-  // - X junctions: floor(numFiadas/2)
   const tTopo = junctionCounts.T * Math.floor(numFiadas / 2);
   const xTopo = junctionCounts.X * Math.floor(numFiadas / 2);
   const cornerTopo = cornerMode === 'topo' ? junctionCounts.L * numFiadas : 0;
@@ -862,31 +973,25 @@ export function calculateBOMFromChains(
   const toposMeters = toposUnits * topoWidthM;
 
   return {
-    // panels
     panelsCount: panelsTotal,
     panelsPerFiada,
 
-    // cuts/waste
     cutsCount: cutsTotal,
     wasteTotal,
     wastePct,
 
-    // tarugos
     tarugosBase,
     tarugosAdjustments,
     tarugosTotal,
     tarugosInjection,
 
-    // webs
     websPerPanel,
     websTotal,
 
-    // grids
     gridsPerFiada,
     gridsTotal,
     gridRows: uniqueGridRows,
 
-    // topos
     toposUnits,
     toposMeters,
     toposByReason: {
@@ -896,13 +1001,11 @@ export function calculateBOMFromChains(
       corners: cornerTopo,
     },
 
-    // summary
     numberOfRows: numFiadas,
     totalWallLength: totalLengthMm,
     junctionCounts,
     chainsCount: stats.chainsCount,
 
-    // diagnostics
     expectedPanelsApprox,
     roundingWasteMmPerFiada: wastePerFiadaMm,
   };

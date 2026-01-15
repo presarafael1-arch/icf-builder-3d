@@ -153,12 +153,14 @@ export default function ProjectEstimate() {
     
     setExportingCSV(true);
     try {
-      const csvContent = generateBOMCSV(
-        bom,
-        project.name,
-        project.concrete_thickness as ConcreteThickness,
-        project.rebar_spacing_cm
-      );
+      const csvContent = generateBOMCSV(bom, {
+        projectName: project.name,
+        concreteThickness: project.concrete_thickness as ConcreteThickness,
+        wallHeightMm: project.wall_height_mm,
+        rebarSpacingCm: project.rebar_spacing_cm,
+        cornerMode: project.corner_mode,
+        numberOfRows: bom.numberOfRows,
+      });
       const filename = generateFilename(project.name, 'csv');
       downloadCSV(csvContent, filename);
       
