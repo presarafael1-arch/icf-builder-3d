@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect } from 'react';
+import { useRef, useMemo, useEffect, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -7,11 +7,13 @@ import { OpeningData, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, WallChain } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
+import { DiagnosticsHUD } from './DiagnosticsHUD';
 
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
   settings: ViewerSettings;
   openings?: OpeningData[];
+  onInstanceCountChange?: (count: number) => void;
 }
 
 // Scale factor: convert mm to 3D units (1 unit = 1 meter)
@@ -153,7 +155,7 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
 }
 
 // Main panel instances component - renders panels based on chains with opening gaps
-function ICFPanelInstances({ walls, settings, openings = [] }: ICFPanelInstancesProps) {
+function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChange }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   // IMPORTANT: render panels from CHAINS (logical runs), not raw segments
@@ -220,6 +222,11 @@ function ICFPanelInstances({ walls, settings, openings = [] }: ICFPanelInstances
 
     return { positions, count: positions.length };
   }, [walls, chains, openings, settings.currentRow, settings.maxRows]);
+
+  // Report count to parent
+  useEffect(() => {
+    onInstanceCountChange?.(count);
+  }, [count, onInstanceCountChange]);
 
   // Update instance matrices
   useMemo(() => {
@@ -552,7 +559,14 @@ function CameraController({ walls, settings }: { walls: WallSegment[]; settings:
   return null;
 }
 
-function Scene({ walls, settings, openings = [] }: { walls: WallSegment[]; settings: ViewerSettings; openings?: OpeningData[] }) {
+interface SceneProps {
+  walls: WallSegment[];
+  settings: ViewerSettings;
+  openings?: OpeningData[];
+  onPanelCountChange?: (count: number) => void;
+}
+
+function Scene({ walls, settings, openings = [], onPanelCountChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Calculate center of the scene for initial view
@@ -581,6 +595,11 @@ function Scene({ walls, settings, openings = [] }: { walls: WallSegment[]; setti
     );
   }, [walls, settings.maxRows]);
 
+  // Determine what to show based on viewMode
+  const showPanelsLayer = settings.showPanels && (settings.viewMode === 'panels' || settings.viewMode === 'both');
+  const showLinesLayer = settings.showChains && (settings.viewMode === 'lines' || settings.viewMode === 'both');
+  const showSegmentsLayer = settings.showDXFLines;
+
   return (
     <>
       <PerspectiveCamera makeDefault position={initialCameraPosition} fov={50} />
@@ -601,10 +620,10 @@ function Scene({ walls, settings, openings = [] }: { walls: WallSegment[]; setti
       <directionalLight position={[-10, 10, -10]} intensity={0.3} />
 
       {/* Debug lines (segments = thin gray) */}
-      {settings.showDXFLines && <DXFDebugLines walls={walls} />}
+      {showSegmentsLayer && <DXFDebugLines walls={walls} />}
       
       {/* Chain overlay (thick cyan) */}
-      {settings.showChains && <ChainOverlay walls={walls} />}
+      {showLinesLayer && <ChainOverlay walls={walls} />}
 
       {/* Helpers */}
       {settings.showHelpers && <DebugHelpers walls={walls} settings={settings} />}
@@ -627,10 +646,19 @@ function Scene({ walls, settings, openings = [] }: { walls: WallSegment[]; setti
       )}
 
       {/* ICF Panels */}
-      {settings.showPanels && <ICFPanelInstances walls={walls} settings={settings} openings={openings} />}
+      {showPanelsLayer && (
+        <ICFPanelInstances 
+          walls={walls} 
+          settings={settings} 
+          openings={openings} 
+          onInstanceCountChange={onPanelCountChange}
+        />
+      )}
 
       {/* Openings and Topos visualization */}
-      {openings.length > 0 && <OpeningsVisualization walls={walls} settings={settings} openings={openings} />}
+      {openings.length > 0 && settings.showOpenings && (
+        <OpeningsVisualization walls={walls} settings={settings} openings={openings} />
+      )}
 
       {/* Webs */}
       {settings.showWebs && <WebsInstances walls={walls} settings={settings} />}
@@ -652,6 +680,7 @@ interface ICFViewer3DProps {
 }
 
 export function ICFViewer3D({ walls, settings, openings = [], className = '' }: ICFViewer3DProps) {
+  const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
   const bboxInfo = useMemo(() => {
@@ -673,11 +702,24 @@ export function ICFViewer3D({ walls, settings, openings = [], className = '' }: 
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
         style={{ background: 'transparent' }}
       >
-        <Scene walls={walls} settings={settings} openings={openings} />
+        <Scene 
+          walls={walls} 
+          settings={settings} 
+          openings={openings} 
+          onPanelCountChange={setPanelInstancesCount}
+        />
       </Canvas>
 
-      {/* Debug UI (bbox in meters) */}
-      {bboxInfo && settings.showDXFLines && (
+      {/* Diagnostics HUD */}
+      <DiagnosticsHUD 
+        walls={walls} 
+        settings={settings} 
+        openings={openings}
+        panelInstancesCount={panelInstancesCount}
+      />
+
+      {/* Debug UI (bbox in meters) - only when showing debug lines */}
+      {bboxInfo && settings.showHelpers && (
         <div className="absolute top-4 left-4 z-10 rounded-md bg-background/80 backdrop-blur px-3 py-2 text-xs font-mono text-foreground border border-border">
           <div>bbox: {bboxInfo.widthM.toFixed(2)}m × {bboxInfo.heightM.toFixed(2)}m</div>
           <div>paredes: {walls.length}</div>

@@ -1,9 +1,10 @@
-import { Box, Eye, Grid3X3, Layers, Maximize2, RotateCcw } from 'lucide-react';
+import { Box, Eye, Grid3X3, Layers, Maximize2, RotateCcw, PanelTop, Minus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { ViewerSettings } from '@/types/icf';
+import { ViewerSettings, ViewMode, RebarSpacing } from '@/types/icf';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Popover,
   PopoverContent,
@@ -17,6 +18,18 @@ interface ViewerControlsProps {
   onFitView?: () => void;
 }
 
+const VIEW_MODE_OPTIONS: { value: ViewMode; label: string; icon: React.ReactNode }[] = [
+  { value: 'lines', label: 'Linhas', icon: <Minus className="h-3 w-3" /> },
+  { value: 'panels', label: 'Painéis', icon: <PanelTop className="h-3 w-3" /> },
+  { value: 'both', label: 'Ambos', icon: <Layers className="h-3 w-3" /> },
+];
+
+const REBAR_SPACING_OPTIONS: { value: RebarSpacing; label: string; description: string }[] = [
+  { value: 20, label: '20 cm', description: 'Standard' },
+  { value: 15, label: '15 cm', description: '+1 web' },
+  { value: 10, label: '10 cm', description: '+2 webs' },
+];
+
 export function ViewerControls({ settings, onSettingsChange, onReset, onFitView }: ViewerControlsProps) {
   const toggleSetting = (key: keyof ViewerSettings) => {
     if (typeof settings[key] === 'boolean') {
@@ -27,18 +40,65 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
     }
   };
   
+  const handleViewModeChange = (value: string) => {
+    if (value) {
+      const viewMode = value as ViewMode;
+      // Update derived settings based on view mode
+      const showPanels = viewMode === 'panels' || viewMode === 'both';
+      const showChains = viewMode === 'lines' || viewMode === 'both';
+      const showDXFLines = viewMode === 'lines';
+      
+      onSettingsChange({
+        ...settings,
+        viewMode,
+        showPanels,
+        showChains,
+        showDXFLines
+      });
+    }
+  };
+  
+  const handleRebarSpacingChange = (value: string) => {
+    if (value) {
+      onSettingsChange({
+        ...settings,
+        rebarSpacing: parseInt(value) as RebarSpacing
+      });
+    }
+  };
+  
   return (
     <div className="toolbar absolute bottom-4 left-4 right-4 flex flex-wrap justify-between gap-2">
-      {/* Left side - View toggles */}
+      {/* Left side - View Mode + toggles */}
       <div className="flex items-center gap-2">
+        {/* View Mode Toggle */}
+        <ToggleGroup 
+          type="single" 
+          value={settings.viewMode} 
+          onValueChange={handleViewModeChange}
+          className="bg-muted/50 rounded-md p-0.5"
+        >
+          {VIEW_MODE_OPTIONS.map(opt => (
+            <ToggleGroupItem 
+              key={opt.value} 
+              value={opt.value} 
+              className="gap-1 text-xs px-2 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+              title={opt.label}
+            >
+              {opt.icon}
+              <span className="hidden sm:inline">{opt.label}</span>
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="secondary" size="sm" className="gap-2">
               <Eye className="h-4 w-4" />
-              Visibilidade
+              <span className="hidden sm:inline">Visibilidade</span>
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-64" align="start">
+          <PopoverContent className="w-72" align="start">
             <div className="space-y-4">
               <h4 className="text-sm font-medium">Camadas Visíveis</h4>
               
@@ -89,6 +149,15 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                 </div>
                 
                 <div className="flex items-center justify-between">
+                  <Label htmlFor="show-openings" className="text-sm text-orange-400">Aberturas</Label>
+                  <Switch
+                    id="show-openings"
+                    checked={settings.showOpenings}
+                    onCheckedChange={() => toggleSetting('showOpenings')}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between">
                   <Label htmlFor="show-webs" className="text-sm">Webs</Label>
                   <Switch
                     id="show-webs"
@@ -98,7 +167,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="show-grids" className="text-sm text-grid">Grids (Estabilização)</Label>
+                  <Label htmlFor="show-grids" className="text-sm text-red-400">Grids (Estabilização)</Label>
                   <Switch
                     id="show-grids"
                     checked={settings.showGrids}
@@ -132,6 +201,28 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                     onCheckedChange={() => toggleSetting('wireframe')}
                   />
                 </div>
+              </div>
+              
+              {/* Rebar Spacing Selector */}
+              <div className="pt-3 border-t border-border">
+                <Label className="text-sm font-medium mb-2 block">Espaçamento Webs</Label>
+                <ToggleGroup 
+                  type="single" 
+                  value={String(settings.rebarSpacing)} 
+                  onValueChange={handleRebarSpacingChange}
+                  className="grid grid-cols-3 gap-1"
+                >
+                  {REBAR_SPACING_OPTIONS.map(opt => (
+                    <ToggleGroupItem 
+                      key={opt.value} 
+                      value={String(opt.value)} 
+                      className="flex-col h-auto py-2 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                    >
+                      <span className="font-medium">{opt.label}</span>
+                      <span className="text-[10px] opacity-70">{opt.description}</span>
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
               </div>
             </div>
           </PopoverContent>

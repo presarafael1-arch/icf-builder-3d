@@ -182,6 +182,9 @@ export default function ProjectEditor() {
   
   // Viewer settings
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
+    // View mode
+    viewMode: 'panels',
+
     // Debug
     showDXFLines: false, // Segments (gray)
     showChains: true, // Chains (cyan)

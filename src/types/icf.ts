@@ -107,8 +107,11 @@ export interface WebPlacement {
   rotationY: number;
 }
 
-// Rebar spacing options
+// Rebar spacing options (discrete: 20cm standard, 15cm +1 web, 10cm +2 webs)
 export type RebarSpacing = 10 | 15 | 20;
+
+// View mode for 3D viewer
+export type ViewMode = 'lines' | 'panels' | 'both';
 
 // BOM (Bill of Materials) calculation result
 export interface BOMResult {
@@ -176,6 +179,9 @@ export interface BOMResult {
 
 // 3D Viewer settings
 export interface ViewerSettings {
+  // View mode
+  viewMode: ViewMode; // 'lines' | 'panels' | 'both'
+
   // Debug / sanity layers
   showDXFLines: boolean; // Draw imported walls as line segments (gray, debug)
   showChains: boolean; // Draw consolidated chains (cyan, thicker)
