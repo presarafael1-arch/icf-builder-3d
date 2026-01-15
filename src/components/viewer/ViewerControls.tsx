@@ -14,9 +14,10 @@ interface ViewerControlsProps {
   settings: ViewerSettings;
   onSettingsChange: (settings: ViewerSettings) => void;
   onReset?: () => void;
+  onFitView?: () => void;
 }
 
-export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerControlsProps) {
+export function ViewerControls({ settings, onSettingsChange, onReset, onFitView }: ViewerControlsProps) {
   const toggleSetting = (key: keyof ViewerSettings) => {
     if (typeof settings[key] === 'boolean') {
       onSettingsChange({
@@ -155,7 +156,13 @@ export function ViewerControls({ settings, onSettingsChange, onReset }: ViewerCo
             <RotateCcw className="h-4 w-4" />
           </Button>
         )}
-        <Button variant="ghost" size="icon" title="Maximizar">
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Enquadrar / Fit View"
+          onClick={onFitView}
+          disabled={!onFitView}
+        >
           <Maximize2 className="h-4 w-4" />
         </Button>
       </div>
