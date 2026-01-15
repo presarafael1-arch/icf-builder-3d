@@ -159,6 +159,11 @@ export interface BOMResult {
 
 // 3D Viewer settings
 export interface ViewerSettings {
+  // Debug / sanity layers
+  showDXFLines: boolean; // Draw imported walls as line segments (debug layer)
+  showHelpers: boolean; // Axes + bbox helpers (debug)
+
+  // Render layers
   showPanels: boolean;
   showTopos: boolean;
   showWebs: boolean;
@@ -167,6 +172,8 @@ export interface ViewerSettings {
   showJunctions: boolean;
   showGrid: boolean;
   showGrids: boolean; // Stabilization grids
+
+  // View / params
   currentRow: number;
   maxRows: number;
   wireframe: boolean;

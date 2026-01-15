@@ -44,6 +44,24 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
               
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
+                  <Label htmlFor="show-dxf-lines" className="text-sm">Linhas DXF (debug)</Label>
+                  <Switch
+                    id="show-dxf-lines"
+                    checked={settings.showDXFLines}
+                    onCheckedChange={() => toggleSetting('showDXFLines')}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-helpers" className="text-sm">Helpers (eixos/bbox)</Label>
+                  <Switch
+                    id="show-helpers"
+                    checked={settings.showHelpers}
+                    onCheckedChange={() => toggleSetting('showHelpers')}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
                   <Label htmlFor="show-panels" className="text-sm">Painéis</Label>
                   <Switch
                     id="show-panels"
