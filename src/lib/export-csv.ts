@@ -44,14 +44,23 @@ export function generateBOMCSV(
   lines.push(`Modo cantos;${cornerMode === 'overlap_cut' ? 'Overlap + Corte' : 'Topo'}`);
   lines.push('');
   
-  // Chain/merge stats
+  // Chain/merge stats with bin packing
   lines.push('=== ESTATÍSTICAS DE IMPORTAÇÃO ===');
   lines.push(`Comprimento total;${(bom.totalWallLength / 1000).toFixed(2)} m`);
   lines.push(`Número de cadeias;${bom.chainsCount ?? 'N/A'}`);
-  lines.push(`Painéis esperados (aprox);${bom.expectedPanelsApprox ?? 'N/A'}`);
-  lines.push(`Painéis calculados;${bom.panelsCount}`);
-  lines.push(`Desperdício (wastePct);${bom.wastePct ? (bom.wastePct * 100).toFixed(1) + '%' : 'N/A'}`);
-  lines.push(`Calculado por;${(bom.chainsCount ?? 0) > 0 ? 'CADEIAS (CHAINS)' : 'SEGMENTOS (fallback)'}`);
+  lines.push(`Calculado por;${(bom.chainsCount ?? 0) > 0 ? 'CADEIAS (CHAINS) + BIN PACKING' : 'SEGMENTOS (fallback)'}`);
+  lines.push('');
+  
+  // Bin packing diagnostics
+  lines.push('=== CÁLCULO DE PAINÉIS (BIN PACKING) ===');
+  lines.push(`Mínimo teórico;${bom.expectedPanelsApprox ?? 'N/A'} painéis`);
+  lines.push(`Painéis inteiros por fiada;${bom.sumFullPanelsPerFiada ?? 'N/A'}`);
+  lines.push(`Remainders (chains com resto);${bom.remaindersCount ?? 'N/A'}`);
+  lines.push(`Bins usados por fiada;${bom.binsUsedPerFiada ?? 'N/A'}`);
+  lines.push(`Painéis por fiada;${bom.panelsPerFiada ?? 'N/A'}`);
+  lines.push(`Compra recomendada (total);${bom.panelsCount} painéis`);
+  lines.push(`Desperdício por fiada;${bom.roundingWasteMmPerFiada ? (bom.roundingWasteMmPerFiada / 1000).toFixed(2) + ' m' : 'N/A'}`);
+  lines.push(`Waste %;${bom.wastePct ? (bom.wastePct * 100).toFixed(1) + '%' : 'N/A'}`);
   lines.push('');
   
   // Junction counts

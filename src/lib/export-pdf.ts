@@ -98,7 +98,7 @@ export async function generateBOMPDF(
   doc.setTextColor(...(isChainsUsed ? successColor : warningColor));
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Calculado por: ${isChainsUsed ? 'CADEIAS (CHAINS)' : 'SEGMENTOS (fallback)'}`, margin, y);
+  doc.text(`Calculado por: ${isChainsUsed ? 'CADEIAS + BIN PACKING' : 'SEGMENTOS (fallback)'}`, margin, y);
   y += 8;
   
   // Parameters Section
@@ -135,22 +135,28 @@ export async function generateBOMPDF(
   // Waste diagnostics
   const wastePct = bom.wastePct ?? 0;
   const expectedPanelsApprox = bom.expectedPanelsApprox ?? Math.ceil((bom.totalWallLength / 1200)) * bom.numberOfRows;
+  const isWasteGood = wastePct <= 0.10;
+  const isWasteOk = wastePct <= 0.15;
   
   doc.setTextColor(...primaryColor);
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
-  doc.text('Diagnóstico de Cálculo', margin, y);
+  doc.text('Diagnóstico de Cálculo (Bin Packing)', margin, y);
   y += 6;
   
   doc.setTextColor(...textColor);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Painéis esperados (aprox): ${expectedPanelsApprox}`, margin, y);
+  doc.text(`Mínimo teórico: ${expectedPanelsApprox} painéis`, margin, y);
   y += 5;
-  doc.text(`Painéis calculados: ${bom.panelsCount}`, margin, y);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Compra recomendada: ${bom.panelsCount} painéis`, margin, y);
+  doc.setFont('helvetica', 'normal');
   y += 5;
-  doc.setTextColor(wastePct > 0.15 ? warningColor[0] : textColor[0], wastePct > 0.15 ? warningColor[1] : textColor[1], wastePct > 0.15 ? warningColor[2] : textColor[2]);
-  doc.text(`Desperdício (waste): ${(wastePct * 100).toFixed(1)}%`, margin, y);
+  
+  const wasteColor = isWasteGood ? successColor : (isWasteOk ? warningColor : [200, 50, 50] as [number, number, number]);
+  doc.setTextColor(...wasteColor);
+  doc.text(`Waste: ${(wastePct * 100).toFixed(1)}% ${isWasteGood ? '✓ Optimizado' : isWasteOk ? '(aceitável)' : '(elevado)'}`, margin, y);
   y += 10;
   
   // 3D Screenshot

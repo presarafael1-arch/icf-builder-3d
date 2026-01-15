@@ -896,32 +896,81 @@ export function buildWallChainsAutoTuned(walls: WallSegment[]): ChainsResult & {
   };
 }
 
+/**
+ * Calculate full panels and remainder for a single chain
+ */
 export function calculatePanelsForChain(chainLengthMm: number): {
-  panelsPerFiada: number;
-  hasCut: boolean;
-  cutLengthMm: number;
-  wasteMm: number;
+  fullPanels: number;
+  remainderMm: number;
 } {
   const fullPanels = Math.floor(chainLengthMm / PANEL_WIDTH);
-  const remainder = chainLengthMm % PANEL_WIDTH;
+  const remainderMm = chainLengthMm % PANEL_WIDTH;
+  return { fullPanels, remainderMm };
+}
 
-  if (remainder === 0) {
-    return {
-      panelsPerFiada: fullPanels,
-      hasCut: false,
-      cutLengthMm: 0,
-      wasteMm: 0,
-    };
+/**
+ * First-Fit Decreasing Bin Packing for remainders
+ * Each bin has capacity 1200mm (one panel)
+ * Returns the number of additional panels needed to cover all remainders
+ */
+export function binPackRemainders(remainders: number[], binCapacity: number = PANEL_WIDTH): {
+  binsUsed: number;
+  bins: number[][]; // for debugging
+  totalWasteMm: number;
+} {
+  if (remainders.length === 0) {
+    return { binsUsed: 0, bins: [], totalWasteMm: 0 };
   }
 
+  // Sort descending (largest first for FFD)
+  const sorted = [...remainders].sort((a, b) => b - a);
+  
+  // Each bin tracks remaining capacity and items
+  const bins: { remaining: number; items: number[] }[] = [];
+  
+  for (const rem of sorted) {
+    if (rem <= 0) continue;
+    
+    // Find first bin with enough space
+    let placed = false;
+    for (const bin of bins) {
+      if (bin.remaining >= rem) {
+        bin.remaining -= rem;
+        bin.items.push(rem);
+        placed = true;
+        break;
+      }
+    }
+    
+    // No bin found, create new one
+    if (!placed) {
+      bins.push({ remaining: binCapacity - rem, items: [rem] });
+    }
+  }
+  
+  // Calculate total waste (unused space in bins)
+  const totalWasteMm = bins.reduce((sum, bin) => sum + bin.remaining, 0);
+  
   return {
-    panelsPerFiada: fullPanels + 1,
-    hasCut: true,
-    cutLengthMm: remainder,
-    wasteMm: PANEL_WIDTH - remainder,
+    binsUsed: bins.length,
+    bins: bins.map(b => b.items),
+    totalWasteMm,
   };
 }
 
+/**
+ * Calculate BOM using bin packing for optimal panel count
+ * 
+ * HARD RULE: BOM por metros lineares com aproveitamento de cortes
+ * NOT: ceil per chain (that causes 31% waste)
+ * 
+ * Algorithm per fiada:
+ * 1. For each chain: full = floor(len/1200), rem = len % 1200
+ * 2. Sum all fullPanels
+ * 3. Collect all remainders > 0
+ * 4. Apply FFD bin packing to remainders
+ * 5. panelsPerFiada = sumFull + binsUsed
+ */
 export function calculateBOMFromChains(
   chainsResult: ChainsResult,
   numFiadas: number,
@@ -931,87 +980,125 @@ export function calculateBOMFromChains(
   gridSettings: { base: boolean; mid: boolean; top: boolean } = { base: true, mid: false, top: false }
 ) {
   const { chains, junctionCounts, stats } = chainsResult;
+  const totalLengthMm = stats.totalLengthMm;
 
-  // Panels calculation (per chain, per fiada)
-  let panelsPerFiada = 0;
-  let cutsPerFiada = 0;
-  let wastePerFiadaMm = 0;
-
-  chains.forEach((chain) => {
-    const result = calculatePanelsForChain(chain.lengthMm);
-    panelsPerFiada += result.panelsPerFiada;
-    if (result.hasCut) {
-      cutsPerFiada++;
-      wastePerFiadaMm += result.wasteMm;
+  // ============ PANELS WITH BIN PACKING ============
+  // Per fiada calculation (same for all fiadas since geometry is same)
+  let sumFullPanels = 0;
+  const remainders: number[] = [];
+  
+  for (const chain of chains) {
+    const { fullPanels, remainderMm } = calculatePanelsForChain(chain.lengthMm);
+    sumFullPanels += fullPanels;
+    if (remainderMm > 0) {
+      remainders.push(remainderMm);
     }
+  }
+  
+  // Bin pack remainders
+  const packingResult = binPackRemainders(remainders);
+  
+  // Panels per fiada = full panels + bins for remainders
+  const panelsPerFiada = sumFullPanels + packingResult.binsUsed;
+  const panelsTotal = panelsPerFiada * numFiadas;
+  
+  // Waste calculation
+  const wastePerFiadaMm = packingResult.totalWasteMm;
+  const wasteTotal = wastePerFiadaMm * numFiadas;
+  
+  // Waste percentage (vs supplied material per fiada)
+  const suppliedMmPerFiada = panelsPerFiada * PANEL_WIDTH;
+  const wastePct = suppliedMmPerFiada > 0 ? wastePerFiadaMm / suppliedMmPerFiada : 0;
+  
+  // Minimum theoretical (if one continuous run)
+  const minPanelsPerFiada = Math.ceil(totalLengthMm / PANEL_WIDTH);
+  const expectedPanelsApprox = minPanelsPerFiada * numFiadas;
+  
+  // Cuts = number of remainders (one cut per chain with remainder)
+  const cutsPerFiada = remainders.length;
+  const cutsTotal = cutsPerFiada * numFiadas;
+
+  console.log('[BOM] Bin Packing Results:', {
+    totalLengthM: (totalLengthMm / 1000).toFixed(2),
+    chainsCount: chains.length,
+    sumFullPanels,
+    remaindersCount: remainders.length,
+    binsUsed: packingResult.binsUsed,
+    panelsPerFiada,
+    panelsTotal,
+    minPanelsTotal: expectedPanelsApprox,
+    wastePct: `${(wastePct * 100).toFixed(1)}%`,
+    wastePerFiadaMm: wastePerFiadaMm.toFixed(0),
   });
 
-  const panelsTotal = panelsPerFiada * numFiadas;
-  const cutsTotal = cutsPerFiada * numFiadas;
-  const wasteTotal = wastePerFiadaMm * numFiadas;
-
-  const totalLengthMm = stats.totalLengthMm;
-  const wastePct = totalLengthMm > 0 ? wastePerFiadaMm / totalLengthMm : 0;
-
-  // Reference expected panels (no fragmentation / one big chain)
-  const expectedPanelsApprox = Math.ceil(totalLengthMm / PANEL_WIDTH) * numFiadas;
-
-  // Tarugos (base: 2 per panel)
+  // ============ TARUGOS ============
+  // Base: 2 per panel
   const tarugosBase = panelsTotal * 2;
-
-  // L: -1, T: +1, X: +2 (per fiada)
-  const adjustmentPerFiada = junctionCounts.L * -1 + junctionCounts.T * 1 + junctionCounts.X * 2;
+  
+  // Adjustments: L: -1, T: +1, X: +2 (per fiada, cumulative)
+  const adjustmentPerFiada = (junctionCounts.L * -1) + (junctionCounts.T * 1) + (junctionCounts.X * 2);
   const tarugosAdjustments = adjustmentPerFiada * numFiadas;
-  const tarugosTotal = tarugosBase + tarugosAdjustments;
-
-  // Injection tarugos (default 1 per panel)
+  const tarugosTotal = Math.max(0, tarugosBase + tarugosAdjustments);
+  
+  // Injection tarugos: 1 per panel
   const tarugosInjection = panelsTotal;
 
-  // Webs per panel (discrete: 10cm=4, 15cm=3, 20cm=2)
+  // ============ WEBS ============
+  // Discrete: 20cm=2, 15cm=3, 10cm=4 webs per panel
   const websPerPanel = rebarSpacingCm === 10 ? 4 : rebarSpacingCm === 15 ? 3 : 2;
   const websTotal = panelsTotal * websPerPanel;
 
-  // Grids (stabilization) - 3m units
+  // ============ GRIDS (3m units) ============
   const totalLengthM = totalLengthMm / 1000;
   const gridsPerFiada = Math.ceil(totalLengthM / 3);
-
+  
   const gridRows: number[] = [];
   if (gridSettings.base) gridRows.push(0);
-  if (gridSettings.mid && numFiadas > 2) gridRows.push(Math.round(numFiadas / 2) - 1);
+  if (gridSettings.mid && numFiadas > 2) gridRows.push(Math.floor(numFiadas / 2));
   if (gridSettings.top && numFiadas > 1) gridRows.push(numFiadas - 1);
-
+  
+  // Remove duplicates and sort
   const uniqueGridRows = Array.from(new Set(gridRows)).sort((a, b) => a - b);
   const gridsTotal = gridsPerFiada * uniqueGridRows.length;
 
-  // Topos
-  const topoWidthM = concreteThicknessMm / 1000;
-  const tTopo = junctionCounts.T * Math.floor(numFiadas / 2);
-  const xTopo = junctionCounts.X * Math.floor(numFiadas / 2);
-  const cornerTopo = cornerMode === 'topo' ? junctionCounts.L * numFiadas : 0;
-
+  // ============ TOPOS ============
+  // T-junctions: Tipo2 fiadas (even rows: 2,4,6...) need topos
+  // numTipo2Fiadas = floor(numFiadas / 2) for alternation starting at row 1
+  const numTipo2Fiadas = Math.floor(numFiadas / 2);
+  
+  // Topos at T: 1 topo per T per Tipo2 fiada
+  const tTopo = junctionCounts.T * numTipo2Fiadas;
+  
+  // Topos at X: similar to T (X has 2 perpendicular, but each only on Tipo2)
+  const xTopo = junctionCounts.X * numTipo2Fiadas;
+  
+  // Corner topos (only if corner_mode = 'topo')
+  const cornerTopo = cornerMode === 'topo' ? junctionCounts.L * numTipo2Fiadas : 0;
+  
   const toposUnits = tTopo + xTopo + cornerTopo;
-  const toposMeters = toposUnits * topoWidthM;
+  const topoWidthM = concreteThicknessMm / 1000; // 0.15 or 0.2
+  const toposMeters = toposUnits * 0.4; // Each topo is 400mm height = 0.4m
 
   return {
     panelsCount: panelsTotal,
     panelsPerFiada,
-
+    
     cutsCount: cutsTotal,
     wasteTotal,
     wastePct,
-
+    
     tarugosBase,
     tarugosAdjustments,
     tarugosTotal,
     tarugosInjection,
-
+    
     websPerPanel,
     websTotal,
-
+    
     gridsPerFiada,
     gridsTotal,
     gridRows: uniqueGridRows,
-
+    
     toposUnits,
     toposMeters,
     toposByReason: {
@@ -1020,13 +1107,18 @@ export function calculateBOMFromChains(
       openings: 0,
       corners: cornerTopo,
     },
-
+    
     numberOfRows: numFiadas,
     totalWallLength: totalLengthMm,
     junctionCounts,
     chainsCount: stats.chainsCount,
-
-    expectedPanelsApprox,
+    
+    // Diagnostics
+    expectedPanelsApprox, // minimum theoretical
+    minPanelsPerFiada,
     roundingWasteMmPerFiada: wastePerFiadaMm,
+    binsUsedPerFiada: packingResult.binsUsed,
+    sumFullPanelsPerFiada: sumFullPanels,
+    remaindersCount: remainders.length,
   };
 }
