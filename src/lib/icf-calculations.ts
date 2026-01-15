@@ -11,7 +11,7 @@ import {
   ConcreteThickness,
   JunctionType
 } from '@/types/icf';
-import { buildWallChains, calculateBOMFromChains, ChainsResult, WallChainOptions } from './wall-chains';
+import { buildWallChains, buildWallChainsAutoTuned, calculateBOMFromChains, ChainsResult, WallChainOptions } from './wall-chains';
 
 /**
  * Calculate the number of rows based on wall height
@@ -223,8 +223,7 @@ export function calculateBOM(
 
   // Use auto-tuned chains for best results
   // This tries conservative, normal, aggressive and picks the one with lowest wastePct
-  const autoTunedResult = require('./wall-chains').buildWallChainsAutoTuned(walls);
-  const chainsResult = autoTunedResult;
+  const chainsResult = buildWallChainsAutoTuned(walls);
 
   const hasChains = chainsResult.chains.length > 0;
 
