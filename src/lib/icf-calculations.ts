@@ -221,13 +221,10 @@ export function calculateBOM(
 ): BOMResult {
   const numberOfRows = calculateNumberOfRows(wallHeightMm);
 
-  // Build *final* chains (use stricter defaults tuned for architectural DXF)
-  const chainsResult = buildWallChains(walls, {
-    snapTolMm: 5,
-    gapTolMm: 10,
-    angleTolDeg: 2,
-    noiseMinMm: 100,
-  });
+  // Use auto-tuned chains for best results
+  // This tries conservative, normal, aggressive and picks the one with lowest wastePct
+  const autoTunedResult = require('./wall-chains').buildWallChainsAutoTuned(walls);
+  const chainsResult = autoTunedResult;
 
   const hasChains = chainsResult.chains.length > 0;
 

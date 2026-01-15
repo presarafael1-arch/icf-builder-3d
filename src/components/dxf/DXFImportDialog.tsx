@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, Layers, Check, FileText, AlertCircle, Info, Ruler, GitMerge, Trash2 } from 'lucide-react';
+import { Upload, Layers, Check, FileText, AlertCircle, Info, Ruler, GitMerge, Trash2, Settings2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { 
   parseDXF, 
   processDXF,
@@ -22,7 +23,7 @@ import {
   DXFParseResult,
   NormalizedDXFResult
 } from '@/lib/dxf-parser';
-import { buildWallChains } from '@/lib/wall-chains';
+import { buildWallChains, buildWallChainsAutoTuned, ChainPreset, getPresetOptions } from '@/lib/wall-chains';
 
 interface DXFImportDialogProps {
   open: boolean;
@@ -40,6 +41,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
   const [processedResult, setProcessedResult] = useState<NormalizedDXFResult | null>(null);
   const [selectedLayers, setSelectedLayers] = useState<string[]>([]);
   const [selectedUnit, setSelectedUnit] = useState<'mm' | 'm'>('m');
+  const [selectedPreset, setSelectedPreset] = useState<ChainPreset>('auto');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -50,6 +52,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
     setProcessedResult(null);
     setSelectedLayers([]);
     setSelectedUnit('m');
+    setSelectedPreset('auto');
     setError(null);
     setLoading(false);
   };
@@ -141,9 +144,39 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
 
   const bbox = parseResult?.boundingBox;
 
+  // Build chains for preview with selected preset
+  const getChainPreview = () => {
+    if (!processedResult) return null;
+    
+    const wallsForChains = processedResult.finalSegments.map((s, i) => ({
+      id: `tmp-${i}`,
+      projectId: 'tmp',
+      startX: s.startX,
+      startY: s.startY,
+      endX: s.endX,
+      endY: s.endY,
+      layerName: s.layerName,
+      length: 0,
+      angle: 0,
+    }));
+    
+    if (selectedPreset === 'auto') {
+      return buildWallChainsAutoTuned(wallsForChains);
+    }
+    
+    return buildWallChains(wallsForChains, { preset: selectedPreset });
+  };
+
+  const presetLabels: Record<ChainPreset, { name: string; desc: string }> = {
+    auto: { name: 'Auto (Recomendado)', desc: 'Testa todos e escolhe o melhor' },
+    conservative: { name: 'Conservador', desc: 'Tolerâncias baixas, mantém mais detalhe' },
+    normal: { name: 'Normal', desc: 'Bom equilíbrio para a maioria dos DXF' },
+    aggressive: { name: 'Agressivo', desc: 'Tolerâncias altas, máxima consolidação' },
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="h-5 w-5 text-primary" />
@@ -285,6 +318,33 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
 
         {step === 'preview' && processedResult && (
           <div className="space-y-4">
+            {/* Preset selector */}
+            <div className="space-y-2 p-3 bg-muted/30 rounded-md">
+              <div className="flex items-center gap-2">
+                <Settings2 className="h-4 w-4 text-primary" />
+                <Label className="font-medium">Preset de Consolidação</Label>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2">
+                {(['auto', 'conservative', 'normal', 'aggressive'] as ChainPreset[]).map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => setSelectedPreset(preset)}
+                    className={`p-2 rounded-md text-left text-xs transition-colors ${
+                      selectedPreset === preset
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-background hover:bg-muted'
+                    }`}
+                  >
+                    <div className="font-medium">{presetLabels[preset].name}</div>
+                    <div className={selectedPreset === preset ? 'text-primary-foreground/70' : 'text-muted-foreground'}>
+                      {presetLabels[preset].desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Normalization pipeline visualization */}
             <div className="space-y-3">
               <div className="text-sm font-medium flex items-center gap-2">
@@ -340,29 +400,26 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
 
             {/* Chains diagnostics (post-normalization) */}
             {(() => {
-              const wallsForChains = processedResult.finalSegments.map((s, i) => ({
-                id: `tmp-${i}`,
-                projectId: 'tmp',
-                startX: s.startX,
-                startY: s.startY,
-                endX: s.endX,
-                endY: s.endY,
-                layerName: s.layerName,
-                length: 0,
-                angle: 0,
-              }));
-              const chains = buildWallChains(wallsForChains, {
-                snapTolMm: 5,
-                gapTolMm: 10,
-                angleTolDeg: 2,
-                noiseMinMm: 100,
-              });
+              const chains = getChainPreview();
+              if (!chains) return null;
 
               const weakMerge = chains.stats.chainsCount > processedResult.stats.finalWalls * 0.85;
+              const isWasteHigh = chains.stats.wastePct > 0.15;
+              const bestPreset = 'bestPreset' in chains ? (chains as any).bestPreset : selectedPreset;
+              const expectedPanels = Math.ceil(chains.stats.totalLengthMm / 1200) * 7; // approx 7 rows
+              const estimatedPanels = chains.chains.reduce((sum, c) => sum + Math.ceil(c.lengthMm / 1200), 0) * 7;
 
               return (
                 <div className="p-3 bg-muted/30 rounded-md space-y-2">
-                  <div className="text-sm font-medium">Cadeias (Chains) — diagnóstico</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium">Cadeias (Chains) — diagnóstico</div>
+                    {selectedPreset === 'auto' && (
+                      <Badge variant="outline" className="text-xs">
+                        Melhor: {presetLabels[bestPreset as ChainPreset]?.name || bestPreset}
+                      </Badge>
+                    )}
+                  </div>
+                  
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="p-2 bg-background rounded">
                       <div className="text-xs text-muted-foreground">Nc (chains)</div>
@@ -372,25 +429,46 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                       <div className="text-xs text-muted-foreground">Comprimento total</div>
                       <div className="font-mono font-bold">{(chains.stats.totalLengthMm / 1000).toFixed(2)} m</div>
                     </div>
-                    <div className="p-2 bg-background rounded col-span-2">
+                    <div className="p-2 bg-background rounded">
                       <div className="text-xs text-muted-foreground">min / avg / max</div>
-                      <div className="font-mono">
+                      <div className="font-mono text-xs">
                         {(chains.stats.minChainLengthMm / 1000).toFixed(2)}m / {(chains.stats.avgChainLengthMm / 1000).toFixed(2)}m / {(chains.stats.maxChainLengthMm / 1000).toFixed(2)}m
                       </div>
                     </div>
-                    <div className="p-2 bg-background rounded col-span-2">
-                      <div className="text-xs text-muted-foreground">Tolerâncias em uso</div>
-                      <div className="font-mono">
-                        snap {chains.stats.snapTolMm}mm · gap {chains.stats.gapTolMm}mm · angle {chains.stats.angleTolDeg}° · noise {chains.stats.noiseMinMm}mm
+                    <div className="p-2 bg-background rounded">
+                      <div className="text-xs text-muted-foreground">Waste</div>
+                      <div className={`font-mono font-bold ${isWasteHigh ? 'text-destructive' : 'text-green-600'}`}>
+                        {(chains.stats.wastePct * 100).toFixed(1)}%
                       </div>
                     </div>
                   </div>
+                  
+                  <div className="p-2 bg-background rounded">
+                    <div className="text-xs text-muted-foreground">Painéis estimados (7 fiadas)</div>
+                    <div className="font-mono">
+                      Esperado: ~{expectedPanels} | Calculado: {estimatedPanels} 
+                      <span className={estimatedPanels > expectedPanels * 1.15 ? 'text-destructive ml-2' : 'text-green-600 ml-2'}>
+                        ({((estimatedPanels / expectedPanels - 1) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                  </div>
 
-                  {weakMerge && (
+                  <div className="p-2 bg-background rounded text-xs">
+                    <div className="text-muted-foreground">Tolerâncias: </div>
+                    <div className="font-mono">
+                      snap {chains.stats.snapTolMm}mm · gap {chains.stats.gapTolMm}mm · angle {chains.stats.angleTolDeg}° · noise {chains.stats.noiseMinMm}mm
+                    </div>
+                  </div>
+
+                  {(weakMerge || isWasteHigh) && (
                     <Alert className="mt-2">
                       <Info className="h-4 w-4" />
                       <AlertDescription>
-                        <strong>Merge fraco:</strong> Nc está muito perto de Ns. Sugestão: aumentar tolerâncias (snap/gap/ângulo).
+                        {isWasteHigh ? (
+                          <span><strong>Waste alto ({(chains.stats.wastePct * 100).toFixed(1)}%):</strong> Muitas cadeias curtas. Experimente preset "Agressivo".</span>
+                        ) : (
+                          <span><strong>Merge fraco:</strong> Nc está muito perto de Ns. Experimente aumentar tolerâncias.</span>
+                        )}
                       </AlertDescription>
                     </Alert>
                   )}
@@ -439,34 +517,29 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
               Cancelar
             </Button>
           )}
-
+          
           {step === 'layers' && (
             <>
               <Button variant="outline" onClick={() => setStep('upload')}>
                 Voltar
               </Button>
-              <Button
+              <Button 
                 onClick={handleProcessAndPreview}
                 disabled={selectedLayers.length === 0 || loading}
-                className="gap-2"
               >
-                {loading ? 'A processar...' : 'Processar DXF'}
+                {loading ? 'A processar...' : 'Pré-visualizar'}
               </Button>
             </>
           )}
-
+          
           {step === 'preview' && (
             <>
               <Button variant="outline" onClick={() => setStep('layers')}>
                 Voltar
               </Button>
-              <Button
-                onClick={handleConfirm}
-                disabled={!processedResult || processedResult.stats.finalWalls === 0}
-                className="gap-2"
-              >
-                <Check className="h-4 w-4" />
-                Importar {processedResult?.stats.finalWalls} paredes
+              <Button onClick={handleConfirm}>
+                <Check className="mr-2 h-4 w-4" />
+                Importar
               </Button>
             </>
           )}

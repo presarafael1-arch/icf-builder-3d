@@ -82,30 +82,30 @@ export type WallChainOptions = {
   preset?: ChainPreset;
 };
 
-// Preset configurations
+// Preset configurations - tuned for architectural DXF files with fragmented geometry
 const PRESETS: Record<Exclude<ChainPreset, 'auto'>, Required<Omit<WallChainOptions, 'preset'>>> = {
   conservative: {
-    snapTolMm: 5,
-    gapTolMm: 10,
-    angleTolDeg: 2,
-    noiseMinMm: 100,
-    jogMaxMm: 50,
+    snapTolMm: 10,
+    gapTolMm: 20,
+    angleTolDeg: 3,
+    noiseMinMm: 80,
+    jogMaxMm: 80,
     snapOrthogonal: true,
   },
   normal: {
-    snapTolMm: 15,
-    gapTolMm: 30,
+    snapTolMm: 25,
+    gapTolMm: 50,
     angleTolDeg: 5,
-    noiseMinMm: 100,
-    jogMaxMm: 120,
+    noiseMinMm: 80,
+    jogMaxMm: 150,
     snapOrthogonal: true,
   },
   aggressive: {
-    snapTolMm: 25,
-    gapTolMm: 60,
-    angleTolDeg: 8,
-    noiseMinMm: 100,
-    jogMaxMm: 200,
+    snapTolMm: 40,
+    gapTolMm: 100,
+    angleTolDeg: 10,
+    noiseMinMm: 60,
+    jogMaxMm: 300,
     snapOrthogonal: true,
   },
 };
@@ -852,27 +852,47 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
 
 /**
  * Auto-tune: try multiple presets and pick the one with best score
- * Score = wastePct + 0.5 * (chainsCount / originalSegments)
+ * Score = wastePct + 0.3 * (chainsCount / originalSegments)
+ * Prioritizes lower wastePct while also considering chain reduction
  */
-export function buildWallChainsAutoTuned(walls: WallSegment[]): ChainsResult & { triedPresets: ChainPreset[] } {
+export function buildWallChainsAutoTuned(walls: WallSegment[]): ChainsResult & { triedPresets: ChainPreset[]; bestPreset: ChainPreset } {
+  if (walls.length === 0) {
+    const empty = buildWallChains(walls, { preset: 'normal' });
+    return { ...empty, triedPresets: ['normal'], bestPreset: 'normal' };
+  }
+  
   const presets: Exclude<ChainPreset, 'auto'>[] = ['conservative', 'normal', 'aggressive'];
   const results: { preset: ChainPreset; result: ChainsResult; score: number }[] = [];
   
   for (const preset of presets) {
     const result = buildWallChains(walls, { preset });
-    const score = result.stats.wastePct + 0.5 * (result.stats.chainsCount / Math.max(1, result.stats.originalSegments));
+    // Lower wastePct = better, fewer chains relative to original = better
+    const chainRatio = result.stats.chainsCount / Math.max(1, result.stats.originalSegments);
+    const score = result.stats.wastePct + 0.3 * chainRatio;
     results.push({ preset, result, score });
+    
+    console.log(`[WallChains] Preset ${preset}: chains=${result.stats.chainsCount}, waste=${(result.stats.wastePct*100).toFixed(1)}%, score=${score.toFixed(3)}`);
   }
   
   // Sort by score ascending (lower is better)
   results.sort((a, b) => a.score - b.score);
   
   const best = results[0];
-  console.log('[WallChains] Auto-tune selected:', best.preset, 'score:', best.score.toFixed(3));
+  console.log('[WallChains] Auto-tune selected:', best.preset, 'with score:', best.score.toFixed(3));
+  
+  // If still bad (wastePct > 15%), log warning
+  if (best.result.stats.wastePct > 0.15) {
+    console.warn('[WallChains] Warning: Best preset still has high waste. Consider manual geometry cleanup.');
+  }
   
   return {
     ...best.result,
+    stats: {
+      ...best.result.stats,
+      preset: best.preset,
+    },
     triedPresets: presets,
+    bestPreset: best.preset,
   };
 }
 
