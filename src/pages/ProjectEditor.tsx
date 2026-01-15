@@ -213,6 +213,36 @@ export default function ProjectEditor() {
       });
     }
   };
+
+  const clearWalls = async () => {
+    if (!id) return;
+
+    try {
+      const { error } = await supabase
+        .from('walls')
+        .delete()
+        .eq('project_id', id);
+
+      if (error) throw error;
+
+      setWalls([]);
+      toast({
+        title: 'Paredes limpas',
+        description: 'O projeto ficou sem paredes. Pode reimportar um DXF.'
+      });
+    } catch (error) {
+      console.error('Error clearing walls:', error);
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível limpar as paredes.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const fitView = () => {
+    window.dispatchEvent(new CustomEvent('icf-fit-view'));
+  };
   
   const handleDXFImport = async (
     segments: DXFSegment[], 
@@ -224,7 +254,15 @@ export default function ProjectEditor() {
     setImportingDXF(true);
     
     try {
-      // Insert all walls from DXF (segments are already normalized: recentered and merged)
+      // Replace mode: clear any previous walls for this project (avoid duplicates / accumulation)
+      const { error: deleteError } = await supabase
+        .from('walls')
+        .delete()
+        .eq('project_id', id);
+
+      if (deleteError) throw deleteError;
+
+      // Insert all walls from DXF (segments are already normalized: mm + recentered + merged)
       const wallsToInsert = segments.map(seg => ({
         project_id: id,
         start_x: seg.startX,
@@ -258,7 +296,11 @@ export default function ProjectEditor() {
         return segment;
       });
       
-      setWalls([...walls, ...newWalls]);
+      // Source of truth: ONLY final walls (no concatenation)
+      setWalls(newWalls);
+
+      // Ensure viewer fits the imported plan
+      fitView();
       
       // Format total length for display
       const totalMeters = stats.totalLengthMM / 1000;
@@ -353,7 +395,7 @@ export default function ProjectEditor() {
           </div>
           
           {/* DXF Import */}
-          <div className="p-4 border-b border-border">
+          <div className="p-4 border-b border-border space-y-2">
             <Button 
               variant="outline" 
               className="w-full gap-2" 
@@ -362,6 +404,17 @@ export default function ProjectEditor() {
             >
               <Upload className="h-4 w-4" />
               {importingDXF ? 'A importar...' : 'Importar DXF'}
+            </Button>
+
+            <Button
+              variant="ghost"
+              className="w-full gap-2"
+              onClick={clearWalls}
+              disabled={importingDXF || walls.length === 0}
+              title={walls.length === 0 ? 'Sem paredes para limpar' : 'Remover todas as paredes do projeto'}
+            >
+              <Trash2 className="h-4 w-4" />
+              Limpar paredes
             </Button>
           </div>
           
@@ -444,6 +497,7 @@ export default function ProjectEditor() {
           <ViewerControls 
             settings={viewerSettings}
             onSettingsChange={setViewerSettings}
+            onFitView={fitView}
           />
           
           {/* Project Info Overlay */}

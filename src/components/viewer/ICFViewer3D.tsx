@@ -247,34 +247,66 @@ function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
 // Camera controller that auto-fits to walls
 function CameraController({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
   const { camera, controls } = useThree();
-  const prevWallCountRef = useRef(0);
-  
+  const prevFitKeyRef = useRef<string>('');
+
+  const fitToWalls = () => {
+    const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+    if (!bbox || !controls) return;
+
+    // Always target the scene center (after normalization, center should be near origin)
+    (controls as any).target.copy(bbox.center);
+
+    const maxDim = Math.max(bbox.size.x, bbox.size.y, bbox.size.z);
+    const distance = Math.max(5, maxDim * 1.8 + 5);
+
+    // Improve clipping for large models
+    camera.near = Math.max(0.01, distance / 1000);
+    camera.far = Math.max(500, distance * 50);
+    camera.updateProjectionMatrix();
+
+    const angle = Math.PI / 4;
+    camera.position.set(
+      bbox.center.x + distance * Math.cos(angle),
+      bbox.center.y + distance * 0.6,
+      bbox.center.z + distance * Math.sin(angle)
+    );
+
+    (controls as any).update();
+  };
+
   useEffect(() => {
-    // Only auto-fit when walls are added (not on every change)
-    if (walls.length > prevWallCountRef.current && walls.length > 0) {
-      const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
-      if (bbox && controls) {
-        // Set orbit controls target to center of walls
-        (controls as any).target.copy(bbox.center);
-        
-        // Calculate optimal camera distance based on bounding box size
-        const maxDim = Math.max(bbox.size.x, bbox.size.y, bbox.size.z);
-        const distance = maxDim * 1.8 + 5; // Add some padding
-        
-        // Position camera at an angle
-        const angle = Math.PI / 4; // 45 degrees
-        camera.position.set(
-          bbox.center.x + distance * Math.cos(angle),
-          bbox.center.y + distance * 0.6,
-          bbox.center.z + distance * Math.sin(angle)
-        );
-        
-        (controls as any).update();
-      }
+    const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+    if (!bbox || walls.length === 0) {
+      prevFitKeyRef.current = '';
+      return;
     }
-    prevWallCountRef.current = walls.length;
-  }, [walls, settings.maxRows, camera, controls]);
-  
+
+    // Refit if geometry meaningfully changed (replace-mode imports may keep same count)
+    const fitKey = [
+      walls.length,
+      bbox.min.x.toFixed(3),
+      bbox.min.z.toFixed(3),
+      bbox.max.x.toFixed(3),
+      bbox.max.z.toFixed(3),
+      bbox.size.x.toFixed(3),
+      bbox.size.z.toFixed(3)
+    ].join('|');
+
+    if (fitKey !== prevFitKeyRef.current) {
+      fitToWalls();
+      prevFitKeyRef.current = fitKey;
+    }
+  }, [walls, settings.maxRows]);
+
+  useEffect(() => {
+    const onFit = () => {
+      if (walls.length > 0) fitToWalls();
+    };
+
+    window.addEventListener('icf-fit-view', onFit as EventListener);
+    return () => window.removeEventListener('icf-fit-view', onFit as EventListener);
+  }, [walls]);
+
   return null;
 }
 
@@ -312,8 +344,8 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
         target={center}
         enableDamping
         dampingFactor={0.05}
-        minDistance={2}
-        maxDistance={200}
+        minDistance={1}
+        maxDistance={2000}
       />
       <CameraController walls={walls} settings={settings} />
       

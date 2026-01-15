@@ -311,6 +311,7 @@ export default function ProjectEstimate() {
                 <ViewerControls
                   settings={viewerSettings}
                   onSettingsChange={setViewerSettings}
+                  onFitView={() => window.dispatchEvent(new CustomEvent('icf-fit-view'))}
                 />
               </div>
             </CardContent>
