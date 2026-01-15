@@ -11,19 +11,24 @@ interface BOMTableProps {
 }
 
 export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
-  // Validate BOM - check for overcounting
-  const expectedPanelsApprox = Math.ceil((bom.totalWallLength / 1000) / 1.2) * bom.numberOfRows;
-  const isOvercounted = bom.panelsCount > expectedPanelsApprox * 1.35;
+  // Reference "expected" panels (minimal rounding)
+  const expectedPanelsApprox =
+    bom.expectedPanelsApprox ?? Math.ceil((bom.totalWallLength / 1200)) * bom.numberOfRows;
+
   const isChainsUsed = (bom.chainsCount ?? 0) > 0;
-  const reductionPercent = bom.chainsCount && bom.chainsCount > 0 
-    ? Math.round((1 - bom.chainsCount / (bom.junctionCounts.end + bom.junctionCounts.L + bom.junctionCounts.T + bom.junctionCounts.X)) * 100)
-    : 0;
-  
+
+  // Overcount: compare vs expected
+  const isOvercounted = bom.panelsCount > expectedPanelsApprox * 1.35;
+
+  // Factual chain-quality metric (rounding waste)
+  const wastePct = bom.wastePct ?? 0;
+  const isWasteHigh = wastePct > 0.15;
+
   return (
     <div className="space-y-6">
       {/* BOM Source Header */}
       <Card className="border-primary/30 bg-primary/5">
-        <CardContent className="pt-4">
+        <CardContent className="pt-4 space-y-2">
           <div className="flex items-center gap-3">
             <Link className="h-5 w-5 text-primary" />
             <div className="flex-1">
@@ -31,24 +36,29 @@ export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
                 Calculado por: {isChainsUsed ? 'CADEIAS (CHAINS)' : 'SEGMENTOS (fallback)'}
               </div>
               <div className="text-xs text-muted-foreground">
-                {bom.chainsCount ?? 0} cadeias | {(bom.totalWallLength / 1000).toFixed(2)}m total | {bom.numberOfRows} fiadas
+                {(bom.chainsCount ?? 0)} cadeias | {(bom.totalWallLength / 1000).toFixed(2)}m total | {bom.numberOfRows} fiadas
               </div>
             </div>
             {isChainsUsed && (
               <Badge variant="default" className="bg-green-600">Chains ✓</Badge>
             )}
           </div>
+
+          {/* Diagnostics line */}
+          <div className="text-xs text-muted-foreground">
+            Aprox sem desperdício: <span className="font-mono text-foreground">{expectedPanelsApprox}</span> · Atual: <span className="font-mono text-foreground">{bom.panelsCount}</span> · Waste: <span className={isWasteHigh ? 'font-mono text-destructive' : 'font-mono text-foreground'}>{(wastePct * 100).toFixed(1)}%</span>
+          </div>
         </CardContent>
       </Card>
-      
+
       {/* Warning if overcounted */}
-      {isOvercounted && (
-        <Alert variant="destructive">
+      {(isOvercounted || isWasteHigh) && (
+        <Alert variant={isOvercounted ? 'destructive' : 'default'}>
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>BOM provavelmente sobrecontado</AlertTitle>
+          <AlertTitle>{isOvercounted ? 'BOM provavelmente sobrecontado' : 'Merge fraco / cadeias curtas'}</AlertTitle>
           <AlertDescription>
-            Esperado ~{expectedPanelsApprox} painéis, calculado {bom.panelsCount}. 
-            O merge pode não estar a consolidar corretamente os segmentos.
+            Esperado ~{expectedPanelsApprox} painéis, calculado {bom.panelsCount}. Waste {(wastePct * 100).toFixed(1)}%.
+            {isChainsUsed ? ' Ajuste snapping/merge para reduzir cadeias curtas.' : ' O cálculo está em fallback (sem cadeias).'}
           </AlertDescription>
         </Alert>
       )}

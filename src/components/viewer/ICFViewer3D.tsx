@@ -14,7 +14,7 @@ interface ICFPanelInstancesProps {
 // Scale factor: convert mm to 3D units (1 unit = 1 meter)
 const SCALE = 0.001;
 
-// Calculate bounding box of walls in 3D space
+// Calculate bounding box of WALL SEGMENTS in 3D space
 function calculateWallsBoundingBox(walls: WallSegment[], maxRows: number) {
   if (walls.length === 0) return null;
 
@@ -35,11 +35,33 @@ function calculateWallsBoundingBox(walls: WallSegment[], maxRows: number) {
   return {
     min: new THREE.Vector3(minX * SCALE, minZ * SCALE, minY * SCALE),
     max: new THREE.Vector3(maxX * SCALE, maxZ * SCALE, maxY * SCALE),
-    center: new THREE.Vector3(
-      ((minX + maxX) / 2) * SCALE,
-      ((minZ + maxZ) / 2) * SCALE,
-      ((minY + maxY) / 2) * SCALE
-    ),
+    center: new THREE.Vector3(((minX + maxX) / 2) * SCALE, ((minZ + maxZ) / 2) * SCALE, ((minY + maxY) / 2) * SCALE),
+    size: new THREE.Vector3((maxX - minX) * SCALE, (maxZ - minZ) * SCALE, (maxY - minY) * SCALE),
+  };
+}
+
+// Calculate bounding box of CHAINS in 3D space (preferred for fit view)
+function calculateChainsBoundingBox(chains: { startX: number; startY: number; endX: number; endY: number }[], maxRows: number) {
+  if (chains.length === 0) return null;
+
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = 0;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = maxRows * PANEL_HEIGHT;
+
+  chains.forEach((c) => {
+    minX = Math.min(minX, c.startX, c.endX);
+    maxX = Math.max(maxX, c.startX, c.endX);
+    minY = Math.min(minY, c.startY, c.endY);
+    maxY = Math.max(maxY, c.startY, c.endY);
+  });
+
+  return {
+    min: new THREE.Vector3(minX * SCALE, minZ * SCALE, minY * SCALE),
+    max: new THREE.Vector3(maxX * SCALE, maxZ * SCALE, maxY * SCALE),
+    center: new THREE.Vector3(((minX + maxX) / 2) * SCALE, ((minZ + maxZ) / 2) * SCALE, ((minY + maxY) / 2) * SCALE),
     size: new THREE.Vector3((maxX - minX) * SCALE, (maxZ - minZ) * SCALE, (maxY - minY) * SCALE),
   };
 }
@@ -130,12 +152,28 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
 function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
+  // IMPORTANT: render panels from CHAINS (logical runs), not raw segments
+  const chainsResult = useMemo(
+    () => buildWallChains(walls, { snapTolMm: 5, gapTolMm: 10, angleTolDeg: 2, noiseMinMm: 100 }),
+    [walls]
+  );
+  const chains = chainsResult.chains;
+
   const { positions, count } = useMemo(() => {
     const positions: { matrix: THREE.Matrix4; color: THREE.Color }[] = [];
 
-    walls.forEach((wall) => {
-      const length = calculateWallLength(wall);
-      const angle = calculateWallAngle(wall);
+    const drawItems = (chains.length > 0 ? chains : walls).map((w: any) => ({
+      startX: w.startX,
+      startY: w.startY,
+      endX: w.endX,
+      endY: w.endY,
+      length: w.lengthMm ?? calculateWallLength(w),
+      angle: w.angle ?? calculateWallAngle(w),
+    }));
+
+    drawItems.forEach((wall) => {
+      const length = wall.length;
+      const angle = wall.angle;
       const panelCount = Math.ceil(length / PANEL_WIDTH);
 
       // Only show up to current row
@@ -162,7 +200,7 @@ function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
     });
 
     return { positions, count: positions.length };
-  }, [walls, settings.currentRow, settings.maxRows]);
+  }, [walls, chains, settings.currentRow, settings.maxRows]);
 
   // Update instance matrices
   useMemo(() => {
@@ -185,12 +223,7 @@ function ICFPanelInstances({ walls, settings }: ICFPanelInstancesProps) {
 
   return (
     <instancedMesh ref={meshRef} args={[panelGeometry, undefined, count]} frustumCulled={false}>
-      <meshStandardMaterial
-        color="#a8b4c4"
-        roughness={0.7}
-        metalness={0.1}
-        wireframe={settings.wireframe}
-      />
+      <meshStandardMaterial color="#a8b4c4" roughness={0.7} metalness={0.1} wireframe={settings.wireframe} />
     </instancedMesh>
   );
 }
@@ -312,16 +345,22 @@ function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
   );
 }
 
-// Camera controller that auto-fits to walls
+// Camera controller that auto-fits to walls (uses CHAINS bbox when available)
 function CameraController({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
   const { camera, controls } = useThree();
   const prevFitKeyRef = useRef<string>('');
 
+  const getFitBBox = () => {
+    const chains = buildWallChains(walls, { snapTolMm: 5, gapTolMm: 10, angleTolDeg: 2, noiseMinMm: 100 }).chains;
+    const chainBBox = calculateChainsBoundingBox(chains, settings.maxRows);
+    return chainBBox ?? calculateWallsBoundingBox(walls, settings.maxRows);
+  };
+
   const fitToWalls = () => {
-    const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+    const bbox = getFitBBox();
     if (!bbox || !controls) return;
 
-    ;(controls as any).target.copy(bbox.center);
+    (controls as any).target.copy(bbox.center);
 
     const maxDim = Math.max(bbox.size.x, bbox.size.y, bbox.size.z);
     const distance = Math.max(5, maxDim * 1.8 + 5);
@@ -337,11 +376,11 @@ function CameraController({ walls, settings }: { walls: WallSegment[]; settings:
       bbox.center.z + distance * Math.sin(angle)
     );
 
-    ;(controls as any).update();
+    (controls as any).update();
   };
 
   useEffect(() => {
-    const bbox = calculateWallsBoundingBox(walls, settings.maxRows);
+    const bbox = getFitBBox();
     if (!bbox || walls.length === 0) {
       prevFitKeyRef.current = '';
       return;
@@ -358,7 +397,8 @@ function CameraController({ walls, settings }: { walls: WallSegment[]; settings:
     ].join('|');
 
     if (fitKey !== prevFitKeyRef.current) {
-      fitToWalls();
+      // small timeout helps when controls/canvas just mounted (Estimate page)
+      setTimeout(() => fitToWalls(), 0);
       prevFitKeyRef.current = fitKey;
     }
   }, [walls, settings.maxRows]);

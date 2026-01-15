@@ -11,7 +11,7 @@ import {
   ConcreteThickness,
   JunctionType
 } from '@/types/icf';
-import { buildWallChains, calculateBOMFromChains, ChainsResult } from './wall-chains';
+import { buildWallChains, calculateBOMFromChains, ChainsResult, WallChainOptions } from './wall-chains';
 
 /**
  * Calculate the number of rows based on wall height
@@ -200,13 +200,15 @@ export function calculateToposForOpening(
 /**
  * Build chains from walls and return the result for reuse
  */
-export function getWallChains(walls: WallSegment[]): ChainsResult {
-  return buildWallChains(walls);
+export function getWallChains(walls: WallSegment[], options?: WallChainOptions): ChainsResult {
+  return buildWallChains(walls, options);
 }
 
 /**
  * Calculate complete BOM for a project using chain-based calculation
- * This is the accurate method that prevents overcounting fragmented segments
+ * HARD RULE:
+ * - If chains exist, BOM uses ONLY chains.
+ * - If chains are empty, fallback to segment-based estimation (and mark as fallback via chainsCount=0).
  */
 export function calculateBOM(
   walls: WallSegment[],
@@ -218,55 +220,126 @@ export function calculateBOM(
   gridSettings?: { base: boolean; mid: boolean; top: boolean }
 ): BOMResult {
   const numberOfRows = calculateNumberOfRows(wallHeightMm);
-  
-  // Build chains from walls
-  const chainsResult = buildWallChains(walls);
-  
-  // Use chain-based calculation
-  const chainBOM = calculateBOMFromChains(
-    chainsResult,
-    numberOfRows,
-    rebarSpacingCm as 10 | 15 | 20,
-    parseInt(concreteThickness),
-    cornerMode,
-    gridSettings || { base: true, mid: false, top: false }
-  );
-  
-  // Add openings topos
+
+  // Build *final* chains (use stricter defaults tuned for architectural DXF)
+  const chainsResult = buildWallChains(walls, {
+    snapTolMm: 5,
+    gapTolMm: 10,
+    angleTolDeg: 2,
+    noiseMinMm: 100,
+  });
+
+  const hasChains = chainsResult.chains.length > 0;
+
+  // Use chain-based calculation (preferred)
+  const chainBOM = hasChains
+    ? calculateBOMFromChains(
+        chainsResult,
+        numberOfRows,
+        rebarSpacingCm as 10 | 15 | 20,
+        parseInt(concreteThickness),
+        cornerMode,
+        gridSettings || { base: true, mid: false, top: false }
+      )
+    : null;
+
+  // Add openings topos (current opening rule in this file)
   let openingsTopos = 0;
   let openingsToposMeters = 0;
-  openings.forEach(opening => {
+  openings.forEach((opening) => {
     const { units, meters } = calculateToposForOpening(opening, concreteThickness);
     openingsTopos += units;
     openingsToposMeters += meters;
   });
-  
+
+  if (!chainBOM) {
+    // Fallback: do NOT attempt full old logic; provide safe minimal values + warning-friendly stats.
+    // This keeps the UI functional while clearly indicating fallback.
+    const totalWallLength = walls.reduce((sum, w) => sum + calculateWallLength(w), 0);
+    const expectedPanelsApprox = Math.ceil(totalWallLength / PANEL_WIDTH) * numberOfRows;
+
+    return {
+      panelsCount: expectedPanelsApprox,
+      panelsPerFiada: Math.ceil(totalWallLength / PANEL_WIDTH),
+
+      tarugosBase: expectedPanelsApprox * 2,
+      tarugosAdjustments: 0,
+      tarugosTotal: expectedPanelsApprox * 2,
+      tarugosInjection: expectedPanelsApprox,
+
+      toposUnits: openingsTopos,
+      toposMeters: openingsToposMeters,
+      toposByReason: {
+        tJunction: 0,
+        xJunction: 0,
+        openings: openingsTopos,
+        corners: 0,
+      },
+
+      websTotal: expectedPanelsApprox * calculateWebsPerPanel(rebarSpacingCm),
+      websPerRow: calculateWebsPerPanel(rebarSpacingCm),
+      websPerPanel: calculateWebsPerPanel(rebarSpacingCm),
+
+      gridsTotal: Math.ceil((totalWallLength / 1000) / 3) * 1,
+      gridsPerRow: Math.ceil((totalWallLength / 1000) / 3),
+      gridRows: [0],
+      gridType: concreteThickness,
+
+      cutsCount: 0,
+      cutsLengthMm: 0,
+      wasteTotal: 0,
+
+      numberOfRows,
+      totalWallLength,
+      junctionCounts: { L: 0, T: 0, X: 0, end: 0 },
+      chainsCount: 0,
+
+      // extra diagnostics fields (optional)
+      expectedPanelsApprox,
+      wastePct: 0,
+      totalChainLengthMm: totalWallLength,
+    } as BOMResult;
+  }
+
   return {
     panelsCount: chainBOM.panelsCount,
     panelsPerFiada: chainBOM.panelsPerFiada,
+
     tarugosBase: chainBOM.tarugosBase,
     tarugosAdjustments: chainBOM.tarugosAdjustments,
     tarugosTotal: chainBOM.tarugosTotal,
+
     tarugosInjection: chainBOM.tarugosInjection,
+
     toposUnits: chainBOM.toposUnits + openingsTopos,
     toposMeters: chainBOM.toposMeters + openingsToposMeters,
     toposByReason: {
       ...chainBOM.toposByReason,
-      openings: openingsTopos
+      openings: openingsTopos,
     },
+
     websTotal: chainBOM.websTotal,
     websPerRow: chainBOM.websPerPanel,
     websPerPanel: chainBOM.websPerPanel,
+
     gridsTotal: chainBOM.gridsTotal,
     gridsPerRow: chainBOM.gridsPerFiada,
     gridRows: chainBOM.gridRows,
     gridType: concreteThickness,
+
     cutsCount: chainBOM.cutsCount,
     cutsLengthMm: chainBOM.wasteTotal,
     wasteTotal: chainBOM.wasteTotal,
+
     numberOfRows: chainBOM.numberOfRows,
     totalWallLength: chainBOM.totalWallLength,
     junctionCounts: chainBOM.junctionCounts,
-    chainsCount: chainBOM.chainsCount
-  };
+
+    chainsCount: chainBOM.chainsCount,
+
+    // diagnostics
+    wastePct: chainBOM.wastePct,
+    expectedPanelsApprox: chainBOM.expectedPanelsApprox,
+    totalChainLengthMm: chainBOM.totalWallLength,
+  } as BOMResult;
 }

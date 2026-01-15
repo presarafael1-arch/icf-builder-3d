@@ -1,14 +1,22 @@
 // Wall Chains Module for OMNI ICF WALLS 3D PLANNER
-// Consolidates colinear adjacent wall segments into chains for proper BOM calculation
-// This prevents overcounting panels when DXF comes fragmented
+//
+// Goal: consolidate fragmented DXF wall segments into *logical* straight runs (chains)
+// so BOM and 3D panel placement do not overcount due to per-segment ceil().
+//
+// Key properties:
+// - Input walls are always in mm (internal invariant)
+// - Snapping (spatial hash) unifies near-coincident endpoints
+// - Optional gap bridging closes micro-gaps
+// - Graph reduction merges degree-2 nodes that are nearly colinear
+// - Output chains are the reduced edges of this graph
 
-import { WallSegment, Junction, JunctionType, PANEL_WIDTH } from '@/types/icf';
+import { WallSegment, JunctionType, PANEL_WIDTH } from '@/types/icf';
 
 export interface WallChain {
   id: string;
-  segments: WallSegment[];
+  segments: WallSegment[]; // original segments merged into this chain (debug)
   lengthMm: number;
-  angle: number; // Normalized angle in radians [0, π)
+  angle: number; // normalized [0, π)
   startX: number;
   startY: number;
   endX: number;
@@ -31,12 +39,23 @@ export interface ChainsResult {
   nodes: ChainNode[];
   stats: {
     originalSegments: number;
+    afterNoiseFilter: number;
+    afterSnapSegments: number;
+    afterDedupSegments: number;
+    afterGraphReduceChains: number;
+
     chainsCount: number;
     reductionPercent: number;
     totalLengthMm: number;
     minChainLengthMm: number;
     maxChainLengthMm: number;
     avgChainLengthMm: number;
+
+    // merge diagnostics
+    snapTolMm: number;
+    gapTolMm: number;
+    angleTolDeg: number;
+    noiseMinMm: number;
   };
   junctionCounts: {
     L: number;
@@ -46,365 +65,700 @@ export interface ChainsResult {
   };
 }
 
-// Tolerances - increased for better merging of fragmented DXF
-const ENDPOINT_TOL_MM = 20; // Tolerance for matching endpoints (was 15)
-const ANGLE_TOL_RAD = 0.0524; // ~3 degrees (was 0.05)
-const MIN_SEGMENT_MM = 80; // Segments shorter than this are noise
+export type WallChainOptions = {
+  snapTolMm?: number; // default 5
+  gapTolMm?: number; // default 10
+  angleTolDeg?: number; // default 2
+  noiseMinMm?: number; // default 100
+  // if true, attempts to snap walls that are “almost” axis-aligned to perfect 0/90deg
+  // (helps interval merge / overlaps). Safe default is true.
+  snapOrthogonal?: boolean;
+};
 
-/**
- * Calculate segment length
- */
+const DEFAULTS: Required<WallChainOptions> = {
+  snapTolMm: 5,
+  gapTolMm: 10,
+  angleTolDeg: 2,
+  noiseMinMm: 100,
+  snapOrthogonal: true,
+};
+
+// =============== math helpers ===============
+
 function calculateLength(seg: { startX: number; startY: number; endX: number; endY: number }): number {
   const dx = seg.endX - seg.startX;
   const dy = seg.endY - seg.startY;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-/**
- * Calculate normalized angle [0, π) - direction-independent
- */
+function normalizeAngleRad(angle: number): number {
+  let a = angle;
+  if (a < 0) a += Math.PI;
+  if (a >= Math.PI) a -= Math.PI;
+  return a;
+}
+
 function calculateNormalizedAngle(seg: { startX: number; startY: number; endX: number; endY: number }): number {
   const dx = seg.endX - seg.startX;
   const dy = seg.endY - seg.startY;
-  let angle = Math.atan2(dy, dx);
-  // Normalize to [0, π) since direction doesn't matter for colinearity
-  if (angle < 0) angle += Math.PI;
-  if (angle >= Math.PI) angle -= Math.PI;
-  return angle;
+  return normalizeAngleRad(Math.atan2(dy, dx));
 }
 
-/**
- * Check if two points are coincident within tolerance
- */
-function pointsCoincide(x1: number, y1: number, x2: number, y2: number, tol: number = ENDPOINT_TOL_MM): boolean {
-  const dx = Math.abs(x1 - x2);
-  const dy = Math.abs(y1 - y2);
-  return dx <= tol && dy <= tol;
+function degToRad(deg: number): number {
+  return (deg * Math.PI) / 180;
 }
 
-/**
- * Check if two angles are colinear within tolerance
- */
-function anglesColinear(a1: number, a2: number, tol: number = ANGLE_TOL_RAD): boolean {
+function anglesColinear(a1: number, a2: number, tolRad: number): boolean {
   let diff = Math.abs(a1 - a2);
-  // Handle wraparound at π
   if (diff > Math.PI / 2) diff = Math.PI - diff;
-  return diff <= tol;
+  return diff <= tolRad;
 }
 
-/**
- * Get a point key for clustering
- */
-function getPointKey(x: number, y: number, tol: number = ENDPOINT_TOL_MM): string {
+function dist2(ax: number, ay: number, bx: number, by: number): number {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+function distance(ax: number, ay: number, bx: number, by: number): number {
+  return Math.sqrt(dist2(ax, ay, bx, by));
+}
+
+function projectScalarOnDir(x: number, y: number, dirX: number, dirY: number): number {
+  return x * dirX + y * dirY;
+}
+
+// =============== snapping via spatial hash ===============
+
+type SnapCluster = {
+  id: number;
+  x: number;
+  y: number;
+  count: number;
+};
+
+function cellKey(x: number, y: number, cellSize: number): string {
+  const cx = Math.floor(x / cellSize);
+  const cy = Math.floor(y / cellSize);
+  return `${cx},${cy}`;
+}
+
+function neighborCellKeys(x: number, y: number, cellSize: number): string[] {
+  const cx = Math.floor(x / cellSize);
+  const cy = Math.floor(y / cellSize);
+  const keys: string[] = [];
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      keys.push(`${cx + dx},${cy + dy}`);
+    }
+  }
+  return keys;
+}
+
+function snapPoints(points: { x: number; y: number }[], snapTolMm: number): {
+  snapped: { x: number; y: number }[];
+} {
+  // incremental clustering: assign each point to an existing cluster within tol, otherwise create a new cluster
+  const cellSize = Math.max(1, snapTolMm);
+  const tol2 = snapTolMm * snapTolMm;
+
+  const clusters: SnapCluster[] = [];
+  const grid = new Map<string, number[]>(); // cellKey -> clusterIds
+
+  const snapped: { x: number; y: number }[] = [];
+
+  for (const p of points) {
+    let bestClusterId: number | null = null;
+    let bestD2 = Infinity;
+
+    const keys = neighborCellKeys(p.x, p.y, cellSize);
+    for (const k of keys) {
+      const candidateIds = grid.get(k);
+      if (!candidateIds) continue;
+      for (const cid of candidateIds) {
+        const c = clusters[cid];
+        const d2 = dist2(p.x, p.y, c.x, c.y);
+        if (d2 <= tol2 && d2 < bestD2) {
+          bestD2 = d2;
+          bestClusterId = cid;
+        }
+      }
+    }
+
+    if (bestClusterId === null) {
+      const id = clusters.length;
+      clusters.push({ id, x: p.x, y: p.y, count: 1 });
+      const ck = cellKey(p.x, p.y, cellSize);
+      if (!grid.has(ck)) grid.set(ck, []);
+      grid.get(ck)!.push(id);
+      snapped.push({ x: p.x, y: p.y });
+      continue;
+    }
+
+    const c = clusters[bestClusterId];
+    // update cluster center (running average)
+    c.x = (c.x * c.count + p.x) / (c.count + 1);
+    c.y = (c.y * c.count + p.y) / (c.count + 1);
+    c.count += 1;
+
+    snapped.push({ x: c.x, y: c.y });
+  }
+
+  return { snapped };
+}
+
+function snapOrthogonalSegment(seg: { startX: number; startY: number; endX: number; endY: number }, angleTolRad: number) {
+  const dx = seg.endX - seg.startX;
+  const dy = seg.endY - seg.startY;
+  const a = Math.atan2(dy, dx);
+
+  // snap to horizontal
+  if (Math.abs(Math.sin(a)) <= Math.sin(angleTolRad)) {
+    return { ...seg, endY: seg.startY };
+  }
+  // snap to vertical
+  if (Math.abs(Math.cos(a)) <= Math.sin(angleTolRad)) {
+    return { ...seg, endX: seg.startX };
+  }
+
+  return seg;
+}
+
+// =============== dedup / overlap merge (best-effort, safe) ===============
+
+function segKey(a: { x: number; y: number }, b: { x: number; y: number }): string {
+  const p1 = `${Math.round(a.x)},${Math.round(a.y)}`;
+  const p2 = `${Math.round(b.x)},${Math.round(b.y)}`;
+  return [p1, p2].sort().join('|');
+}
+
+function dedupSegments(segments: WallSegment[]): WallSegment[] {
+  const seen = new Set<string>();
+  const out: WallSegment[] = [];
+
+  for (const s of segments) {
+    const key = segKey({ x: s.startX, y: s.startY }, { x: s.endX, y: s.endY });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+
+  return out;
+}
+
+// Basic overlap merge for axis-aligned segments (very common in architectural DXFs).
+// This is conservative: it only merges segments that are clearly colinear *and* on the same line.
+function mergeAxisAlignedOverlaps(segments: WallSegment[], tol: { angleTolRad: number; lineTolMm: number }): WallSegment[] {
+  const angleTolRad = tol.angleTolRad;
+  const lineTolMm = tol.lineTolMm;
+
+  const horizontals: WallSegment[] = [];
+  const verticals: WallSegment[] = [];
+  const others: WallSegment[] = [];
+
+  for (const s of segments) {
+    const dx = s.endX - s.startX;
+    const dy = s.endY - s.startY;
+    const a = Math.atan2(dy, dx);
+
+    // horizontal (|dy| small)
+    if (Math.abs(dy) <= lineTolMm && Math.abs(Math.sin(a)) <= Math.sin(angleTolRad)) horizontals.push(s);
+    else if (Math.abs(dx) <= lineTolMm && Math.abs(Math.cos(a)) <= Math.sin(angleTolRad)) verticals.push(s);
+    else others.push(s);
+  }
+
+  const merged: WallSegment[] = [];
+
+  const mergeIntervals = (
+    segs: WallSegment[],
+    kind: 'h' | 'v'
+  ) => {
+    // group by constant coordinate
+    const groups = new Map<string, WallSegment[]>();
+
+    for (const s of segs) {
+      const key = kind === 'h' ? String(Math.round(s.startY / lineTolMm)) : String(Math.round(s.startX / lineTolMm));
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(s);
+    }
+
+    groups.forEach((group) => {
+      // normalize to [min,max] along the varying axis
+      type Interval = { min: number; max: number; fixed: number; segs: WallSegment[] };
+      const intervals: Interval[] = group.map((s) => {
+        if (kind === 'h') {
+          const y = (s.startY + s.endY) / 2;
+          const min = Math.min(s.startX, s.endX);
+          const max = Math.max(s.startX, s.endX);
+          return { min, max, fixed: y, segs: [s] };
+        }
+        const x = (s.startX + s.endX) / 2;
+        const min = Math.min(s.startY, s.endY);
+        const max = Math.max(s.startY, s.endY);
+        return { min, max, fixed: x, segs: [s] };
+      });
+
+      intervals.sort((a, b) => a.min - b.min);
+
+      const out: Interval[] = [];
+      for (const it of intervals) {
+        const last = out[out.length - 1];
+        if (!last) {
+          out.push(it);
+          continue;
+        }
+        const sameLine = Math.abs(last.fixed - it.fixed) <= lineTolMm;
+        const overlapsOrTouches = it.min <= last.max + lineTolMm;
+        if (sameLine && overlapsOrTouches) {
+          last.max = Math.max(last.max, it.max);
+          last.segs.push(...it.segs);
+        } else {
+          out.push(it);
+        }
+      }
+
+      // convert back to segments
+      out.forEach((it, idx) => {
+        const id = `merged-${kind}-${idx}-${Math.round(it.fixed)}`;
+        if (kind === 'h') {
+          merged.push({
+            id,
+            projectId: it.segs[0].projectId,
+            startX: it.min,
+            startY: it.fixed,
+            endX: it.max,
+            endY: it.fixed,
+            layerName: it.segs[0].layerName,
+            length: Math.abs(it.max - it.min),
+            angle: 0,
+          });
+        } else {
+          merged.push({
+            id,
+            projectId: it.segs[0].projectId,
+            startX: it.fixed,
+            startY: it.min,
+            endX: it.fixed,
+            endY: it.max,
+            layerName: it.segs[0].layerName,
+            length: Math.abs(it.max - it.min),
+            angle: Math.PI / 2,
+          });
+        }
+      });
+    });
+  };
+
+  mergeIntervals(horizontals, 'h');
+  mergeIntervals(verticals, 'v');
+
+  // keep others as-is
+  merged.push(...others);
+
+  // recompute length/angle for all
+  return merged.map((s) => ({
+    ...s,
+    length: calculateLength(s),
+    angle: calculateNormalizedAngle(s),
+  }));
+}
+
+// =============== graph reduction ===============
+
+type Edge = {
+  id: string;
+  a: string;
+  b: string;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  angle: number;
+  length: number;
+  segments: WallSegment[];
+};
+
+type Node = {
+  id: string;
+  x: number;
+  y: number;
+  edges: string[]; // edge ids
+};
+
+function makeNodeKey(x: number, y: number, tol: number): string {
   const rx = Math.round(x / tol) * tol;
   const ry = Math.round(y / tol) * tol;
   return `${rx},${ry}`;
 }
 
-/**
- * Main function: build chains from wall segments
- * Groups colinear adjacent segments into logical wall chains
- */
-export function buildWallChains(walls: WallSegment[]): ChainsResult {
-  // Filter out noise segments (too short)
-  const filteredWalls = walls.filter(w => calculateLength(w) >= MIN_SEGMENT_MM);
-  
-  if (filteredWalls.length === 0) {
-    return {
-      chains: [],
-      nodes: [],
-      stats: {
-        originalSegments: walls.length,
-        chainsCount: 0,
-        reductionPercent: 100,
-        totalLengthMm: 0,
-        minChainLengthMm: 0,
-        maxChainLengthMm: 0,
-        avgChainLengthMm: 0
-      },
-      junctionCounts: { L: 0, T: 0, X: 0, end: 0 }
-    };
-  }
-  
-  // Use filtered walls from now on
-  const workingWalls = filteredWalls;
+function buildGraph(segments: WallSegment[], snapTolMm: number): { nodes: Map<string, Node>; edges: Map<string, Edge> } {
+  const nodes = new Map<string, Node>();
+  const edges = new Map<string, Edge>();
 
-  // Step 1: Cluster endpoints (snap nearby points together)
-  const pointClusters = new Map<string, { x: number; y: number; segmentEnds: { segIndex: number; isStart: boolean }[] }>();
-  
-  workingWalls.forEach((wall, idx) => {
-    const startKey = getPointKey(wall.startX, wall.startY);
-    const endKey = getPointKey(wall.endX, wall.endY);
-    
-    if (!pointClusters.has(startKey)) {
-      pointClusters.set(startKey, { x: wall.startX, y: wall.startY, segmentEnds: [] });
-    }
-    pointClusters.get(startKey)!.segmentEnds.push({ segIndex: idx, isStart: true });
-    
-    if (!pointClusters.has(endKey)) {
-      pointClusters.set(endKey, { x: wall.endX, y: wall.endY, segmentEnds: [] });
-    }
-    pointClusters.get(endKey)!.segmentEnds.push({ segIndex: idx, isStart: false });
-  });
-
-  // Step 2: Build adjacency for segments by endpoint
-  // For each segment, find which other segments share an endpoint
-  const segmentAdjacency: Map<number, { neighborIdx: number; viaStart: boolean; neighborViaStart: boolean }[]> = new Map();
-  workingWalls.forEach((_, idx) => segmentAdjacency.set(idx, []));
-
-  pointClusters.forEach((cluster) => {
-    const ends = cluster.segmentEnds;
-    // Connect all segments that share this point
-    for (let i = 0; i < ends.length; i++) {
-      for (let j = i + 1; j < ends.length; j++) {
-        const a = ends[i];
-        const b = ends[j];
-        segmentAdjacency.get(a.segIndex)!.push({ 
-          neighborIdx: b.segIndex, 
-          viaStart: a.isStart, 
-          neighborViaStart: b.isStart 
-        });
-        segmentAdjacency.get(b.segIndex)!.push({ 
-          neighborIdx: a.segIndex, 
-          viaStart: b.isStart, 
-          neighborViaStart: a.isStart 
-        });
-      }
-    }
-  });
-
-  // Step 3: Build chains by following colinear adjacency
-  const used = new Set<number>();
-  const chains: WallChain[] = [];
-  let chainId = 0;
-
-  workingWalls.forEach((_, startIdx) => {
-    if (used.has(startIdx)) return;
-    
-    const startAngle = calculateNormalizedAngle(workingWalls[startIdx]);
-    const chain: number[] = [startIdx];
-    used.add(startIdx);
-
-    // Grow in both directions
-    let changed = true;
-    while (changed) {
-      changed = false;
-      
-      // Try to extend from start of chain
-      const firstSeg = workingWalls[chain[0]];
-      const firstAngle = calculateNormalizedAngle(firstSeg);
-      const neighbors = segmentAdjacency.get(chain[0]) || [];
-      
-      for (const neighbor of neighbors) {
-        if (used.has(neighbor.neighborIdx)) continue;
-        const neighborSeg = workingWalls[neighbor.neighborIdx];
-        const neighborAngle = calculateNormalizedAngle(neighborSeg);
-        
-        // Check if colinear
-        if (anglesColinear(firstAngle, neighborAngle)) {
-          chain.unshift(neighbor.neighborIdx);
-          used.add(neighbor.neighborIdx);
-          changed = true;
-          break;
-        }
-      }
-      
-      // Try to extend from end of chain
-      const lastSeg = workingWalls[chain[chain.length - 1]];
-      const lastAngle = calculateNormalizedAngle(lastSeg);
-      const endNeighbors = segmentAdjacency.get(chain[chain.length - 1]) || [];
-      
-      for (const neighbor of endNeighbors) {
-        if (used.has(neighbor.neighborIdx)) continue;
-        const neighborSeg = workingWalls[neighbor.neighborIdx];
-        const neighborAngle = calculateNormalizedAngle(neighborSeg);
-        
-        // Check if colinear
-        if (anglesColinear(lastAngle, neighborAngle)) {
-          chain.push(neighbor.neighborIdx);
-          used.add(neighbor.neighborIdx);
-          changed = true;
-          break;
-        }
-      }
-    }
-
-    // Build the chain object
-    const chainSegments = chain.map(idx => workingWalls[idx]);
-    
-    // Calculate total length of chain
-    const totalLength = chainSegments.reduce((sum, seg) => sum + calculateLength(seg), 0);
-    
-    // Find endpoints of the whole chain (the endpoints that are NOT shared with another segment in the chain)
-    // For a proper chain, we need to find the actual geometric start and end
-    const allPoints: { x: number; y: number; count: number }[] = [];
-    chainSegments.forEach(seg => {
-      const startKey = getPointKey(seg.startX, seg.startY);
-      const endKey = getPointKey(seg.endX, seg.endY);
-      
-      let foundStart = allPoints.find(p => getPointKey(p.x, p.y) === startKey);
-      if (foundStart) {
-        foundStart.count++;
-      } else {
-        allPoints.push({ x: seg.startX, y: seg.startY, count: 1 });
-      }
-      
-      let foundEnd = allPoints.find(p => getPointKey(p.x, p.y) === endKey);
-      if (foundEnd) {
-        foundEnd.count++;
-      } else {
-        allPoints.push({ x: seg.endX, y: seg.endY, count: 1 });
-      }
-    });
-    
-    // Chain endpoints are points that appear only once (not shared between segments in chain)
-    const endpoints = allPoints.filter(p => p.count === 1);
-    
-    let startX = chainSegments[0].startX;
-    let startY = chainSegments[0].startY;
-    let endX = chainSegments[chainSegments.length - 1].endX;
-    let endY = chainSegments[chainSegments.length - 1].endY;
-    
-    if (endpoints.length >= 2) {
-      startX = endpoints[0].x;
-      startY = endpoints[0].y;
-      endX = endpoints[1].x;
-      endY = endpoints[1].y;
-    }
-    
-    const wallChain: WallChain = {
-      id: `chain-${chainId++}`,
-      segments: chainSegments,
-      lengthMm: totalLength,
-      angle: startAngle,
-      startX,
-      startY,
-      endX,
-      endY,
-      startNodeId: null,
-      endNodeId: null
-    };
-    
-    chains.push(wallChain);
-  });
-
-  // Step 4: Build nodes from chain endpoints
-  const nodeMap = new Map<string, ChainNode>();
-  let nodeId = 0;
-  
-  chains.forEach(chain => {
-    const startKey = getPointKey(chain.startX, chain.startY);
-    const endKey = getPointKey(chain.endX, chain.endY);
-    
-    // Start node
-    if (!nodeMap.has(startKey)) {
-      nodeMap.set(startKey, {
-        id: `node-${nodeId++}`,
-        x: chain.startX,
-        y: chain.startY,
-        type: 'end',
-        connectedChainIds: [],
-        angles: []
-      });
-    }
-    const startNode = nodeMap.get(startKey)!;
-    startNode.connectedChainIds.push(chain.id);
-    startNode.angles.push(Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX));
-    chain.startNodeId = startNode.id;
-    
-    // End node
-    if (!nodeMap.has(endKey)) {
-      nodeMap.set(endKey, {
-        id: `node-${nodeId++}`,
-        x: chain.endX,
-        y: chain.endY,
-        type: 'end',
-        connectedChainIds: [],
-        angles: []
-      });
-    }
-    const endNode = nodeMap.get(endKey)!;
-    endNode.connectedChainIds.push(chain.id);
-    endNode.angles.push(Math.atan2(chain.startY - chain.endY, chain.startX - chain.endX)); // Reverse direction
-    chain.endNodeId = endNode.id;
-  });
-
-  // Classify node types
-  const nodes: ChainNode[] = [];
-  nodeMap.forEach(node => {
-    const connCount = node.connectedChainIds.length;
-    
-    if (connCount === 1) {
-      node.type = 'end';
-    } else if (connCount === 2) {
-      // Check if the two chains are colinear (then it's not really a junction)
-      const angle1 = node.angles[0];
-      const angle2 = node.angles[1];
-      // Angles should be opposite if it's a straight-through (diff ~= π)
-      const diff = Math.abs(angle1 - angle2);
-      const isColinear = Math.abs(diff - Math.PI) < ANGLE_TOL_RAD || diff < ANGLE_TOL_RAD;
-      
-      node.type = isColinear ? 'end' : 'L'; // If colinear, treat as pass-through, else L corner
-    } else if (connCount === 3) {
-      node.type = 'T';
-    } else if (connCount >= 4) {
-      node.type = 'X';
-    }
-    
-    nodes.push(node);
-  });
-
-  // Calculate stats
-  const totalLengthMm = chains.reduce((sum, c) => sum + c.lengthMm, 0);
-  const lengths = chains.map(c => c.lengthMm);
-  const minLength = lengths.length > 0 ? Math.min(...lengths) : 0;
-  const maxLength = lengths.length > 0 ? Math.max(...lengths) : 0;
-  const avgLength = lengths.length > 0 ? totalLengthMm / lengths.length : 0;
-  
-  const junctionCounts = {
-    L: nodes.filter(n => n.type === 'L').length,
-    T: nodes.filter(n => n.type === 'T').length,
-    X: nodes.filter(n => n.type === 'X').length,
-    end: nodes.filter(n => n.type === 'end').length
+  const getOrCreateNode = (x: number, y: number): Node => {
+    const k = makeNodeKey(x, y, snapTolMm);
+    const existing = nodes.get(k);
+    if (existing) return existing;
+    const n: Node = { id: `n-${nodes.size}`, x, y, edges: [] };
+    nodes.set(k, n);
+    return n;
   };
 
-  const reductionPercent = walls.length > 0 
-    ? Math.round((1 - chains.length / walls.length) * 100) 
-    : 0;
-    
-  // Log chain stats for debugging
-  console.log('[WallChains] Stats:', {
-    originalSegments: walls.length,
-    afterNoiseFilter: workingWalls.length,
+  segments.forEach((s, i) => {
+    const a = getOrCreateNode(s.startX, s.startY);
+    const b = getOrCreateNode(s.endX, s.endY);
+
+    // avoid self-edge
+    if (a.id === b.id) return;
+
+    const id = `e-${i}`;
+    const edge: Edge = {
+      id,
+      a: a.id,
+      b: b.id,
+      startX: a.x,
+      startY: a.y,
+      endX: b.x,
+      endY: b.y,
+      angle: calculateNormalizedAngle({ startX: a.x, startY: a.y, endX: b.x, endY: b.y }),
+      length: calculateLength({ startX: a.x, startY: a.y, endX: b.x, endY: b.y }),
+      segments: [s],
+    };
+
+    edges.set(id, edge);
+    a.edges.push(id);
+    b.edges.push(id);
+  });
+
+  return { nodes, edges };
+}
+
+function otherNodeId(edge: Edge, nodeId: string): string {
+  return edge.a === nodeId ? edge.b : edge.a;
+}
+
+function reduceGraphColinear(
+  graph: { nodes: Map<string, Node>; edges: Map<string, Edge> },
+  angleTolRad: number
+): void {
+  let changed = true;
+
+  const nodeById = () => {
+    const map = new Map<string, Node>();
+    graph.nodes.forEach((n) => map.set(n.id, n));
+    return map;
+  };
+
+  while (changed) {
+    changed = false;
+    const byId = nodeById();
+
+    for (const node of byId.values()) {
+      if (node.edges.length !== 2) continue;
+
+      const e1 = graph.edges.get(node.edges[0]);
+      const e2 = graph.edges.get(node.edges[1]);
+      if (!e1 || !e2) continue;
+
+      // If the two edges are nearly colinear, merge them into one.
+      if (!anglesColinear(e1.angle, e2.angle, angleTolRad)) continue;
+
+      const n1Id = otherNodeId(e1, node.id);
+      const n2Id = otherNodeId(e2, node.id);
+      if (n1Id === n2Id) continue;
+
+      const n1 = [...graph.nodes.values()].find((n) => n.id === n1Id);
+      const n2 = [...graph.nodes.values()].find((n) => n.id === n2Id);
+      if (!n1 || !n2) continue;
+
+      // create merged edge
+      const mergedId = `m-${graph.edges.size}`;
+      const mergedEdge: Edge = {
+        id: mergedId,
+        a: n1.id,
+        b: n2.id,
+        startX: n1.x,
+        startY: n1.y,
+        endX: n2.x,
+        endY: n2.y,
+        angle: calculateNormalizedAngle({ startX: n1.x, startY: n1.y, endX: n2.x, endY: n2.y }),
+        length: calculateLength({ startX: n1.x, startY: n1.y, endX: n2.x, endY: n2.y }),
+        segments: [...e1.segments, ...e2.segments],
+      };
+
+      // remove old edges
+      graph.edges.delete(e1.id);
+      graph.edges.delete(e2.id);
+
+      // remove node from endpoints edge lists, then add merged edge
+      const removeEdgeFromNode = (nodeObj: Node, edgeId: string) => {
+        nodeObj.edges = nodeObj.edges.filter((id) => id !== edgeId);
+      };
+
+      removeEdgeFromNode(n1, e1.id);
+      removeEdgeFromNode(n1, e2.id);
+      removeEdgeFromNode(n2, e1.id);
+      removeEdgeFromNode(n2, e2.id);
+
+      // remove the intermediate node
+      const keyToDelete = [...graph.nodes.entries()].find(([, n]) => n.id === node.id)?.[0];
+      if (keyToDelete) graph.nodes.delete(keyToDelete);
+
+      // also remove e1/e2 from whichever endpoint had them
+      // (note: node already removed)
+      // Add merged edge
+      graph.edges.set(mergedId, mergedEdge);
+      n1.edges.push(mergedId);
+      n2.edges.push(mergedId);
+
+      changed = true;
+      break; // restart scanning because graph mutated
+    }
+  }
+}
+
+function bridgeGaps(
+  segments: WallSegment[],
+  opts: { gapTolMm: number; angleTolRad: number; snapTolMm: number }
+): WallSegment[] {
+  const { gapTolMm, angleTolRad, snapTolMm } = opts;
+  if (gapTolMm <= 0) return segments;
+
+  // Find endpoints of degree-1 nodes and connect if close & colinear.
+  const { nodes, edges } = buildGraph(segments, snapTolMm);
+  const degree1 = [...nodes.values()].filter((n) => n.edges.length === 1);
+  if (degree1.length < 2) return segments;
+
+  const gap2 = gapTolMm * gapTolMm;
+
+  // very simple O(n^2) on degree-1 endpoints (usually small)
+  const extraSegments: WallSegment[] = [];
+  for (let i = 0; i < degree1.length; i++) {
+    for (let j = i + 1; j < degree1.length; j++) {
+      const a = degree1[i];
+      const b = degree1[j];
+      const d2 = dist2(a.x, a.y, b.x, b.y);
+      if (d2 > gap2) continue;
+
+      const ea = edges.get(a.edges[0]);
+      const eb = edges.get(b.edges[0]);
+      if (!ea || !eb) continue;
+
+      // Only bridge if both rays are nearly colinear with the bridge direction
+      const bridgeAngle = calculateNormalizedAngle({ startX: a.x, startY: a.y, endX: b.x, endY: b.y });
+      if (!anglesColinear(ea.angle, bridgeAngle, angleTolRad)) continue;
+      if (!anglesColinear(eb.angle, bridgeAngle, angleTolRad)) continue;
+
+      extraSegments.push({
+        id: `gap-${i}-${j}`,
+        projectId: ea.segments[0]?.projectId ?? 'unknown',
+        startX: a.x,
+        startY: a.y,
+        endX: b.x,
+        endY: b.y,
+        length: 0,
+        angle: 0,
+      });
+    }
+  }
+
+  if (extraSegments.length === 0) return segments;
+
+  const combined = [...segments, ...extraSegments].map((s) => ({
+    ...s,
+    length: calculateLength(s),
+    angle: calculateNormalizedAngle(s),
+  }));
+
+  // dedup again
+  return dedupSegments(combined);
+}
+
+// =============== public API ===============
+
+export function buildWallChains(walls: WallSegment[], options: WallChainOptions = {}): ChainsResult {
+  const opts = { ...DEFAULTS, ...options };
+  const angleTolRad = degToRad(opts.angleTolDeg);
+
+  const originalSegments = walls.length;
+
+  // 1) Noise filter
+  const noiseFiltered = walls.filter((w) => calculateLength(w) >= opts.noiseMinMm);
+
+  // 2) Snap endpoints (spatial hash clustering)
+  const points: { x: number; y: number }[] = [];
+  noiseFiltered.forEach((w) => {
+    points.push({ x: w.startX, y: w.startY });
+    points.push({ x: w.endX, y: w.endY });
+  });
+
+  const snappedPoints = snapPoints(points, opts.snapTolMm).snapped;
+
+  const snappedWalls: WallSegment[] = noiseFiltered.map((w, idx) => {
+    const p1 = snappedPoints[idx * 2];
+    const p2 = snappedPoints[idx * 2 + 1];
+
+    let seg = {
+      ...w,
+      startX: p1.x,
+      startY: p1.y,
+      endX: p2.x,
+      endY: p2.y,
+    };
+
+    if (opts.snapOrthogonal) {
+      seg = {
+        ...seg,
+        ...snapOrthogonalSegment(seg, angleTolRad),
+      } as WallSegment;
+    }
+
+    return {
+      ...seg,
+      length: calculateLength(seg),
+      angle: calculateNormalizedAngle(seg),
+    };
+  });
+
+  // 3) Dedup exact duplicates
+  const deduped = dedupSegments(snappedWalls);
+
+  // 4) Best-effort overlap merge for axis-aligned geometry
+  const overlapMerged = mergeAxisAlignedOverlaps(deduped, { angleTolRad, lineTolMm: Math.max(1, opts.snapTolMm) });
+
+  // 5) Gap bridging (optional) then dedup again
+  const afterGaps = bridgeGaps(overlapMerged, { gapTolMm: opts.gapTolMm, angleTolRad, snapTolMm: opts.snapTolMm });
+
+  // 6) Graph build + reduction (degree-2 colinear nodes)
+  const graph = buildGraph(afterGaps, opts.snapTolMm);
+  reduceGraphColinear(graph, angleTolRad);
+
+  // 7) Convert reduced edges to chains
+  const edgeList = [...graph.edges.values()];
+
+  // Map node id -> ChainNode
+  const chainNodeById = new Map<string, ChainNode>();
+  const ensureChainNode = (nodeId: string): ChainNode => {
+    const existing = chainNodeById.get(nodeId);
+    if (existing) return existing;
+
+    const node = [...graph.nodes.values()].find((n) => n.id === nodeId);
+    const cn: ChainNode = {
+      id: nodeId,
+      x: node?.x ?? 0,
+      y: node?.y ?? 0,
+      type: 'end',
+      connectedChainIds: [],
+      angles: [],
+    };
+    chainNodeById.set(nodeId, cn);
+    return cn;
+  };
+
+  const chains: WallChain[] = edgeList.map((e, i) => {
+    const a = ensureChainNode(e.a);
+    const b = ensureChainNode(e.b);
+
+    const chainId = `chain-${i}`;
+    a.connectedChainIds.push(chainId);
+    b.connectedChainIds.push(chainId);
+    a.angles.push(Math.atan2(b.y - a.y, b.x - a.x));
+    b.angles.push(Math.atan2(a.y - b.y, a.x - b.x));
+
+    return {
+      id: chainId,
+      segments: e.segments,
+      lengthMm: e.length,
+      angle: e.angle,
+      startX: a.x,
+      startY: a.y,
+      endX: b.x,
+      endY: b.y,
+      startNodeId: a.id,
+      endNodeId: b.id,
+    };
+  });
+
+  // classify nodes based on degree and angles
+  const nodes: ChainNode[] = [...chainNodeById.values()].map((n) => {
+    const degree = n.connectedChainIds.length;
+    let type: JunctionType = 'end';
+
+    if (degree === 1) type = 'end';
+    else if (degree === 2) {
+      const a1 = n.angles[0] ?? 0;
+      const a2 = n.angles[1] ?? 0;
+      const diff = Math.abs(a1 - a2);
+      const isStraight = Math.abs(diff - Math.PI) < angleTolRad || diff < angleTolRad;
+      type = isStraight ? 'end' : 'L';
+    } else if (degree === 3) type = 'T';
+    else if (degree >= 4) type = 'X';
+
+    return { ...n, type };
+  });
+
+  const junctionCounts = {
+    L: nodes.filter((n) => n.type === 'L').length,
+    T: nodes.filter((n) => n.type === 'T').length,
+    X: nodes.filter((n) => n.type === 'X').length,
+    end: nodes.filter((n) => n.type === 'end').length,
+  };
+
+  const totalLengthMm = chains.reduce((sum, c) => sum + c.lengthMm, 0);
+  const lengths = chains.map((c) => c.lengthMm);
+  const minLength = lengths.length ? Math.min(...lengths) : 0;
+  const maxLength = lengths.length ? Math.max(...lengths) : 0;
+  const avgLength = lengths.length ? totalLengthMm / lengths.length : 0;
+
+  const reductionPercent = originalSegments > 0 ? Math.round((1 - chains.length / originalSegments) * 100) : 0;
+
+  const stats = {
+    originalSegments,
+    afterNoiseFilter: noiseFiltered.length,
+    afterSnapSegments: snappedWalls.length,
+    afterDedupSegments: deduped.length,
+    afterGraphReduceChains: chains.length,
+
     chainsCount: chains.length,
-    reductionPercent: reductionPercent + '%',
-    totalLengthM: (totalLengthMm / 1000).toFixed(2) + 'm',
-    minChainM: (minLength / 1000).toFixed(2) + 'm',
-    maxChainM: (maxLength / 1000).toFixed(2) + 'm',
-    avgChainM: (avgLength / 1000).toFixed(2) + 'm',
-    junctions: junctionCounts
+    reductionPercent,
+    totalLengthMm,
+    minChainLengthMm: minLength,
+    maxChainLengthMm: maxLength,
+    avgChainLengthMm: avgLength,
+
+    snapTolMm: opts.snapTolMm,
+    gapTolMm: opts.gapTolMm,
+    angleTolDeg: opts.angleTolDeg,
+    noiseMinMm: opts.noiseMinMm,
+  };
+
+  console.log('[WallChains] Stats:', {
+    originalSegments: stats.originalSegments,
+    afterNoiseFilter: stats.afterNoiseFilter,
+    afterDedup: stats.afterDedupSegments,
+    chainsCount: stats.chainsCount,
+    reductionPercent: `${stats.reductionPercent}%`,
+    totalLengthM: (stats.totalLengthMm / 1000).toFixed(2),
+    minChainM: (stats.minChainLengthMm / 1000).toFixed(2),
+    avgChainM: (stats.avgChainLengthMm / 1000).toFixed(2),
+    maxChainM: (stats.maxChainLengthMm / 1000).toFixed(2),
+    tolerances: {
+      snapTolMm: stats.snapTolMm,
+      gapTolMm: stats.gapTolMm,
+      angleTolDeg: stats.angleTolDeg,
+      noiseMinMm: stats.noiseMinMm,
+    },
+    junctions: junctionCounts,
   });
 
   return {
     chains,
     nodes,
-    stats: {
-      originalSegments: walls.length,
-      chainsCount: chains.length,
-      reductionPercent,
-      totalLengthMm,
-      minChainLengthMm: minLength,
-      maxChainLengthMm: maxLength,
-      avgChainLengthMm: avgLength
-    },
-    junctionCounts
+    stats,
+    junctionCounts,
   };
 }
 
-/**
- * Calculate panels needed for a single chain
- * Returns full panels + cut info
- */
 export function calculatePanelsForChain(chainLengthMm: number): {
   panelsPerFiada: number;
   hasCut: boolean;
@@ -413,28 +767,24 @@ export function calculatePanelsForChain(chainLengthMm: number): {
 } {
   const fullPanels = Math.floor(chainLengthMm / PANEL_WIDTH);
   const remainder = chainLengthMm % PANEL_WIDTH;
-  
+
   if (remainder === 0) {
     return {
       panelsPerFiada: fullPanels,
       hasCut: false,
       cutLengthMm: 0,
-      wasteMm: 0
+      wasteMm: 0,
     };
   }
-  
-  // Need one cut panel for the remainder
+
   return {
     panelsPerFiada: fullPanels + 1,
     hasCut: true,
     cutLengthMm: remainder,
-    wasteMm: PANEL_WIDTH - remainder
+    wasteMm: PANEL_WIDTH - remainder,
   };
 }
 
-/**
- * Calculate BOM from chains (accurate method)
- */
 export function calculateBOMFromChains(
   chainsResult: ChainsResult,
   numFiadas: number,
@@ -444,119 +794,116 @@ export function calculateBOMFromChains(
   gridSettings: { base: boolean; mid: boolean; top: boolean } = { base: true, mid: false, top: false }
 ) {
   const { chains, junctionCounts, stats } = chainsResult;
-  
+
   // Panels calculation (per chain, per fiada)
-  let totalPanelsPerFiada = 0;
-  let totalCutsPerFiada = 0;
-  let totalWastePerFiadaMm = 0;
-  
-  chains.forEach(chain => {
+  let panelsPerFiada = 0;
+  let cutsPerFiada = 0;
+  let wastePerFiadaMm = 0;
+
+  chains.forEach((chain) => {
     const result = calculatePanelsForChain(chain.lengthMm);
-    totalPanelsPerFiada += result.panelsPerFiada;
+    panelsPerFiada += result.panelsPerFiada;
     if (result.hasCut) {
-      totalCutsPerFiada++;
-      totalWastePerFiadaMm += result.wasteMm;
+      cutsPerFiada++;
+      wastePerFiadaMm += result.wasteMm;
     }
   });
-  
-  const panelsTotal = totalPanelsPerFiada * numFiadas;
-  const cutsTotal = totalCutsPerFiada * numFiadas;
-  const wasteTotal = totalWastePerFiadaMm * numFiadas;
-  
+
+  const panelsTotal = panelsPerFiada * numFiadas;
+  const cutsTotal = cutsPerFiada * numFiadas;
+  const wasteTotal = wastePerFiadaMm * numFiadas;
+
+  const totalLengthMm = stats.totalLengthMm;
+  const wastePct = totalLengthMm > 0 ? wastePerFiadaMm / totalLengthMm : 0;
+
+  // Reference expected panels (no fragmentation / one big chain)
+  const expectedPanelsApprox = Math.ceil(totalLengthMm / PANEL_WIDTH) * numFiadas;
+
   // Tarugos (base: 2 per panel)
   const tarugosBase = panelsTotal * 2;
-  
-  // Tarugos adjustments per fiada based on junctions
-  // L: -1, T: +1, X: +2
-  const adjustmentPerFiada = 
-    (junctionCounts.L * -1) +
-    (junctionCounts.T * 1) +
-    (junctionCounts.X * 2);
+
+  // L: -1, T: +1, X: +2 (per fiada)
+  const adjustmentPerFiada = junctionCounts.L * -1 + junctionCounts.T * 1 + junctionCounts.X * 2;
   const tarugosAdjustments = adjustmentPerFiada * numFiadas;
   const tarugosTotal = tarugosBase + tarugosAdjustments;
-  
-  // Injection tarugos (1 per panel - configurable)
+
+  // Injection tarugos (default 1 per panel)
   const tarugosInjection = panelsTotal;
-  
-  // Webs (based on rebar spacing)
-  // 20cm = 2 webs, 15cm = 3 webs, 10cm = 4 webs
-  let websPerPanel: number;
-  if (rebarSpacingCm <= 10) websPerPanel = 4;
-  else if (rebarSpacingCm <= 15) websPerPanel = 3;
-  else websPerPanel = 2;
-  
+
+  // Webs per panel
+  const websPerPanel = rebarSpacingCm === 10 ? 4 : rebarSpacingCm === 15 ? 3 : 2;
   const websTotal = panelsTotal * websPerPanel;
-  
-  // Grids (stabilization)
-  // Sold in 3m units
-  const totalLengthM = stats.totalLengthMm / 1000;
+
+  // Grids (stabilization) - 3m units
+  const totalLengthM = totalLengthMm / 1000;
   const gridsPerFiada = Math.ceil(totalLengthM / 3);
-  
-  // Grid rows selection
+
   const gridRows: number[] = [];
-  if (gridSettings.base) gridRows.push(0); // First row
-  if (gridSettings.mid && numFiadas > 2) {
-    gridRows.push(Math.floor(numFiadas / 2)); // Middle row
-  }
-  if (gridSettings.top && numFiadas > 1) {
-    gridRows.push(numFiadas - 1); // Last row
-  }
-  
-  const gridsTotal = gridsPerFiada * gridRows.length;
-  
-  // Topos
-  // T junctions: 1 topo per T on alternating rows (Type 2)
-  const alternatingRows = Math.floor(numFiadas / 2);
-  const toposT = junctionCounts.T * alternatingRows;
-  const toposX = junctionCounts.X * alternatingRows;
-  
-  // Corners (if topo mode)
-  const toposCorners = cornerMode === 'topo' ? junctionCounts.L * alternatingRows : 0;
-  
-  // Total topos (openings will be added separately when implemented)
-  const toposUnits = toposT + toposX + toposCorners;
+  if (gridSettings.base) gridRows.push(0);
+  if (gridSettings.mid && numFiadas > 2) gridRows.push(Math.round(numFiadas / 2) - 1);
+  if (gridSettings.top && numFiadas > 1) gridRows.push(numFiadas - 1);
+
+  // unique & sorted
+  const uniqueGridRows = Array.from(new Set(gridRows)).sort((a, b) => a - b);
+  const gridsTotal = gridsPerFiada * uniqueGridRows.length;
+
+  // Topos (T/X junction logic placeholder; concreteThicknessMm used for meters)
+  // Keep existing behavior: topo units from T + X + corners (if mode topo)
   const topoWidthM = concreteThicknessMm / 1000;
-  const toposMeters = toposUnits * topoWidthM * 0.4; // 400mm = 0.4m per topo height
-  
+
+  // Rule used so far in app:
+  // - T junctions: floor(numFiadas/2)
+  // - X junctions: floor(numFiadas/2)
+  const tTopo = junctionCounts.T * Math.floor(numFiadas / 2);
+  const xTopo = junctionCounts.X * Math.floor(numFiadas / 2);
+  const cornerTopo = cornerMode === 'topo' ? junctionCounts.L * numFiadas : 0;
+
+  const toposUnits = tTopo + xTopo + cornerTopo;
+  const toposMeters = toposUnits * topoWidthM;
+
   return {
-    // Panels
+    // panels
     panelsCount: panelsTotal,
-    panelsPerFiada: totalPanelsPerFiada,
-    
-    // Cuts
+    panelsPerFiada,
+
+    // cuts/waste
     cutsCount: cutsTotal,
-    cutsPerFiada: totalCutsPerFiada,
     wasteTotal,
-    
-    // Tarugos
+    wastePct,
+
+    // tarugos
     tarugosBase,
     tarugosAdjustments,
     tarugosTotal,
     tarugosInjection,
-    
-    // Webs
-    websTotal,
+
+    // webs
     websPerPanel,
-    
-    // Grids
-    gridsTotal,
+    websTotal,
+
+    // grids
     gridsPerFiada,
-    gridRows,
-    
-    // Topos
+    gridsTotal,
+    gridRows: uniqueGridRows,
+
+    // topos
     toposUnits,
     toposMeters,
     toposByReason: {
-      tJunction: toposT,
-      xJunction: toposX,
-      openings: 0, // To be calculated when openings are implemented
-      corners: toposCorners
+      tJunction: tTopo,
+      xJunction: xTopo,
+      openings: 0,
+      corners: cornerTopo,
     },
-    
-    // Summary
+
+    // summary
     numberOfRows: numFiadas,
-    totalWallLength: stats.totalLengthMm,
+    totalWallLength: totalLengthMm,
     junctionCounts,
-    chainsCount: stats.chainsCount
+    chainsCount: stats.chainsCount,
+
+    // diagnostics
+    expectedPanelsApprox,
+    roundingWasteMmPerFiada: wastePerFiadaMm,
   };
 }
