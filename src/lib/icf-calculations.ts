@@ -1,4 +1,5 @@
 // ICF System Calculations for OMNI ICF WALLS 3D PLANNER
+// Updated to use chain-based calculation for accurate BOM
 
 import { 
   PANEL_WIDTH, 
@@ -10,6 +11,7 @@ import {
   ConcreteThickness,
   JunctionType
 } from '@/types/icf';
+import { buildWallChains, calculateBOMFromChains, ChainsResult } from './wall-chains';
 
 /**
  * Calculate the number of rows based on wall height
@@ -54,7 +56,7 @@ export function calculatePanelsForWall(wallLengthMm: number): {
 }
 
 /**
- * Identify junctions from wall segments
+ * Identify junctions from wall segments (legacy - for compatibility)
  */
 export function identifyJunctions(walls: WallSegment[]): Junction[] {
   const pointMap = new Map<string, { x: number; y: number; wallIds: string[]; angles: number[] }>();
@@ -131,13 +133,30 @@ export function identifyJunctions(walls: WallSegment[]): Junction[] {
 }
 
 /**
- * Calculate webs per row based on rebar spacing
- * Simplified rule: 20cm = 2 webs, 15cm = 3 webs, 10cm = 4 webs
+ * Calculate webs per panel based on rebar spacing
+ * 20cm = 2 webs (standard), 15cm = 3 webs (+1), 10cm = 4 webs (+2)
  */
-export function calculateWebsPerRow(rebarSpacingCm: number): number {
+export function calculateWebsPerPanel(rebarSpacingCm: number): number {
   if (rebarSpacingCm <= 10) return 4;
   if (rebarSpacingCm <= 15) return 3;
   return 2; // 20cm or more
+}
+
+/**
+ * Get webs label for UI
+ */
+export function getWebsLabel(rebarSpacingCm: number): string {
+  if (rebarSpacingCm === 20) return '20 cm (standard, 2 webs)';
+  if (rebarSpacingCm === 15) return '15 cm (+1 web extra, 3 webs)';
+  if (rebarSpacingCm === 10) return '10 cm (+2 webs extra, 4 webs)';
+  return `${rebarSpacingCm} cm`;
+}
+
+/**
+ * Calculate webs per row based on rebar spacing (legacy)
+ */
+export function calculateWebsPerRow(rebarSpacingCm: number): number {
+  return calculateWebsPerPanel(rebarSpacingCm);
 }
 
 /**
@@ -179,7 +198,15 @@ export function calculateToposForOpening(
 }
 
 /**
- * Calculate complete BOM for a project
+ * Build chains from walls and return the result for reuse
+ */
+export function getWallChains(walls: WallSegment[]): ChainsResult {
+  return buildWallChains(walls);
+}
+
+/**
+ * Calculate complete BOM for a project using chain-based calculation
+ * This is the accurate method that prevents overcounting fragmented segments
  */
 export function calculateBOM(
   walls: WallSegment[],
@@ -187,123 +214,59 @@ export function calculateBOM(
   wallHeightMm: number,
   rebarSpacingCm: number,
   concreteThickness: ConcreteThickness,
-  cornerMode: 'overlap_cut' | 'topo'
+  cornerMode: 'overlap_cut' | 'topo',
+  gridSettings?: { base: boolean; mid: boolean; top: boolean }
 ): BOMResult {
-  const junctions = identifyJunctions(walls);
   const numberOfRows = calculateNumberOfRows(wallHeightMm);
   
-  // Count junction types
-  const junctionCounts = {
-    L: junctions.filter(j => j.type === 'L').length,
-    T: junctions.filter(j => j.type === 'T').length,
-    X: junctions.filter(j => j.type === 'X').length,
-    end: junctions.filter(j => j.type === 'end').length
-  };
+  // Build chains from walls
+  const chainsResult = buildWallChains(walls);
   
-  // Calculate total wall length and panels
-  let totalWallLength = 0;
-  let totalPanels = 0;
-  let totalCuts = 0;
-  let totalCutLength = 0;
+  // Use chain-based calculation
+  const chainBOM = calculateBOMFromChains(
+    chainsResult,
+    numberOfRows,
+    rebarSpacingCm as 10 | 15 | 20,
+    parseInt(concreteThickness),
+    cornerMode,
+    gridSettings || { base: true, mid: false, top: false }
+  );
   
-  walls.forEach(wall => {
-    const length = calculateWallLength(wall);
-    totalWallLength += length;
-    
-    const { fullPanels, cutLength, hasCut } = calculatePanelsForWall(length);
-    totalPanels += fullPanels + (hasCut ? 1 : 0);
-    
-    if (hasCut) {
-      totalCuts++;
-      totalCutLength += cutLength;
-    }
-  });
-  
-  // Multiply by number of rows
-  totalPanels *= numberOfRows;
-  totalCuts *= numberOfRows;
-  totalCutLength *= numberOfRows;
-  
-  // Calculate tarugos
-  // Base: 2 tarugos per panel
-  const tarugosBase = totalPanels * 2;
-  
-  // Adjustments per junction type (per row)
-  // L: -1 per corner
-  // T: +1 per T
-  // X: +2 per X
-  const adjustmentPerRow = 
-    (junctionCounts.L * -1) +
-    (junctionCounts.T * 1) +
-    (junctionCounts.X * 2);
-  
-  const tarugosAdjustments = adjustmentPerRow * numberOfRows;
-  const tarugosTotal = tarugosBase + tarugosAdjustments;
-  
-  // Injection tarugos (1 per meter of wall per row)
-  const tarugosInjection = Math.ceil((totalWallLength / 1000) * numberOfRows);
-  
-  // Calculate webs (simplified: same for all rows)
-  const websPerRow = calculateWebsPerRow(rebarSpacingCm);
-  const websTotal = websPerRow * numberOfRows * walls.length;
-  
-  // Calculate grids (stabilization)
-  const gridRows = calculateGridRows(numberOfRows);
-  const gridsPerRow = calculateGridsPerRow(totalWallLength);
-  const gridsTotal = gridsPerRow * gridRows.length;
-  
-  // Calculate topos
-  let toposByReason = {
-    tJunction: 0,
-    xJunction: 0,
-    openings: 0,
-    corners: 0
-  };
-  
-  // Topos for T and X junctions (alternating rows)
-  const alternatingRows = Math.floor(numberOfRows / 2);
-  toposByReason.tJunction = junctionCounts.T * alternatingRows;
-  toposByReason.xJunction = junctionCounts.X * alternatingRows;
-  
-  // Topos for corners (if topo mode)
-  if (cornerMode === 'topo') {
-    toposByReason.corners = junctionCounts.L * alternatingRows;
-  }
-  
-  // Topos for openings
+  // Add openings topos
+  let openingsTopos = 0;
+  let openingsToposMeters = 0;
   openings.forEach(opening => {
-    const { units } = calculateToposForOpening(opening, concreteThickness);
-    toposByReason.openings += units;
+    const { units, meters } = calculateToposForOpening(opening, concreteThickness);
+    openingsTopos += units;
+    openingsToposMeters += meters;
   });
-  
-  const toposUnits = 
-    toposByReason.tJunction + 
-    toposByReason.xJunction + 
-    toposByReason.openings + 
-    toposByReason.corners;
-  
-  const topoWidthM = parseInt(concreteThickness) / 1000;
-  const toposMeters = toposUnits * topoWidthM * PANEL_HEIGHT / 1000;
   
   return {
-    panelsCount: totalPanels,
-    tarugosBase,
-    tarugosAdjustments,
-    tarugosTotal,
-    tarugosInjection,
-    toposUnits,
-    toposMeters,
-    toposByReason,
-    websTotal,
-    websPerRow,
-    gridsTotal,
-    gridsPerRow,
-    gridRows,
+    panelsCount: chainBOM.panelsCount,
+    panelsPerFiada: chainBOM.panelsPerFiada,
+    tarugosBase: chainBOM.tarugosBase,
+    tarugosAdjustments: chainBOM.tarugosAdjustments,
+    tarugosTotal: chainBOM.tarugosTotal,
+    tarugosInjection: chainBOM.tarugosInjection,
+    toposUnits: chainBOM.toposUnits + openingsTopos,
+    toposMeters: chainBOM.toposMeters + openingsToposMeters,
+    toposByReason: {
+      ...chainBOM.toposByReason,
+      openings: openingsTopos
+    },
+    websTotal: chainBOM.websTotal,
+    websPerRow: chainBOM.websPerPanel,
+    websPerPanel: chainBOM.websPerPanel,
+    gridsTotal: chainBOM.gridsTotal,
+    gridsPerRow: chainBOM.gridsPerFiada,
+    gridRows: chainBOM.gridRows,
     gridType: concreteThickness,
-    cutsCount: totalCuts,
-    cutsLengthMm: totalCutLength,
-    numberOfRows,
-    totalWallLength,
-    junctionCounts
+    cutsCount: chainBOM.cutsCount,
+    cutsLengthMm: chainBOM.wasteTotal,
+    wasteTotal: chainBOM.wasteTotal,
+    numberOfRows: chainBOM.numberOfRows,
+    totalWallLength: chainBOM.totalWallLength,
+    junctionCounts: chainBOM.junctionCounts,
+    chainsCount: chainBOM.chainsCount
   };
 }

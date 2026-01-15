@@ -107,7 +107,8 @@ export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
                 <TableCell className="text-right font-mono">{bom.panelsCount}</TableCell>
                 <TableCell className="text-right">un</TableCell>
                 <TableCell className="text-muted-foreground text-sm">
-                  {bom.numberOfRows} fiadas × {Math.round(bom.totalWallLength / 1200)} painéis/fiada
+                  {bom.numberOfRows} fiadas × {bom.panelsPerFiada || Math.round(bom.totalWallLength / 1200)} painéis/fiada
+                  {bom.chainsCount && <span className="ml-2 text-xs">({bom.chainsCount} cadeias)</span>}
                 </TableCell>
               </TableRow>
               
@@ -230,7 +231,7 @@ export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
                 <TableCell className="text-right font-mono">{bom.websTotal}</TableCell>
                 <TableCell className="text-right">un</TableCell>
                 <TableCell className="text-muted-foreground text-sm">
-                  {bom.websPerRow} por fiada (espaçamento ferros)
+                  {bom.websPerPanel || bom.websPerRow} webs/painel
                 </TableCell>
               </TableRow>
               
