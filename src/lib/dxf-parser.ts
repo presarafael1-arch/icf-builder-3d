@@ -1,5 +1,6 @@
 // DXF Parser utilities for OMNI ICF WALLS 3D PLANNER
 import DxfParser from 'dxf-parser';
+import { normalizeWalls, NormalizationResult, NormalizedSegment, toStorageFormat } from './wall-normalization';
 
 export interface DXFSegment {
   startX: number;
@@ -25,6 +26,30 @@ export interface DXFParseResult {
   boundingBox: DXFBoundingBox | null;
   suggestedUnit: 'mm' | 'm';
   error?: string;
+}
+
+export interface NormalizedDXFResult {
+  // Original parse result
+  parseResult: DXFParseResult;
+  // Normalization result (after layer filter and unit conversion)
+  normalization: NormalizationResult | null;
+  // Final segments ready for storage (merged and recentered)
+  finalSegments: DXFSegment[];
+  // Stats for UI display
+  stats: {
+    originalSegments: number;
+    afterLayerFilter: number;
+    removedNoise: number;
+    mergedSegments: number;
+    finalWalls: number;
+    totalLengthMM: number;
+    junctionCounts: {
+      L: number;
+      T: number;
+      X: number;
+      end: number;
+    };
+  };
 }
 
 /**
@@ -216,7 +241,7 @@ export function getSegmentsBoundingBox(segments: DXFSegment[]): DXFBoundingBox |
 
 /**
  * Format length for display
- * Shows in meters with 2 decimal places, or "<0.01 m" for tiny values
+ * Shows in meters with 2 decimal places, or mm for tiny values
  */
 export function formatLength(lengthMM: number): string {
   const meters = lengthMM / 1000;
@@ -225,3 +250,46 @@ export function formatLength(lengthMM: number): string {
   }
   return `${meters.toFixed(2)} m`;
 }
+
+/**
+ * Complete DXF processing pipeline:
+ * 1. Filter by layers
+ * 2. Convert to mm
+ * 3. Normalize (recenter, merge colinear, remove noise)
+ * 4. Return final segments ready for storage
+ */
+export function processDXF(
+  parseResult: DXFParseResult,
+  selectedLayers: string[],
+  sourceUnit: 'mm' | 'm'
+): NormalizedDXFResult {
+  // Step 1: Filter by layers
+  const filteredSegments = filterSegmentsByLayers(parseResult.segments, selectedLayers);
+  
+  // Step 2: Convert to mm
+  const segmentsInMM = convertSegmentsToMM(filteredSegments, sourceUnit);
+  
+  // Step 3: Normalize (recenter + merge + topology)
+  const normalization = normalizeWalls(segmentsInMM);
+  
+  // Step 4: Convert back to storage format
+  const finalSegments = toStorageFormat(normalization.mergedSegments);
+  
+  return {
+    parseResult,
+    normalization,
+    finalSegments,
+    stats: {
+      originalSegments: parseResult.segments.length,
+      afterLayerFilter: filteredSegments.length,
+      removedNoise: normalization.stats.removedNoise,
+      mergedSegments: normalization.stats.mergedCount,
+      finalWalls: normalization.stats.finalCount,
+      totalLengthMM: normalization.stats.totalLengthMM,
+      junctionCounts: normalization.stats.junctionCounts
+    }
+  };
+}
+
+// Re-export normalization types
+export type { NormalizationResult, NormalizedSegment } from './wall-normalization';
