@@ -162,10 +162,15 @@ export interface BOMResult {
   // Chains (for chain-based calculation)
   chainsCount?: number;
 
-  // Diagnostics (chain quality)
+  // Diagnostics (bin packing)
   totalChainLengthMm?: number;
-  wastePct?: number; // rounding waste per fiada / total length
-  expectedPanelsApprox?: number; // ceil(totalLength/1.2) * fiadas
+  wastePct?: number; // waste / supplied (from bin packing)
+  expectedPanelsApprox?: number; // minimum theoretical: ceil(totalLength/1200) * fiadas
+  minPanelsPerFiada?: number; // ceil(totalLength/1200)
+  binsUsedPerFiada?: number; // bins from FFD packing
+  sumFullPanelsPerFiada?: number; // full panels before packing
+  remaindersCount?: number; // number of chains with remainder
+  roundingWasteMmPerFiada?: number; // waste per fiada from packing
 }
 
 // 3D Viewer settings

@@ -1,4 +1,4 @@
-import { Package, Box, CircleDot, Layers, Scissors, ArrowDownToLine, Grid3X3, AlertTriangle, Link } from 'lucide-react';
+import { Package, Box, CircleDot, Layers, Scissors, ArrowDownToLine, Grid3X3, AlertTriangle, Link, CheckCircle2, TrendingDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -11,54 +11,94 @@ interface BOMTableProps {
 }
 
 export function BOMTable({ bom, concreteThickness }: BOMTableProps) {
-  // Reference "expected" panels (minimal rounding)
-  const expectedPanelsApprox =
-    bom.expectedPanelsApprox ?? Math.ceil((bom.totalWallLength / 1200)) * bom.numberOfRows;
-
+  // Minimum theoretical panels (if no fragmentation)
+  const minPanelsTotal = bom.expectedPanelsApprox ?? Math.ceil((bom.totalWallLength / 1200)) * bom.numberOfRows;
+  
+  // Recommended purchase (with bin packing)
+  const recommendedPanels = bom.panelsCount;
+  
   const isChainsUsed = (bom.chainsCount ?? 0) > 0;
-
-  // Overcount: compare vs expected
-  const isOvercounted = bom.panelsCount > expectedPanelsApprox * 1.35;
-
-  // Factual chain-quality metric (rounding waste)
+  
+  // Waste percentage from bin packing
   const wastePct = bom.wastePct ?? 0;
-  const isWasteHigh = wastePct > 0.15;
+  const isWasteGood = wastePct <= 0.10;
+  const isWasteOk = wastePct <= 0.15;
+  
+  // Over-purchase ratio
+  const overPurchaseRatio = minPanelsTotal > 0 ? (recommendedPanels / minPanelsTotal) : 1;
+  const overPurchasePct = ((overPurchaseRatio - 1) * 100);
 
   return (
     <div className="space-y-6">
-      {/* BOM Source Header */}
+      {/* BOM Source + Diagnostics Header */}
       <Card className="border-primary/30 bg-primary/5">
-        <CardContent className="pt-4 space-y-2">
+        <CardContent className="pt-4 space-y-3">
+          {/* Source line */}
           <div className="flex items-center gap-3">
             <Link className="h-5 w-5 text-primary" />
             <div className="flex-1">
               <div className="font-medium text-sm">
-                Calculado por: {isChainsUsed ? 'CADEIAS (CHAINS)' : 'SEGMENTOS (fallback)'}
+                Calculado por: {isChainsUsed ? 'CADEIAS (CHAINS) + BIN PACKING' : 'SEGMENTOS (fallback)'}
               </div>
               <div className="text-xs text-muted-foreground">
-                {(bom.chainsCount ?? 0)} cadeias | {(bom.totalWallLength / 1000).toFixed(2)}m total | {bom.numberOfRows} fiadas
+                {bom.chainsCount ?? 0} cadeias | {(bom.totalWallLength / 1000).toFixed(2)}m total | {bom.numberOfRows} fiadas
               </div>
             </div>
             {isChainsUsed && (
-              <Badge variant="default" className="bg-green-600">Chains ✓</Badge>
+              <Badge variant="default" className="bg-green-600">Bin Packing ✓</Badge>
             )}
           </div>
 
-          {/* Diagnostics line */}
-          <div className="text-xs text-muted-foreground">
-            Aprox sem desperdício: <span className="font-mono text-foreground">{expectedPanelsApprox}</span> · Atual: <span className="font-mono text-foreground">{bom.panelsCount}</span> · Waste: <span className={isWasteHigh ? 'font-mono text-destructive' : 'font-mono text-foreground'}>{(wastePct * 100).toFixed(1)}%</span>
+          {/* Key metrics line */}
+          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-border/50">
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Mínimo Teórico</div>
+              <div className="font-mono text-lg font-bold">{minPanelsTotal}</div>
+              <div className="text-xs text-muted-foreground">painéis</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Compra Recomendada</div>
+              <div className="font-mono text-lg font-bold text-primary">{recommendedPanels}</div>
+              <div className="text-xs text-muted-foreground">painéis</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Waste</div>
+              <div className={`font-mono text-lg font-bold ${isWasteGood ? 'text-green-600' : isWasteOk ? 'text-yellow-600' : 'text-destructive'}`}>
+                {(wastePct * 100).toFixed(1)}%
+              </div>
+              <div className="text-xs text-muted-foreground">
+                (+{overPurchasePct.toFixed(1)}% vs mín.)
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Warning if overcounted */}
-      {(isOvercounted || isWasteHigh) && (
-        <Alert variant={isOvercounted ? 'destructive' : 'default'}>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>{isOvercounted ? 'BOM provavelmente sobrecontado' : 'Merge fraco / cadeias curtas'}</AlertTitle>
+      {/* Status Alert */}
+      {isWasteGood ? (
+        <Alert variant="default" className="border-green-500/30 bg-green-500/5">
+          <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <AlertTitle className="text-green-700">BOM optimizado com bin packing</AlertTitle>
           <AlertDescription>
-            Esperado ~{expectedPanelsApprox} painéis, calculado {bom.panelsCount}. Waste {(wastePct * 100).toFixed(1)}%.
-            {isChainsUsed ? ' Ajuste snapping/merge para reduzir cadeias curtas.' : ' O cálculo está em fallback (sem cadeias).'}
+            Waste {(wastePct * 100).toFixed(1)}% está dentro do limite aceitável (≤10%).
+            Compra {recommendedPanels} painéis para {minPanelsTotal} m.l. teóricos.
+          </AlertDescription>
+        </Alert>
+      ) : isWasteOk ? (
+        <Alert variant="default" className="border-yellow-500/30 bg-yellow-500/5">
+          <TrendingDown className="h-4 w-4 text-yellow-600" />
+          <AlertTitle className="text-yellow-700">Waste moderado</AlertTitle>
+          <AlertDescription>
+            Waste {(wastePct * 100).toFixed(1)}% está aceitável mas pode melhorar com melhor merge de cadeias.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Waste alto - verificar geometria</AlertTitle>
+          <AlertDescription>
+            Waste {(wastePct * 100).toFixed(1)}% é elevado. 
+            {isChainsUsed ? ' Tente preset mais agressivo no import ou verifique geometria DXF.' : ' Cálculo em fallback (sem cadeias).'}
           </AlertDescription>
         </Alert>
       )}
