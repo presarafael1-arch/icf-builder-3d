@@ -47,7 +47,7 @@ export interface WallSegment {
   angle: number; // Calculated
 }
 
-// Opening (door/window)
+// Opening (door/window) - Legacy interface for backwards compatibility
 export interface Opening {
   id: string;
   wallId: string;
@@ -56,6 +56,7 @@ export interface Opening {
   heightMm: number;
   sillHeightMm: number;
   positionMm: number; // Position along the wall
+  chainId?: string; // Reference to chain for new system
 }
 
 // Junction node in the wall graph

@@ -3,12 +3,16 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
+import { OpeningData } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, WallChain } from '@/lib/wall-chains';
+import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
+import { OpeningToposInstances, OpeningMarkers } from './OpeningsInstances';
 
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
   settings: ViewerSettings;
+  openings?: OpeningData[];
 }
 
 // Scale factor: convert mm to 3D units (1 unit = 1 meter)
@@ -531,10 +535,11 @@ function Scene({ walls, settings }: { walls: WallSegment[]; settings: ViewerSett
 interface ICFViewer3DProps {
   walls: WallSegment[];
   settings: ViewerSettings;
+  openings?: OpeningData[];
   className?: string;
 }
 
-export function ICFViewer3D({ walls, settings, className = '' }: ICFViewer3DProps) {
+export function ICFViewer3D({ walls, settings, openings = [], className = '' }: ICFViewer3DProps) {
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
   const bboxInfo = useMemo(() => {
