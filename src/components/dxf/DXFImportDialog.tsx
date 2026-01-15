@@ -22,6 +22,7 @@ import {
   DXFParseResult,
   NormalizedDXFResult
 } from '@/lib/dxf-parser';
+import { buildWallChains } from '@/lib/wall-chains';
 
 interface DXFImportDialogProps {
   open: boolean;
@@ -290,7 +291,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                 <GitMerge className="h-4 w-4 text-primary" />
                 Pipeline de Normalização
               </div>
-              
+
               {/* Pipeline steps */}
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between p-2 bg-muted/30 rounded">
@@ -300,7 +301,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                   </span>
                   <span className="font-mono">{processedResult.stats.originalSegments}</span>
                 </div>
-                
+
                 <div className="flex items-center justify-between p-2 bg-muted/30 rounded">
                   <span className="flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs">2</span>
@@ -308,7 +309,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                   </span>
                   <span className="font-mono">{processedResult.stats.afterLayerFilter}</span>
                 </div>
-                
+
                 <div className="flex items-center justify-between p-2 bg-orange-500/10 rounded">
                   <span className="flex items-center gap-2 text-orange-600">
                     <Trash2 className="h-4 w-4" />
@@ -316,7 +317,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                   </span>
                   <span className="font-mono text-orange-600">−{processedResult.stats.removedNoise}</span>
                 </div>
-                
+
                 <div className="flex items-center justify-between p-2 bg-green-500/10 rounded">
                   <span className="flex items-center gap-2 text-green-600">
                     <GitMerge className="h-4 w-4" />
@@ -326,7 +327,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                     {processedResult.stats.mergedSegments > 0 ? `−${processedResult.stats.mergedSegments}` : '0'}
                   </span>
                 </div>
-                
+
                 <div className="flex items-center justify-between p-2 bg-primary/10 border border-primary/20 rounded font-medium">
                   <span className="flex items-center gap-2">
                     <Check className="h-4 w-4 text-primary" />
@@ -336,6 +337,66 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                 </div>
               </div>
             </div>
+
+            {/* Chains diagnostics (post-normalization) */}
+            {(() => {
+              const wallsForChains = processedResult.finalSegments.map((s, i) => ({
+                id: `tmp-${i}`,
+                projectId: 'tmp',
+                startX: s.startX,
+                startY: s.startY,
+                endX: s.endX,
+                endY: s.endY,
+                layerName: s.layerName,
+                length: 0,
+                angle: 0,
+              }));
+              const chains = buildWallChains(wallsForChains, {
+                snapTolMm: 5,
+                gapTolMm: 10,
+                angleTolDeg: 2,
+                noiseMinMm: 100,
+              });
+
+              const weakMerge = chains.stats.chainsCount > processedResult.stats.finalWalls * 0.85;
+
+              return (
+                <div className="p-3 bg-muted/30 rounded-md space-y-2">
+                  <div className="text-sm font-medium">Cadeias (Chains) — diagnóstico</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="p-2 bg-background rounded">
+                      <div className="text-xs text-muted-foreground">Nc (chains)</div>
+                      <div className="font-mono font-bold">{chains.stats.chainsCount}</div>
+                    </div>
+                    <div className="p-2 bg-background rounded">
+                      <div className="text-xs text-muted-foreground">Comprimento total</div>
+                      <div className="font-mono font-bold">{(chains.stats.totalLengthMm / 1000).toFixed(2)} m</div>
+                    </div>
+                    <div className="p-2 bg-background rounded col-span-2">
+                      <div className="text-xs text-muted-foreground">min / avg / max</div>
+                      <div className="font-mono">
+                        {(chains.stats.minChainLengthMm / 1000).toFixed(2)}m / {(chains.stats.avgChainLengthMm / 1000).toFixed(2)}m / {(chains.stats.maxChainLengthMm / 1000).toFixed(2)}m
+                      </div>
+                    </div>
+                    <div className="p-2 bg-background rounded col-span-2">
+                      <div className="text-xs text-muted-foreground">Tolerâncias em uso</div>
+                      <div className="font-mono">
+                        snap {chains.stats.snapTolMm}mm · gap {chains.stats.gapTolMm}mm · angle {chains.stats.angleTolDeg}° · noise {chains.stats.noiseMinMm}mm
+                      </div>
+                    </div>
+                  </div>
+
+                  {weakMerge && (
+                    <Alert className="mt-2">
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        <strong>Merge fraco:</strong> Nc está muito perto de Ns. Sugestão: aumentar tolerâncias (snap/gap/ângulo).
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Topology detection */}
             <div className="p-3 bg-muted/30 rounded-md space-y-2">

@@ -114,15 +114,15 @@ export interface BOMResult {
   // Panels
   panelsCount: number;
   panelsPerFiada?: number; // Panels per row
-  
+
   // Tarugos
   tarugosBase: number;
   tarugosAdjustments: number; // Sum of L, T, X adjustments
   tarugosTotal: number;
-  
+
   // Injection tarugos
   tarugosInjection: number;
-  
+
   // Topos
   toposUnits: number;
   toposMeters: number;
@@ -132,23 +132,23 @@ export interface BOMResult {
     openings: number;
     corners: number;
   };
-  
+
   // Webs
   websTotal: number;
   websPerRow: number;
   websPerPanel?: number; // 2, 3, or 4 based on rebar spacing
-  
+
   // Grids (stabilization)
   gridsTotal: number;
   gridsPerRow: number;
   gridRows: number[]; // Which rows have grids (0-indexed)
   gridType: ConcreteThickness; // 150 or 200
-  
+
   // Cuts
   cutsCount: number;
   cutsLengthMm: number;
   wasteTotal?: number; // Total waste in mm
-  
+
   // Summary
   numberOfRows: number;
   totalWallLength: number;
@@ -158,9 +158,14 @@ export interface BOMResult {
     X: number;
     end: number;
   };
-  
+
   // Chains (for chain-based calculation)
   chainsCount?: number;
+
+  // Diagnostics (chain quality)
+  totalChainLengthMm?: number;
+  wastePct?: number; // rounding waste per fiada / total length
+  expectedPanelsApprox?: number; // ceil(totalLength/1.2) * fiadas
 }
 
 // 3D Viewer settings
