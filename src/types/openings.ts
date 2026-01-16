@@ -17,6 +17,20 @@ export interface OpeningData {
   updatedAt?: Date;
 }
 
+// Opening Candidate - automatically detected gap in wall geometry
+export interface OpeningCandidate {
+  id: string;
+  chainId: string;
+  startDistMm: number; // Position along the chain
+  widthMm: number;
+  centerX: number; // World X coordinate
+  centerY: number; // World Y coordinate (2D plane)
+  angle: number; // Direction/orientation
+  status: 'detected' | 'converted' | 'dismissed';
+  label: string; // Auto-generated (C1, C2...)
+  createdFromGap?: boolean; // True if created from bridged gap
+}
+
 // Templates for quick selection
 export interface OpeningTemplate {
   name: string;
@@ -76,4 +90,10 @@ export function generateOpeningLabel(kind: OpeningKind, existingOpenings: Openin
   const prefix = kind === 'door' ? 'P' : 'J';
   const sameKindCount = existingOpenings.filter(o => o.kind === kind).length;
   return `${prefix}${sameKindCount + 1}`;
+}
+
+// Generate label for candidates
+export function generateCandidateLabel(existingCandidates: OpeningCandidate[]): string {
+  const activeCount = existingCandidates.filter(c => c.status !== 'dismissed').length;
+  return `C${activeCount + 1}`;
 }

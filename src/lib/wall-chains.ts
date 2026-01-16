@@ -8,8 +8,10 @@
 // - Auto-tuning based on wastePct
 // - Jog simplification for micro-breaks
 // - Robust snapping, gap bridging, graph reduction
+// - Opening candidate detection from gaps
 
-import { WallSegment, JunctionType, PANEL_WIDTH } from '@/types/icf';
+import { WallSegment, JunctionType, PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
+import { OpeningCandidate, generateCandidateLabel } from '@/types/openings';
 
 export interface WallChain {
   id: string;
@@ -33,9 +35,22 @@ export interface ChainNode {
   angles: number[];
 }
 
+// Gap detected during bridging - potential opening candidate
+interface DetectedGap {
+  chainId: string;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  widthMm: number;
+  angle: number;
+  distAlongChain: number;
+}
+
 export interface ChainsResult {
   chains: WallChain[];
   nodes: ChainNode[];
+  candidates: OpeningCandidate[]; // Detected opening candidates from gaps
   stats: {
     originalSegments: number;
     afterNoiseFilter: number;
@@ -61,6 +76,9 @@ export interface ChainsResult {
     // waste diagnostics
     wastePct: number;
     wastePerFiadaMm: number;
+    
+    // candidates
+    candidatesDetected: number;
   };
   junctionCounts: {
     L: number;
@@ -80,10 +98,13 @@ export type WallChainOptions = {
   jogMaxMm?: number; // max jog length to simplify
   snapOrthogonal?: boolean;
   preset?: ChainPreset;
+  detectCandidates?: boolean; // Enable opening candidate detection
+  candidateMinWidthMm?: number; // Min gap width to consider as opening (default 450)
+  candidateMaxWidthMm?: number; // Max gap width to consider as opening (default 4000)
 };
 
 // Preset configurations - tuned for architectural DXF files with fragmented geometry
-const PRESETS: Record<Exclude<ChainPreset, 'auto'>, Required<Omit<WallChainOptions, 'preset'>>> = {
+const PRESETS: Record<Exclude<ChainPreset, 'auto'>, Required<Omit<WallChainOptions, 'preset' | 'detectCandidates' | 'candidateMinWidthMm' | 'candidateMaxWidthMm'>>> = {
   conservative: {
     snapTolMm: 10,
     gapTolMm: 20,
@@ -111,6 +132,10 @@ const PRESETS: Record<Exclude<ChainPreset, 'auto'>, Required<Omit<WallChainOptio
 };
 
 const DEFAULTS = PRESETS.normal;
+
+// Opening candidate detection thresholds
+const CANDIDATE_MIN_WIDTH_MM = 450;  // Ignore gaps smaller than this (noise)
+const CANDIDATE_MAX_WIDTH_MM = 4000; // Ignore gaps larger than this (not openings)
 
 // =============== math helpers ===============
 
@@ -576,24 +601,37 @@ function reduceGraphColinear(
   }
 }
 
-function bridgeGaps(
+// Bridge gaps and collect detected gaps for candidate detection
+function bridgeGapsWithDetection(
   segments: WallSegment[],
-  opts: { gapTolMm: number; angleTolRad: number; snapTolMm: number }
-): WallSegment[] {
+  opts: { gapTolMm: number; angleTolRad: number; snapTolMm: number },
+  candidateOpts?: { minWidthMm: number; maxWidthMm: number }
+): { segments: WallSegment[]; detectedGaps: DetectedGap[] } {
   const { gapTolMm, angleTolRad, snapTolMm } = opts;
-  if (gapTolMm <= 0) return segments;
+  const detectedGaps: DetectedGap[] = [];
+  
+  if (gapTolMm <= 0) return { segments, detectedGaps };
 
   const { nodes, edges } = buildGraph(segments, snapTolMm);
   const degree1 = [...nodes.values()].filter((n) => n.edges.length === 1);
-  if (degree1.length < 2) return segments;
+  if (degree1.length < 2) return { segments, detectedGaps };
 
-  const gap2 = gapTolMm * gapTolMm;
+  // Use a larger gap tolerance for candidate detection
+  const candidateGapTol = candidateOpts?.maxWidthMm ?? CANDIDATE_MAX_WIDTH_MM;
+  const gap2 = candidateGapTol * candidateGapTol;
+  const bridgeGap2 = gapTolMm * gapTolMm;
 
   const extraSegments: WallSegment[] = [];
+  const processedPairs = new Set<string>();
+  
   for (let i = 0; i < degree1.length; i++) {
     for (let j = i + 1; j < degree1.length; j++) {
       const a = degree1[i];
       const b = degree1[j];
+      const pairKey = [a.id, b.id].sort().join('|');
+      if (processedPairs.has(pairKey)) continue;
+      processedPairs.add(pairKey);
+      
       const d2 = dist2(a.x, a.y, b.x, b.y);
       if (d2 > gap2) continue;
 
@@ -605,20 +643,43 @@ function bridgeGaps(
       if (!anglesColinear(ea.angle, bridgeAngle, angleTolRad)) continue;
       if (!anglesColinear(eb.angle, bridgeAngle, angleTolRad)) continue;
 
-      extraSegments.push({
-        id: `gap-${i}-${j}`,
-        projectId: ea.segments[0]?.projectId ?? 'unknown',
-        startX: a.x,
-        startY: a.y,
-        endX: b.x,
-        endY: b.y,
-        length: 0,
-        angle: 0,
-      });
+      const gapWidth = Math.sqrt(d2);
+      const minWidth = candidateOpts?.minWidthMm ?? CANDIDATE_MIN_WIDTH_MM;
+      const maxWidth = candidateOpts?.maxWidthMm ?? CANDIDATE_MAX_WIDTH_MM;
+      
+      // Check if this is a potential opening candidate (larger gap)
+      if (gapWidth >= minWidth && gapWidth <= maxWidth) {
+        detectedGaps.push({
+          chainId: '', // Will be assigned after chains are built
+          startX: a.x,
+          startY: a.y,
+          endX: b.x,
+          endY: b.y,
+          widthMm: gapWidth,
+          angle: bridgeAngle,
+          distAlongChain: 0, // Will be calculated later
+        });
+      }
+
+      // Only bridge small gaps (not potential openings)
+      if (d2 <= bridgeGap2) {
+        extraSegments.push({
+          id: `gap-${i}-${j}`,
+          projectId: ea.segments[0]?.projectId ?? 'unknown',
+          startX: a.x,
+          startY: a.y,
+          endX: b.x,
+          endY: b.y,
+          length: 0,
+          angle: 0,
+        });
+      }
     }
   }
 
-  if (extraSegments.length === 0) return segments;
+  if (extraSegments.length === 0 && detectedGaps.length === 0) {
+    return { segments, detectedGaps };
+  }
 
   const combined = [...segments, ...extraSegments].map((s) => ({
     ...s,
@@ -626,7 +687,7 @@ function bridgeGaps(
     angle: calculateNormalizedAngle(s),
   }));
 
-  return dedupSegments(combined);
+  return { segments: dedupSegments(combined), detectedGaps };
 }
 
 // =============== waste calculation ===============
@@ -652,7 +713,7 @@ function calculateWasteStats(chains: WallChain[]): { wastePct: number; wastePerF
 
 // =============== public API ===============
 
-export function getPresetOptions(preset: ChainPreset): Required<Omit<WallChainOptions, 'preset'>> {
+export function getPresetOptions(preset: ChainPreset): Required<Omit<WallChainOptions, 'preset' | 'detectCandidates' | 'candidateMinWidthMm' | 'candidateMaxWidthMm'>> {
   if (preset === 'auto') return PRESETS.normal;
   return PRESETS[preset];
 }
@@ -666,6 +727,10 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     ...options,
     preset: presetName,
   };
+  
+  const detectCandidates = options.detectCandidates ?? true;
+  const candidateMinWidthMm = options.candidateMinWidthMm ?? CANDIDATE_MIN_WIDTH_MM;
+  const candidateMaxWidthMm = options.candidateMaxWidthMm ?? CANDIDATE_MAX_WIDTH_MM;
   
   const angleTolRad = degToRad(opts.angleTolDeg);
 
@@ -718,8 +783,12 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
   // 5) Jog simplification
   const afterJogs = simplifyJogs(overlapMerged, opts.jogMaxMm, angleTolRad);
 
-  // 6) Gap bridging
-  const afterGaps = bridgeGaps(afterJogs, { gapTolMm: opts.gapTolMm, angleTolRad, snapTolMm: opts.snapTolMm });
+  // 6) Gap bridging with candidate detection
+  const { segments: afterGaps, detectedGaps } = bridgeGapsWithDetection(
+    afterJogs, 
+    { gapTolMm: opts.gapTolMm, angleTolRad, snapTolMm: opts.snapTolMm },
+    detectCandidates ? { minWidthMm: candidateMinWidthMm, maxWidthMm: candidateMaxWidthMm } : undefined
+  );
 
   // 7) Graph build + reduction
   const graph = buildGraph(afterGaps, opts.snapTolMm);
@@ -795,6 +864,64 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     end: nodes.filter((n) => n.type === 'end').length,
   };
 
+  // 9) Build opening candidates from detected gaps
+  const candidates: OpeningCandidate[] = [];
+  if (detectCandidates && detectedGaps.length > 0) {
+    // Match gaps to chains
+    for (const gap of detectedGaps) {
+      // Find which chain this gap belongs to
+      let bestChain: WallChain | null = null;
+      let bestDist = Infinity;
+      
+      const gapCenterX = (gap.startX + gap.endX) / 2;
+      const gapCenterY = (gap.startY + gap.endY) / 2;
+      
+      for (const chain of chains) {
+        // Check if gap is colinear with chain
+        if (!anglesColinear(gap.angle, chain.angle, angleTolRad)) continue;
+        
+        // Check if gap center is near the chain line
+        const chainDirX = (chain.endX - chain.startX) / chain.lengthMm;
+        const chainDirY = (chain.endY - chain.startY) / chain.lengthMm;
+        
+        // Project gap center onto chain line
+        const t = ((gapCenterX - chain.startX) * chainDirX + (gapCenterY - chain.startY) * chainDirY);
+        
+        // Check if projection is within extended chain bounds
+        if (t >= -gap.widthMm && t <= chain.lengthMm + gap.widthMm) {
+          const projX = chain.startX + chainDirX * t;
+          const projY = chain.startY + chainDirY * t;
+          const distToLine = distance(gapCenterX, gapCenterY, projX, projY);
+          
+          if (distToLine < bestDist && distToLine < 100) { // Within 100mm of chain line
+            bestDist = distToLine;
+            bestChain = chain;
+          }
+        }
+      }
+      
+      if (bestChain) {
+        // Calculate distance along chain
+        const chainDirX = (bestChain.endX - bestChain.startX) / bestChain.lengthMm;
+        const chainDirY = (bestChain.endY - bestChain.startY) / bestChain.lengthMm;
+        const t = ((gap.startX - bestChain.startX) * chainDirX + (gap.startY - bestChain.startY) * chainDirY);
+        
+        candidates.push({
+          id: `candidate-${candidates.length}`,
+          chainId: bestChain.id,
+          startDistMm: Math.max(0, t),
+          widthMm: gap.widthMm,
+          centerX: gapCenterX,
+          centerY: gapCenterY,
+          angle: bestChain.angle,
+          status: 'detected',
+          label: generateCandidateLabel(candidates),
+          createdFromGap: true,
+        });
+      }
+    }
+  }
+
   const totalLengthMm = chains.reduce((sum, c) => sum + c.lengthMm, 0);
   const lengths = chains.map((c) => c.lengthMm);
   const minLength = lengths.length ? Math.min(...lengths) : 0;
@@ -829,6 +956,7 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
 
     wastePct,
     wastePerFiadaMm,
+    candidatesDetected: candidates.length,
   };
 
   console.log('[WallChains] Stats:', {
@@ -840,11 +968,13 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     wastePct: `${(stats.wastePct * 100).toFixed(1)}%`,
     preset: stats.preset,
     junctions: junctionCounts,
+    candidates: candidates.length,
   });
 
   return {
     chains,
     nodes,
+    candidates,
     stats,
     junctionCounts,
   };
@@ -899,206 +1029,127 @@ export function buildWallChainsAutoTuned(walls: WallSegment[]): ChainsResult & {
 /**
  * Calculate full panels and remainder for a single chain
  */
-export function calculatePanelsForChain(chainLengthMm: number): {
-  fullPanels: number;
-  remainderMm: number;
-} {
-  const fullPanels = Math.floor(chainLengthMm / PANEL_WIDTH);
-  const remainderMm = chainLengthMm % PANEL_WIDTH;
+export function calculateChainPanels(chain: WallChain): { fullPanels: number; remainderMm: number } {
+  const fullPanels = Math.floor(chain.lengthMm / PANEL_WIDTH);
+  const remainderMm = chain.lengthMm % PANEL_WIDTH;
   return { fullPanels, remainderMm };
 }
 
 /**
- * First-Fit Decreasing Bin Packing for remainders
- * Each bin has capacity 1200mm (one panel)
- * Returns the number of additional panels needed to cover all remainders
+ * Calculate total panels for all chains (simple approach, no bin packing)
  */
-export function binPackRemainders(remainders: number[], binCapacity: number = PANEL_WIDTH): {
-  binsUsed: number;
-  bins: number[][]; // for debugging
-  totalWasteMm: number;
+export function calculateTotalPanels(chains: WallChain[]): {
+  totalFullPanels: number;
+  totalCutPanels: number;
+  totalPanels: number;
+  remainders: number[];
 } {
-  if (remainders.length === 0) {
-    return { binsUsed: 0, bins: [], totalWasteMm: 0 };
-  }
-
-  // Sort descending (largest first for FFD)
-  const sorted = [...remainders].sort((a, b) => b - a);
-  
-  // Each bin tracks remaining capacity and items
-  const bins: { remaining: number; items: number[] }[] = [];
-  
-  for (const rem of sorted) {
-    if (rem <= 0) continue;
-    
-    // Find first bin with enough space
-    let placed = false;
-    for (const bin of bins) {
-      if (bin.remaining >= rem) {
-        bin.remaining -= rem;
-        bin.items.push(rem);
-        placed = true;
-        break;
-      }
-    }
-    
-    // No bin found, create new one
-    if (!placed) {
-      bins.push({ remaining: binCapacity - rem, items: [rem] });
-    }
-  }
-  
-  // Calculate total waste (unused space in bins)
-  const totalWasteMm = bins.reduce((sum, bin) => sum + bin.remaining, 0);
-  
-  return {
-    binsUsed: bins.length,
-    bins: bins.map(b => b.items),
-    totalWasteMm,
-  };
-}
-
-/**
- * Calculate BOM using bin packing for optimal panel count
- * 
- * HARD RULE: BOM por metros lineares com aproveitamento de cortes
- * NOT: ceil per chain (that causes 31% waste)
- * 
- * Algorithm per fiada:
- * 1. For each chain: full = floor(len/1200), rem = len % 1200
- * 2. Sum all fullPanels
- * 3. Collect all remainders > 0
- * 4. Apply FFD bin packing to remainders
- * 5. panelsPerFiada = sumFull + binsUsed
- */
-export function calculateBOMFromChains(
-  chainsResult: ChainsResult,
-  numFiadas: number,
-  rebarSpacingCm: 10 | 15 | 20,
-  concreteThicknessMm: number,
-  cornerMode: 'overlap_cut' | 'topo',
-  gridSettings: { base: boolean; mid: boolean; top: boolean } = { base: true, mid: false, top: false }
-) {
-  const { chains, junctionCounts, stats } = chainsResult;
-  const totalLengthMm = stats.totalLengthMm;
-
-  // ============ PANELS WITH BIN PACKING ============
-  // Per fiada calculation (same for all fiadas since geometry is same)
-  let sumFullPanels = 0;
+  let totalFullPanels = 0;
   const remainders: number[] = [];
   
   for (const chain of chains) {
-    const { fullPanels, remainderMm } = calculatePanelsForChain(chain.lengthMm);
-    sumFullPanels += fullPanels;
+    const { fullPanels, remainderMm } = calculateChainPanels(chain);
+    totalFullPanels += fullPanels;
     if (remainderMm > 0) {
       remainders.push(remainderMm);
     }
   }
   
-  // Bin pack remainders
-  const packingResult = binPackRemainders(remainders);
+  // Simple: each remainder needs one cut panel
+  const totalCutPanels = remainders.length;
   
-  // Panels per fiada = full panels + bins for remainders
-  const panelsPerFiada = sumFullPanels + packingResult.binsUsed;
-  const panelsTotal = panelsPerFiada * numFiadas;
-  
-  // Waste calculation
-  const wastePerFiadaMm = packingResult.totalWasteMm;
-  const wasteTotal = wastePerFiadaMm * numFiadas;
-  
-  // Waste percentage (vs supplied material per fiada)
-  const suppliedMmPerFiada = panelsPerFiada * PANEL_WIDTH;
-  const wastePct = suppliedMmPerFiada > 0 ? wastePerFiadaMm / suppliedMmPerFiada : 0;
-  
-  // Minimum theoretical (if one continuous run)
-  const minPanelsPerFiada = Math.ceil(totalLengthMm / PANEL_WIDTH);
-  const expectedPanelsApprox = minPanelsPerFiada * numFiadas;
-  
-  // Cuts = number of remainders (one cut per chain with remainder)
-  const cutsPerFiada = remainders.length;
-  const cutsTotal = cutsPerFiada * numFiadas;
+  return {
+    totalFullPanels,
+    totalCutPanels,
+    totalPanels: totalFullPanels + totalCutPanels,
+    remainders,
+  };
+}
 
-  console.log('[BOM] Bin Packing Results:', {
-    totalLengthM: (totalLengthMm / 1000).toFixed(2),
-    chainsCount: chains.length,
-    sumFullPanels,
-    remaindersCount: remainders.length,
-    binsUsed: packingResult.binsUsed,
-    panelsPerFiada,
-    panelsTotal,
-    minPanelsTotal: expectedPanelsApprox,
-    wastePct: `${(wastePct * 100).toFixed(1)}%`,
-    wastePerFiadaMm: wastePerFiadaMm.toFixed(0),
-  });
-
-  // ============ TARUGOS ============
-  // Base: 2 per panel
-  const tarugosBase = panelsTotal * 2;
+/**
+ * Calculate BOM from chains result - used by icf-calculations.ts
+ */
+export function calculateBOMFromChains(
+  chainsResult: ChainsResult,
+  numberOfRows: number,
+  rebarSpacingCm: 10 | 15 | 20,
+  concreteThicknessMm: number,
+  cornerMode: 'overlap_cut' | 'topo',
+  gridSettings: { base: boolean; mid: boolean; top: boolean }
+): {
+  panelsCount: number;
+  panelsPerFiada: number;
+  tarugosBase: number;
+  tarugosAdjustments: number;
+  tarugosTotal: number;
+  tarugosInjection: number;
+  toposUnits: number;
+  toposMeters: number;
+  toposByReason: { tJunction: number; xJunction: number; openings: number; corners: number };
+  websTotal: number;
+  websPerPanel: number;
+  gridsTotal: number;
+  gridsPerFiada: number;
+  gridRows: number[];
+  cutsCount: number;
+  wasteTotal: number;
+  numberOfRows: number;
+  totalWallLength: number;
+  junctionCounts: { L: number; T: number; X: number; end: number };
+  chainsCount: number;
+  wastePct: number;
+  expectedPanelsApprox: number;
+} {
+  const { chains, junctionCounts, stats } = chainsResult;
   
-  // Adjustments: L: -1, T: +1, X: +2 (per fiada, cumulative)
+  // Calculate panels per fiada
+  const { totalFullPanels, totalCutPanels, totalPanels, remainders } = calculateTotalPanels(chains);
+  const panelsPerFiada = totalPanels;
+  const panelsCount = panelsPerFiada * numberOfRows;
+  
+  // Tarugos
+  const tarugosBase = panelsCount * 2;
   const adjustmentPerFiada = (junctionCounts.L * -1) + (junctionCounts.T * 1) + (junctionCounts.X * 2);
-  const tarugosAdjustments = adjustmentPerFiada * numFiadas;
+  const tarugosAdjustments = adjustmentPerFiada * numberOfRows;
   const tarugosTotal = Math.max(0, tarugosBase + tarugosAdjustments);
+  const tarugosInjection = panelsCount;
   
-  // Injection tarugos: 1 per panel
-  const tarugosInjection = panelsTotal;
-
-  // ============ WEBS ============
-  // Discrete: 20cm=2, 15cm=3, 10cm=4 webs per panel
+  // Webs
   const websPerPanel = rebarSpacingCm === 10 ? 4 : rebarSpacingCm === 15 ? 3 : 2;
-  const websTotal = panelsTotal * websPerPanel;
-
-  // ============ GRIDS (3m units) ============
-  const totalLengthM = totalLengthMm / 1000;
-  const gridsPerFiada = Math.ceil(totalLengthM / 3);
+  const websTotal = panelsCount * websPerPanel;
   
+  // Grids
+  const totalLengthM = stats.totalLengthMm / 1000;
+  const gridsPerFiada = Math.ceil(totalLengthM / 3);
   const gridRows: number[] = [];
   if (gridSettings.base) gridRows.push(0);
-  if (gridSettings.mid && numFiadas > 2) gridRows.push(Math.floor(numFiadas / 2));
-  if (gridSettings.top && numFiadas > 1) gridRows.push(numFiadas - 1);
-  
-  // Remove duplicates and sort
+  if (gridSettings.mid && numberOfRows > 2) gridRows.push(Math.floor(numberOfRows / 2));
+  if (gridSettings.top && numberOfRows > 1) gridRows.push(numberOfRows - 1);
   const uniqueGridRows = Array.from(new Set(gridRows)).sort((a, b) => a - b);
   const gridsTotal = gridsPerFiada * uniqueGridRows.length;
-
-  // ============ TOPOS ============
-  // T-junctions: Tipo2 fiadas (even rows: 2,4,6...) need topos
-  // numTipo2Fiadas = floor(numFiadas / 2) for alternation starting at row 1
-  const numTipo2Fiadas = Math.floor(numFiadas / 2);
   
-  // Topos at T: 1 topo per T per Tipo2 fiada
+  // Topos (T/X/corners)
+  const numTipo2Fiadas = Math.floor(numberOfRows / 2);
   const tTopo = junctionCounts.T * numTipo2Fiadas;
-  
-  // Topos at X: similar to T (X has 2 perpendicular, but each only on Tipo2)
   const xTopo = junctionCounts.X * numTipo2Fiadas;
-  
-  // Corner topos (only if corner_mode = 'topo')
   const cornerTopo = cornerMode === 'topo' ? junctionCounts.L * numTipo2Fiadas : 0;
-  
   const toposUnits = tTopo + xTopo + cornerTopo;
-  const topoWidthM = concreteThicknessMm / 1000; // 0.15 or 0.2
-  const toposMeters = toposUnits * 0.4; // Each topo is 400mm height = 0.4m
-
+  const toposMeters = toposUnits * 0.4;
+  
+  // Waste
+  const wasteTotal = stats.wastePerFiadaMm * numberOfRows;
+  const cutsCount = totalCutPanels * numberOfRows;
+  
+  // Expected panels (theoretical minimum)
+  const expectedPanelsApprox = Math.ceil(stats.totalLengthMm / PANEL_WIDTH) * numberOfRows;
+  
   return {
-    panelsCount: panelsTotal,
+    panelsCount,
     panelsPerFiada,
-    
-    cutsCount: cutsTotal,
-    wasteTotal,
-    wastePct,
-    
     tarugosBase,
     tarugosAdjustments,
     tarugosTotal,
     tarugosInjection,
-    
-    websPerPanel,
-    websTotal,
-    
-    gridsPerFiada,
-    gridsTotal,
-    gridRows: uniqueGridRows,
-    
     toposUnits,
     toposMeters,
     toposByReason: {
@@ -1107,18 +1158,18 @@ export function calculateBOMFromChains(
       openings: 0,
       corners: cornerTopo,
     },
-    
-    numberOfRows: numFiadas,
-    totalWallLength: totalLengthMm,
+    websTotal,
+    websPerPanel,
+    gridsTotal,
+    gridsPerFiada,
+    gridRows: uniqueGridRows,
+    cutsCount,
+    wasteTotal,
+    numberOfRows,
+    totalWallLength: stats.totalLengthMm,
     junctionCounts,
-    chainsCount: stats.chainsCount,
-    
-    // Diagnostics
-    expectedPanelsApprox, // minimum theoretical
-    minPanelsPerFiada,
-    roundingWasteMmPerFiada: wastePerFiadaMm,
-    binsUsedPerFiada: packingResult.binsUsed,
-    sumFullPanelsPerFiada: sumFullPanels,
-    remaindersCount: remainders.length,
+    chainsCount: chains.length,
+    wastePct: stats.wastePct,
+    expectedPanelsApprox,
   };
 }

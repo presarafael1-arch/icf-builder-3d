@@ -169,14 +169,14 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
 // Panel type for coloring - PERMANENT colors by classification
 export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO';
 
-// Color palette for panel types (matching reference image)
+// Color palette for panel types (FIXED HEX as specified)
 export const PANEL_COLORS = {
-  FULL: new THREE.Color('#d4a83a'),        // Yellow - full panel (1200mm)
-  CUT_SINGLE: new THREE.Color('#7cb342'),  // Light green - cut on ONE side only
-  CUT_DOUBLE: new THREE.Color('#d97734'),  // Orange - cut on BOTH sides (miolo)
-  CORNER_CUT: new THREE.Color('#c62828'),  // Red - corner adjustment panels
-  TOPO: new THREE.Color('#2d5a27'),        // Dark green - topos
-  OPENING_VOID: new THREE.Color('#ff6b6b'), // Red translucent - opening voids
+  FULL: new THREE.Color('#E6D44A'),        // YELLOW - full panel (1200mm)
+  CUT_SINGLE: new THREE.Color('#6FD36F'),  // LIGHT GREEN - cut on ONE side only (meio-corte)
+  CUT_DOUBLE: new THREE.Color('#F2992E'),  // ORANGE - cut on BOTH sides (corte)
+  CORNER_CUT: new THREE.Color('#C83A3A'),  // RED - corner/stagger adjustment panels
+  TOPO: new THREE.Color('#0F6B3E'),        // DARK GREEN - topos
+  OPENING_VOID: new THREE.Color('#C83A3A'), // RED translucent - opening voids
 };
 
 // Stagger offset for odd rows (for interlocking pattern)
