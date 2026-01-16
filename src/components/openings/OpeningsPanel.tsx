@@ -272,9 +272,28 @@ export function OpeningsPanel({
                   value={newOpening.offsetMm}
                   onChange={(e) => setNewOpening(prev => ({ ...prev, offsetMm: Number(e.target.value) }))}
                   className="h-7 text-xs font-mono"
+                  placeholder="desde início da cadeia"
                 />
+                <span className="text-[10px] text-muted-foreground">
+                  a partir do início da cadeia
+                </span>
               </div>
             </div>
+
+            {/* Validation warning */}
+            {newOpening.chainId && (() => {
+              const chain = chains.find(c => c.id === newOpening.chainId);
+              if (!chain) return null;
+              const maxPos = chain.lengthMm - newOpening.widthMm;
+              if (newOpening.offsetMm > maxPos) {
+                return (
+                  <div className="text-[10px] text-destructive bg-destructive/10 px-2 py-1 rounded">
+                    ⚠️ Posição + largura excedem a cadeia ({chain.lengthMm}mm). Máx: {Math.max(0, maxPos)}mm
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* Label */}
             <div>

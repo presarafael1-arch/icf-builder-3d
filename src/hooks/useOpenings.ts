@@ -87,9 +87,9 @@ export function useOpenings(projectId: string | undefined) {
     fetchOpenings();
   }, [fetchOpenings]);
 
-  // Save to storage whenever openings change
+  // Save to storage whenever openings change (including empty array to persist deletions)
   useEffect(() => {
-    if (projectId && openings.length > 0) {
+    if (projectId) {
       saveToStorage(projectId, openings);
     }
   }, [projectId, openings]);
