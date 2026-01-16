@@ -10,11 +10,22 @@ import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
 
+// Panel counts by type for legend
+export interface PanelCounts {
+  FULL: number;
+  CUT_SINGLE: number;
+  CUT_DOUBLE: number;
+  CORNER_CUT: number;
+  TOPO: number;
+  OPENING_VOID: number;
+}
+
 interface ICFPanelInstancesProps {
   walls: WallSegment[];
   settings: ViewerSettings;
   openings?: OpeningData[];
   onInstanceCountChange?: (count: number) => void;
+  onCountsChange?: (counts: PanelCounts) => void;
 }
 
 // Scale factor: convert mm to 3D units (1 unit = 1 meter)
@@ -187,7 +198,7 @@ interface ClassifiedPanel {
 
 // Main panel instances component - renders panels based on chains with opening gaps and stagger
 // PERMANENT COLORS by panel type (not hover-dependent)
-function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChange }: ICFPanelInstancesProps) {
+function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChange, onCountsChange }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   // IMPORTANT: render panels from CHAINS (logical runs), not raw segments
@@ -207,6 +218,11 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
     const panels: ClassifiedPanel[] = [];
     const counts = { FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0 };
 
+    if (chains.length === 0) {
+      console.log('[ICFPanelInstances] No chains, skipping panel generation');
+      return { panels, counts };
+    }
+
     // For each chain
     chains.forEach((chain, chainIndex) => {
       const chainLength = chain.lengthMm;
@@ -221,6 +237,7 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
 
       // Only show up to current row (slider controls this)
       const visibleRows = Math.min(settings.currentRow, settings.maxRows);
+      
       for (let row = 0; row < visibleRows; row++) {
         // Apply stagger offset for odd rows (interlocking pattern)
         const isOddRow = row % 2 === 1;
@@ -229,94 +246,76 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
         // Get remaining intervals for this row (accounting for openings)
         const intervals = getRemainingIntervalsForRow(chain, openings, row);
 
-        // For each interval, place panels from both ends toward middle
-        intervals.forEach((interval, intervalIndex) => {
+        // For each interval, place panels
+        intervals.forEach((interval) => {
           const intervalStart = interval.start;
           const intervalEnd = interval.end;
           const intervalLength = intervalEnd - intervalStart;
           
           if (intervalLength < MIN_CUT_MM) return; // Skip tiny intervals
           
-          // Check if this interval was created by an opening (not the full chain)
-          const isOpeningEdge = intervalIndex > 0 || (intervals.length > 1);
+          // For stagger: offset the starting position for the first interval only
+          let cursor = intervalStart;
           
-          // For stagger: offset the starting position
-          const effectiveStart = intervalStart + (isOddRow && intervalStart === 0 ? staggerOffset : 0);
-          
-          // Pagination from BOTH ENDS toward middle
-          const panelPlacements: { start: number; end: number; isStartCut: boolean; isEndCut: boolean }[] = [];
-          
-          // Calculate available length after stagger offset
-          let remaining = intervalEnd - effectiveStart;
-          
-          // Handle stagger cut piece at the very start of chain
+          // Handle stagger cut piece at the very start of chain (row odd, first interval)
           if (isOddRow && intervalStart === 0 && staggerOffset > 0) {
             const cutWidth = Math.min(staggerOffset, intervalEnd);
             if (cutWidth >= MIN_CUT_MM) {
-              panelPlacements.push({
-                start: 0,
-                end: cutWidth,
-                isStartCut: true, // Cut at chain start due to stagger
-                isEndCut: cutWidth < PANEL_WIDTH && cutWidth < intervalEnd,
+              // Create stagger cut panel
+              const posX = chain.startX + dirX * (cutWidth / 2);
+              const posZ = chain.startY + dirY * (cutWidth / 2);
+              const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+
+              const matrix = new THREE.Matrix4();
+              matrix.compose(
+                new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
+                new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+                new THREE.Vector3(cutWidth / PANEL_WIDTH, 1, 1)
+              );
+
+              const panelType: PanelType = isCornerChain ? 'CORNER_CUT' : 'CUT_SINGLE';
+              counts[panelType]++;
+              
+              panels.push({
+                matrix,
+                type: panelType,
+                widthMm: cutWidth,
+                isStartCut: true,
+                isEndCut: false,
+                isCorner: isCornerChain,
+                rowIndex: row,
               });
             }
+            cursor = staggerOffset;
           }
           
-          // Now place full panels from effectiveStart
-          let cursor = effectiveStart;
-          let placedCount = 0;
-          const maxPanels = Math.ceil(remaining / PANEL_WIDTH);
-          
-          while (cursor < intervalEnd && placedCount < maxPanels + 1) {
+          // Place panels from cursor to interval end
+          while (cursor < intervalEnd) {
             const remainingLength = intervalEnd - cursor;
             const panelWidth = Math.min(PANEL_WIDTH, remainingLength);
             
             if (panelWidth < MIN_CUT_MM) break;
             
-            const isAtIntervalStart = cursor === effectiveStart;
-            const isAtIntervalEnd = cursor + panelWidth >= intervalEnd - 10;
-            
-            panelPlacements.push({
-              start: cursor,
-              end: cursor + panelWidth,
-              isStartCut: isAtIntervalStart && isOpeningEdge,
-              isEndCut: panelWidth < PANEL_WIDTH - 10,
-            });
-            
-            cursor += PANEL_WIDTH;
-            placedCount++;
-          }
-          
-          // Create panel instances with classification
-          panelPlacements.forEach(({ start, end, isStartCut, isEndCut }) => {
-            const panelWidth = end - start;
-            const panelCenter = (start + end) / 2;
-            
-            // Position along chain
+            const panelCenter = cursor + panelWidth / 2;
             const posX = chain.startX + dirX * panelCenter;
             const posZ = chain.startY + dirY * panelCenter;
             const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
 
             const matrix = new THREE.Matrix4();
-            const scaleX = panelWidth / PANEL_WIDTH;
-            
             matrix.compose(
               new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
               new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-              new THREE.Vector3(scaleX, 1, 1)
+              new THREE.Vector3(panelWidth / PANEL_WIDTH, 1, 1)
             );
 
-            // Determine panel type based on cuts and position
+            // Determine panel type based on width
             let panelType: PanelType = 'FULL';
             const isCut = panelWidth < PANEL_WIDTH - 10;
             
             if (isCut) {
-              // Check if corner adjustment
-              const isAtChainEnd = (start < 50) || (chainLength - end < 50);
+              const isAtChainEnd = (cursor < 50) || (chainLength - (cursor + panelWidth) < 50);
               if (isCornerChain && isAtChainEnd && isOddRow) {
                 panelType = 'CORNER_CUT'; // Red - corner adjustment
-              } else if (isStartCut && isEndCut) {
-                panelType = 'CUT_DOUBLE'; // Orange - cut on both sides
               } else {
                 panelType = 'CUT_SINGLE'; // Light green - cut on one side
               }
@@ -328,23 +327,27 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
               matrix,
               type: panelType,
               widthMm: panelWidth,
-              isStartCut,
-              isEndCut,
+              isStartCut: cursor === intervalStart,
+              isEndCut: isCut,
               isCorner: isCornerChain,
               rowIndex: row,
             });
-          });
+            
+            cursor += PANEL_WIDTH;
+          }
         });
       }
     });
 
+    console.log('[ICFPanelInstances] Generated panels:', panels.length, 'counts:', counts);
     return { panels, counts };
   }, [chains, openings, settings.currentRow, settings.maxRows]);
 
-  // Report count to parent
+  // Report count and counts-by-type to parent
   useEffect(() => {
     onInstanceCountChange?.(panels.length);
-  }, [panels.length, onInstanceCountChange]);
+    onCountsChange?.({ ...counts, TOPO: 0, OPENING_VOID: 0 });
+  }, [panels.length, counts, onInstanceCountChange, onCountsChange]);
 
   // Update instance matrices and colors when panels change
   useEffect(() => {
@@ -811,9 +814,10 @@ interface SceneProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   onPanelCountChange?: (count: number) => void;
+  onPanelCountsChange?: (counts: PanelCounts) => void;
 }
 
-function Scene({ walls, settings, openings = [], onPanelCountChange }: SceneProps) {
+function Scene({ walls, settings, openings = [], onPanelCountChange, onPanelCountsChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Calculate center of the scene for initial view
@@ -899,6 +903,7 @@ function Scene({ walls, settings, openings = [], onPanelCountChange }: SceneProp
           settings={settings} 
           openings={openings} 
           onInstanceCountChange={onPanelCountChange}
+          onCountsChange={onPanelCountsChange}
         />
       )}
 
@@ -928,6 +933,9 @@ interface ICFViewer3DProps {
 
 export function ICFViewer3D({ walls, settings, openings = [], className = '' }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
+  const [panelCounts, setPanelCounts] = useState<PanelCounts>({
+    FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
+  });
   const [showLegend, setShowLegend] = useState(true);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
@@ -958,16 +966,18 @@ export function ICFViewer3D({ walls, settings, openings = [], className = '' }: 
           settings={settings} 
           openings={openings} 
           onPanelCountChange={setPanelInstancesCount}
+          onPanelCountsChange={setPanelCounts}
         />
       </Canvas>
 
-      {/* Panel Legend - only in panels mode */}
+      {/* Panel Legend - only in panels mode, shows permanent colors and counts */}
       {showPanelsMode && panelInstancesCount > 0 && (
         <PanelLegend 
           visible={showLegend}
           onToggle={() => setShowLegend(!showLegend)}
           showOpenings={settings.showOpenings && openings.length > 0}
           showTopos={settings.showTopos && openings.length > 0}
+          counts={panelCounts}
         />
       )}
 
