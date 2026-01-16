@@ -3,7 +3,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
-import { OpeningData, getAffectedRows } from '@/types/openings';
+import { OpeningData, OpeningCandidate, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
@@ -813,11 +813,91 @@ interface SceneProps {
   walls: WallSegment[];
   settings: ViewerSettings;
   openings?: OpeningData[];
+  candidates?: OpeningCandidate[];
   onPanelCountChange?: (count: number) => void;
   onPanelCountsChange?: (counts: PanelCounts) => void;
 }
 
-function Scene({ walls, settings, openings = [], onPanelCountChange, onPanelCountsChange }: SceneProps) {
+// Opening CANDIDATES visualization (red translucent boxes at detected gap locations)
+function CandidatesVisualization({ walls, settings, candidates = [] }: { walls: WallSegment[]; settings: ViewerSettings; candidates: OpeningCandidate[] }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  
+  const chainsResult = useMemo(
+    () => buildWallChains(walls, { snapTolMm: 5, gapTolMm: 10, angleTolDeg: 2, noiseMinMm: 100 }),
+    [walls]
+  );
+  const chains = chainsResult.chains;
+  
+  // Generate candidate volume matrices
+  const { volumes, count } = useMemo(() => {
+    const volumes: THREE.Matrix4[] = [];
+    
+    candidates.forEach(candidate => {
+      const chain = chains.find(c => c.id === candidate.chainId);
+      if (!chain) return;
+      
+      const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+      const dirX = (chain.endX - chain.startX) / chain.lengthMm;
+      const dirY = (chain.endY - chain.startY) / chain.lengthMm;
+      
+      // Position candidate box at detected gap location
+      const centerOffset = candidate.startDistMm + candidate.widthMm / 2;
+      const centerX = chain.startX + dirX * centerOffset;
+      const centerZ = chain.startY + dirY * centerOffset;
+      
+      // Default height = full wall height (all rows visible)
+      const heightMm = settings.maxRows * PANEL_HEIGHT;
+      const centerY = heightMm / 2;
+      
+      const matrix = new THREE.Matrix4();
+      matrix.compose(
+        new THREE.Vector3(centerX * SCALE, centerY * SCALE, centerZ * SCALE),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+        new THREE.Vector3(
+          candidate.widthMm / PANEL_WIDTH, 
+          heightMm / PANEL_HEIGHT, 
+          1
+        )
+      );
+      volumes.push(matrix);
+    });
+    
+    return { volumes, count: volumes.length };
+  }, [chains, candidates, settings.maxRows]);
+  
+  // Update instance matrices
+  useEffect(() => {
+    if (!meshRef.current || count === 0) return;
+    volumes.forEach((matrix, i) => {
+      meshRef.current!.setMatrixAt(i, matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [volumes, count]);
+  
+  if (count === 0) return null;
+  
+  const candidateGeometry = useMemo(() => 
+    new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 0.8), 
+  []);
+  
+  return (
+    <instancedMesh 
+      ref={meshRef} 
+      args={[candidateGeometry, undefined, count]} 
+      frustumCulled={false}
+    >
+      <meshStandardMaterial 
+        color="#ff4444" 
+        opacity={0.25} 
+        transparent 
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </instancedMesh>
+  );
+}
+
+function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Calculate center of the scene for initial view
@@ -911,6 +991,11 @@ function Scene({ walls, settings, openings = [], onPanelCountChange, onPanelCoun
       {openings.length > 0 && settings.showOpenings && (
         <OpeningsVisualization walls={walls} settings={settings} openings={openings} />
       )}
+      
+      {/* Opening CANDIDATES visualization (detected gaps - red translucent) */}
+      {candidates.length > 0 && settings.showOpenings && (
+        <CandidatesVisualization walls={walls} settings={settings} candidates={candidates} />
+      )}
 
       {/* Webs */}
       {settings.showWebs && <WebsInstances walls={walls} settings={settings} />}
@@ -928,10 +1013,11 @@ interface ICFViewer3DProps {
   walls: WallSegment[];
   settings: ViewerSettings;
   openings?: OpeningData[];
+  candidates?: OpeningCandidate[];
   className?: string;
 }
 
-export function ICFViewer3D({ walls, settings, openings = [], className = '' }: ICFViewer3DProps) {
+export function ICFViewer3D({ walls, settings, openings = [], candidates = [], className = '' }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
     FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
@@ -964,7 +1050,8 @@ export function ICFViewer3D({ walls, settings, openings = [], className = '' }: 
         <Scene 
           walls={walls} 
           settings={settings} 
-          openings={openings} 
+          openings={openings}
+          candidates={candidates}
           onPanelCountChange={setPanelInstancesCount}
           onPanelCountsChange={setPanelCounts}
         />

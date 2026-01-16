@@ -1,6 +1,7 @@
 // Openings Panel for Project Editor - Add/Edit doors and windows
-import { useState } from 'react';
-import { DoorOpen, LayoutGrid, Plus, Trash2, Check, X } from 'lucide-react';
+// Includes "Detetadas" section for auto-detected opening candidates
+import { useState, useMemo } from 'react';
+import { DoorOpen, LayoutGrid, Plus, Trash2, Check, X, Scan, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,17 +13,19 @@ import {
   OpeningData, 
   OpeningKind, 
   OpeningTemplate,
+  OpeningCandidate,
   DOOR_TEMPLATES, 
   WINDOW_TEMPLATES,
   getAffectedRows,
   calculateOpeningTopos,
   generateOpeningLabel 
 } from '@/types/openings';
-import { WallChain } from '@/lib/wall-chains';
+import { WallChain, ChainsResult } from '@/lib/wall-chains';
 
 interface OpeningsPanelProps {
   openings: OpeningData[];
   chains: WallChain[];
+  candidates?: OpeningCandidate[];
   onAddOpening: (
     chainId: string,
     kind: OpeningKind,
@@ -34,6 +37,7 @@ interface OpeningsPanelProps {
   ) => Promise<OpeningData | null>;
   onUpdateOpening: (id: string, updates: Partial<OpeningData>) => Promise<boolean>;
   onDeleteOpening: (id: string) => Promise<boolean>;
+  onConvertCandidate?: (candidateId: string) => void;
   maxHeight: number; // Wall height to validate openings
 }
 
@@ -42,9 +46,11 @@ type AddMode = 'none' | 'door' | 'window';
 export function OpeningsPanel({
   openings,
   chains,
+  candidates = [],
   onAddOpening,
   onUpdateOpening,
   onDeleteOpening,
+  onConvertCandidate,
   maxHeight,
 }: OpeningsPanelProps) {
   const [addMode, setAddMode] = useState<AddMode>('none');
@@ -60,6 +66,15 @@ export function OpeningsPanel({
     offsetMm: 0,
     label: '',
   });
+
+  // Track which candidate is being converted (if any)
+  const [convertingCandidateId, setConvertingCandidateId] = useState<string | null>(null);
+
+  // Filter candidates that haven't been converted yet
+  const activeCandidates = useMemo(() => 
+    candidates.filter(c => c.status === 'detected'),
+    [candidates]
+  );
 
   const templates = addMode === 'door' ? DOOR_TEMPLATES : addMode === 'window' ? WINDOW_TEMPLATES : [];
 
@@ -83,6 +98,7 @@ export function OpeningsPanel({
 
   const handleStartAdd = (kind: OpeningKind) => {
     setAddMode(kind);
+    setConvertingCandidateId(null);
     const defaultTemplate = kind === 'door' ? DOOR_TEMPLATES[1] : WINDOW_TEMPLATES[0];
     setNewOpening({
       chainId: chains.length > 0 ? chains[0].id : '',
@@ -95,8 +111,28 @@ export function OpeningsPanel({
     });
   };
 
+  // Start adding from a detected candidate
+  const handleCreateFromCandidate = (candidate: OpeningCandidate) => {
+    setConvertingCandidateId(candidate.id);
+    // Default to door if width >= 700, otherwise window
+    const kind: OpeningKind = candidate.widthMm >= 700 ? 'door' : 'window';
+    setAddMode(kind);
+    
+    const defaultTemplate = kind === 'door' ? DOOR_TEMPLATES[1] : WINDOW_TEMPLATES[0];
+    setNewOpening({
+      chainId: candidate.chainId,
+      template: defaultTemplate.name,
+      widthMm: Math.round(candidate.widthMm), // Use detected width
+      heightMm: defaultTemplate.heightMm,
+      sillMm: defaultTemplate.sillMm,
+      offsetMm: Math.round(candidate.startDistMm), // Use detected position
+      label: generateOpeningLabel(kind, openings),
+    });
+  };
+
   const handleCancelAdd = () => {
     setAddMode('none');
+    setConvertingCandidateId(null);
     setNewOpening({
       chainId: '',
       template: 'custom',
@@ -123,7 +159,7 @@ export function OpeningsPanel({
       return; // TODO: show error
     }
 
-    await onAddOpening(
+    const result = await onAddOpening(
       newOpening.chainId,
       addMode as OpeningKind,
       newOpening.widthMm,
@@ -133,12 +169,22 @@ export function OpeningsPanel({
       newOpening.label
     );
 
+    // If we were converting a candidate, mark it as converted
+    if (result && convertingCandidateId && onConvertCandidate) {
+      onConvertCandidate(convertingCandidateId);
+    }
+
     handleCancelAdd();
   };
 
   const getChainLabel = (chainId: string) => {
     const idx = chains.findIndex(c => c.id === chainId);
     return idx >= 0 ? `Cadeia #${idx + 1}` : 'Desconhecida';
+  };
+
+  const getChainForCandidate = (candidate: OpeningCandidate) => {
+    const idx = chains.findIndex(c => c.id === candidate.chainId);
+    return idx >= 0 ? `#${idx + 1}` : '?';
   };
 
   return (
@@ -183,9 +229,16 @@ export function OpeningsPanel({
         {addMode !== 'none' && (
           <div className="space-y-3 p-3 bg-muted/30 rounded-md">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">
-                Nova {addMode === 'door' ? 'Porta' : 'Janela'}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">
+                  Nova {addMode === 'door' ? 'Porta' : 'Janela'}
+                </span>
+                {convertingCandidateId && (
+                  <Badge variant="outline" className="text-[10px] bg-orange-500/10 border-orange-500/30">
+                    de {candidates.find(c => c.id === convertingCandidateId)?.label}
+                  </Badge>
+                )}
+              </div>
               <div className="flex gap-1">
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={handleCancelAdd}>
                   <X className="h-3 w-3" />
@@ -308,6 +361,51 @@ export function OpeningsPanel({
           </div>
         )}
       </div>
+
+      {/* Detected Candidates Section */}
+      {activeCandidates.length > 0 && addMode === 'none' && (
+        <div className="p-3 border-b border-border bg-orange-500/5">
+          <div className="flex items-center gap-2 mb-2">
+            <Scan className="h-4 w-4 text-orange-500" />
+            <span className="text-sm font-medium text-orange-600">Detetadas</span>
+            <Badge variant="outline" className="ml-auto text-[10px] border-orange-500/30 text-orange-600">
+              {activeCandidates.length}
+            </Badge>
+          </div>
+          <p className="text-[10px] text-muted-foreground mb-2">
+            Aberturas detetadas automaticamente. Clique "Criar" para converter.
+          </p>
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {activeCandidates.map(candidate => (
+              <div 
+                key={candidate.id}
+                className="flex items-center justify-between p-2 rounded bg-orange-500/10 border border-orange-500/20 text-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] px-1 font-mono border-orange-500/30">
+                    {candidate.label}
+                  </Badge>
+                  <span className="font-mono text-orange-700">
+                    {Math.round(candidate.widthMm)}mm
+                  </span>
+                  <span className="text-muted-foreground">
+                    Cadeia {getChainForCandidate(candidate)} @ {Math.round(candidate.startDistMm)}mm
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-500/20"
+                  onClick={() => handleCreateFromCandidate(candidate)}
+                >
+                  <Zap className="h-3 w-3 mr-1" />
+                  Criar
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Openings list */}
       <ScrollArea className="flex-1">
