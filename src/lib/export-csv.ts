@@ -76,7 +76,7 @@ export function generateBOMCSV(
   // Openings section
   if (openings.length > 0) {
     lines.push('=== ABERTURAS (PORTAS/JANELAS) ===');
-    lines.push('Etiqueta;Tipo;Largura (mm);Altura (mm);Peitoril (mm);Posição (mm);Chain ID;Fiadas Afetadas;Topos');
+    lines.push('Etiqueta;Tipo;Largura (mm);Altura (mm);Peitoril (mm);Pos. na Cadeia (mm);Chain ID;Fiadas Afetadas;Topos');
     
     openings.forEach(opening => {
       const { startRow, endRow, rowsAffected } = getAffectedRows(opening.sillMm, opening.heightMm);
