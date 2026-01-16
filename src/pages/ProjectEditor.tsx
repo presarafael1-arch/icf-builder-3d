@@ -7,7 +7,7 @@ import { ViewerControls } from '@/components/viewer/ViewerControls';
 import { DXFImportDialog } from '@/components/dxf/DXFImportDialog';
 import { OpeningsPanel } from '@/components/openings/OpeningsPanel';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+// Card components imported but conditionally used
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -16,9 +16,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useOpenings } from '@/hooks/useOpenings';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
-import { OpeningData } from '@/types/openings';
+import { OpeningData, OpeningCandidate } from '@/types/openings';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
-import { buildWallChains, ChainsResult, WallChain } from '@/lib/wall-chains';
+import { buildWallChains } from '@/lib/wall-chains';
 import { DXFSegment } from '@/lib/dxf-parser';
 
 interface Project {
@@ -208,9 +208,31 @@ export default function ProjectEditor() {
     concreteThickness: '150'
   });
   
-  // Build chains from walls
-  const chainsResult = useMemo(() => buildWallChains(walls), [walls]);
+  // Build chains from walls (with candidate detection enabled)
+  const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
   const chains = chainsResult.chains;
+  const detectedCandidates = chainsResult.candidates;
+  
+  // Track converted candidates (stored in localStorage with openings)
+  const [convertedCandidateIds, setConvertedCandidateIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(`omni-icf-converted-candidates-${id}`);
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  
+  // Filter out already converted candidates
+  const activeCandidates = useMemo(() => 
+    detectedCandidates.filter(c => !convertedCandidateIds.includes(c.id)),
+    [detectedCandidates, convertedCandidateIds]
+  );
+  
+  // Handler to mark a candidate as converted
+  const handleConvertCandidate = (candidateId: string) => {
+    const updated = [...convertedCandidateIds, candidateId];
+    setConvertedCandidateIds(updated);
+    localStorage.setItem(`omni-icf-converted-candidates-${id}`, JSON.stringify(updated));
+  };
   
   useEffect(() => {
     if (id) {
@@ -590,9 +612,11 @@ export default function ProjectEditor() {
               <OpeningsPanel
                 openings={openings}
                 chains={chains}
+                candidates={activeCandidates}
                 onAddOpening={addOpening}
                 onUpdateOpening={updateOpening}
                 onDeleteOpening={deleteOpening}
+                onConvertCandidate={handleConvertCandidate}
                 maxHeight={project.wall_height_mm}
               />
             </TabsContent>
@@ -615,6 +639,7 @@ export default function ProjectEditor() {
             walls={walls} 
             settings={viewerSettings}
             openings={openings}
+            candidates={activeCandidates}
             className="w-full h-full"
           />
           <ViewerControls 
