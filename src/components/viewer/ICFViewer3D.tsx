@@ -155,20 +155,38 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
   );
 }
 
-// Panel type for coloring
-type PanelType = 'normal' | 'cut' | 'stagger';
+// Panel type for coloring - PERMANENT colors by classification
+export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO';
 
-// Color palette for panel types
-const PANEL_COLORS = {
-  normal: new THREE.Color().setHSL(0.12, 0.65, 0.65), // Yellow-ish
-  cut: new THREE.Color().setHSL(0.08, 0.75, 0.55), // Orange
-  stagger: new THREE.Color().setHSL(0.14, 0.55, 0.60), // Light gold (for offset rows)
+// Color palette for panel types (matching reference image)
+export const PANEL_COLORS = {
+  FULL: new THREE.Color('#d4a83a'),        // Yellow - full panel (1200mm)
+  CUT_SINGLE: new THREE.Color('#7cb342'),  // Light green - cut on ONE side only
+  CUT_DOUBLE: new THREE.Color('#d97734'),  // Orange - cut on BOTH sides (miolo)
+  CORNER_CUT: new THREE.Color('#c62828'),  // Red - corner adjustment panels
+  TOPO: new THREE.Color('#2d5a27'),        // Dark green - topos
+  OPENING_VOID: new THREE.Color('#ff6b6b'), // Red translucent - opening voids
 };
 
 // Stagger offset for odd rows (for interlocking pattern)
 const STAGGER_OFFSET = 600; // mm
 
+// Minimum cut length (anything less is waste)
+const MIN_CUT_MM = 100;
+
+// Panel instance with classification
+interface ClassifiedPanel {
+  matrix: THREE.Matrix4;
+  type: PanelType;
+  widthMm: number;
+  isStartCut: boolean;
+  isEndCut: boolean;
+  isCorner: boolean;
+  rowIndex: number;
+}
+
 // Main panel instances component - renders panels based on chains with opening gaps and stagger
+// PERMANENT COLORS by panel type (not hover-dependent)
 function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChange }: ICFPanelInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -184,17 +202,22 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
     return new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
   }, []);
 
-  const { positions, count } = useMemo(() => {
-    const positions: { matrix: THREE.Matrix4; color: THREE.Color; type: PanelType }[] = [];
+  // Generate classified panel placements
+  const { panels, counts } = useMemo(() => {
+    const panels: ClassifiedPanel[] = [];
+    const counts = { FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0 };
 
     // For each chain
-    chains.forEach((chain) => {
+    chains.forEach((chain, chainIndex) => {
       const chainLength = chain.lengthMm;
       if (chainLength < 50) return; // Skip tiny chains
       
       const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
       const dirX = (chain.endX - chain.startX) / chainLength;
       const dirY = (chain.endY - chain.startY) / chainLength;
+      
+      // Check if this chain is at a corner (first or last in sequence might be corner)
+      const isCornerChain = chainIndex === 0 || chainIndex === chains.length - 1;
 
       // Only show up to current row (slider controls this)
       const visibleRows = Math.min(settings.currentRow, settings.maxRows);
@@ -206,57 +229,70 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
         // Get remaining intervals for this row (accounting for openings)
         const intervals = getRemainingIntervalsForRow(chain, openings, row);
 
-        // For each interval, place panels
-        intervals.forEach((interval) => {
+        // For each interval, place panels from both ends toward middle
+        intervals.forEach((interval, intervalIndex) => {
           const intervalStart = interval.start;
           const intervalEnd = interval.end;
           const intervalLength = intervalEnd - intervalStart;
           
-          if (intervalLength < 50) return; // Skip tiny intervals
+          if (intervalLength < MIN_CUT_MM) return; // Skip tiny intervals
           
-          // Calculate how many panels fit, considering stagger
+          // Check if this interval was created by an opening (not the full chain)
+          const isOpeningEdge = intervalIndex > 0 || (intervals.length > 1);
+          
+          // For stagger: offset the starting position
           const effectiveStart = intervalStart + (isOddRow && intervalStart === 0 ? staggerOffset : 0);
           
-          // Iterate through the interval placing panels
-          let cursor = effectiveStart;
-          let panelIndex = 0;
+          // Pagination from BOTH ENDS toward middle
+          const panelPlacements: { start: number; end: number; isStartCut: boolean; isEndCut: boolean }[] = [];
           
-          // Handle initial cut piece for stagger
+          // Calculate available length after stagger offset
+          let remaining = intervalEnd - effectiveStart;
+          
+          // Handle stagger cut piece at the very start of chain
           if (isOddRow && intervalStart === 0 && staggerOffset > 0) {
-            // First partial panel due to stagger
             const cutWidth = Math.min(staggerOffset, intervalEnd);
-            if (cutWidth >= 100) {
-              const panelCenter = cutWidth / 2;
-              const posX = chain.startX + dirX * panelCenter;
-              const posZ = chain.startY + dirY * panelCenter;
-              const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
-
-              const matrix = new THREE.Matrix4();
-              matrix.compose(
-                new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
-                new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-                new THREE.Vector3(cutWidth / PANEL_WIDTH, 1, 1)
-              );
-
-              positions.push({
-                matrix,
-                color: PANEL_COLORS.cut.clone(),
-                type: 'cut',
+            if (cutWidth >= MIN_CUT_MM) {
+              panelPlacements.push({
+                start: 0,
+                end: cutWidth,
+                isStartCut: true, // Cut at chain start due to stagger
+                isEndCut: cutWidth < PANEL_WIDTH && cutWidth < intervalEnd,
               });
             }
-            cursor = staggerOffset;
           }
           
-          // Place panels from cursor to end
-          while (cursor < intervalEnd) {
+          // Now place full panels from effectiveStart
+          let cursor = effectiveStart;
+          let placedCount = 0;
+          const maxPanels = Math.ceil(remaining / PANEL_WIDTH);
+          
+          while (cursor < intervalEnd && placedCount < maxPanels + 1) {
             const remainingLength = intervalEnd - cursor;
             const panelWidth = Math.min(PANEL_WIDTH, remainingLength);
             
-            if (panelWidth < 50) break; // Skip very small pieces
+            if (panelWidth < MIN_CUT_MM) break;
             
-            const panelCenter = cursor + panelWidth / 2;
+            const isAtIntervalStart = cursor === effectiveStart;
+            const isAtIntervalEnd = cursor + panelWidth >= intervalEnd - 10;
             
-            // Position along chain (2D: X,Y in plan -> 3D: X,Z with Y as height)
+            panelPlacements.push({
+              start: cursor,
+              end: cursor + panelWidth,
+              isStartCut: isAtIntervalStart && isOpeningEdge,
+              isEndCut: panelWidth < PANEL_WIDTH - 10,
+            });
+            
+            cursor += PANEL_WIDTH;
+            placedCount++;
+          }
+          
+          // Create panel instances with classification
+          panelPlacements.forEach(({ start, end, isStartCut, isEndCut }) => {
+            const panelWidth = end - start;
+            const panelCenter = (start + end) / 2;
+            
+            // Position along chain
             const posX = chain.startX + dirX * panelCenter;
             const posZ = chain.startY + dirY * panelCenter;
             const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
@@ -270,64 +306,82 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
               new THREE.Vector3(scaleX, 1, 1)
             );
 
-            // Determine panel type and color
+            // Determine panel type based on cuts and position
+            let panelType: PanelType = 'FULL';
             const isCut = panelWidth < PANEL_WIDTH - 10;
-            const panelType: PanelType = isCut ? 'cut' : (isOddRow ? 'stagger' : 'normal');
-            const color = PANEL_COLORS[panelType].clone();
             
-            // Add slight brightness variation for visual depth
-            const rowVariation = (row % 3) * 0.03;
-            color.offsetHSL(0, 0, rowVariation);
+            if (isCut) {
+              // Check if corner adjustment
+              const isAtChainEnd = (start < 50) || (chainLength - end < 50);
+              if (isCornerChain && isAtChainEnd && isOddRow) {
+                panelType = 'CORNER_CUT'; // Red - corner adjustment
+              } else if (isStartCut && isEndCut) {
+                panelType = 'CUT_DOUBLE'; // Orange - cut on both sides
+              } else {
+                panelType = 'CUT_SINGLE'; // Light green - cut on one side
+              }
+            }
 
-            positions.push({
-              matrix,
-              color,
-              type: panelType,
-            });
+            counts[panelType]++;
             
-            cursor += PANEL_WIDTH;
-            panelIndex++;
-          }
+            panels.push({
+              matrix,
+              type: panelType,
+              widthMm: panelWidth,
+              isStartCut,
+              isEndCut,
+              isCorner: isCornerChain,
+              rowIndex: row,
+            });
+          });
         });
       }
     });
 
-    return { positions, count: positions.length };
+    return { panels, counts };
   }, [chains, openings, settings.currentRow, settings.maxRows]);
 
   // Report count to parent
   useEffect(() => {
-    onInstanceCountChange?.(count);
-  }, [count, onInstanceCountChange]);
+    onInstanceCountChange?.(panels.length);
+  }, [panels.length, onInstanceCountChange]);
 
-  // Update instance matrices when positions change
+  // Update instance matrices and colors when panels change
   useEffect(() => {
-    if (!meshRef.current || count === 0) return;
+    if (!meshRef.current || panels.length === 0) return;
 
-    positions.forEach((pos, i) => {
-      meshRef.current!.setMatrixAt(i, pos.matrix);
-      meshRef.current!.setColorAt(i, pos.color);
+    panels.forEach((panel, i) => {
+      meshRef.current!.setMatrixAt(i, panel.matrix);
+      
+      // PERMANENT color based on type
+      const color = PANEL_COLORS[panel.type].clone();
+      
+      // Slight row-based brightness variation for visual depth
+      const rowVariation = (panel.rowIndex % 3) * 0.02;
+      color.offsetHSL(0, 0, rowVariation);
+      
+      meshRef.current!.setColorAt(i, color);
     });
 
     meshRef.current.instanceMatrix.needsUpdate = true;
     if (meshRef.current.instanceColor) {
       meshRef.current.instanceColor.needsUpdate = true;
     }
-  }, [positions, count]);
+  }, [panels]);
 
   // Don't render if no panels
-  if (count === 0) return null;
+  if (panels.length === 0) return null;
 
   return (
     <instancedMesh 
       ref={meshRef} 
-      args={[panelGeometry, undefined, count]} 
+      args={[panelGeometry, undefined, panels.length]} 
       frustumCulled={false}
-      key={`panels-${count}`}
+      key={`panels-${panels.length}`}
     >
       <meshStandardMaterial 
         vertexColors
-        roughness={0.5} 
+        roughness={0.4} 
         metalness={0.1} 
         wireframe={settings.wireframe}
       />
@@ -335,10 +389,13 @@ function ICFPanelInstances({ walls, settings, openings = [], onInstanceCountChan
   );
 }
 
-// Opening markers and topos visualization
+// Opening VOLUMES (red translucent voids) and TOPOS (dark green) visualization
+// Renders the FULL HEIGHT of each opening as a single 3D volume, plus topos on jambs/lintel/sill
 function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInstancesProps) {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const topoMeshRef = useRef<THREE.InstancedMesh>(null);
+  const voidMeshRef = useRef<THREE.InstancedMesh>(null);
+  const topoJambMeshRef = useRef<THREE.InstancedMesh>(null);
+  const topoLintelMeshRef = useRef<THREE.InstancedMesh>(null);
+  const topoSillMeshRef = useRef<THREE.InstancedMesh>(null);
 
   const chainsResult = useMemo(
     () => buildWallChains(walls, { snapTolMm: 5, gapTolMm: 10, angleTolDeg: 2, noiseMinMm: 100 }),
@@ -346,10 +403,14 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
   );
   const chains = chainsResult.chains;
 
-  // Calculate opening markers and topos
-  const { openingPositions, topoPositions } = useMemo(() => {
-    const openingPositions: THREE.Matrix4[] = [];
-    const topoPositions: THREE.Matrix4[] = [];
+  const tc = parseInt(settings.concreteThickness) || 150;
+
+  // Calculate opening void volumes and topos
+  const { voidVolumes, jambTopos, lintelTopos, sillTopos, topoCounts } = useMemo(() => {
+    const voidVolumes: { matrix: THREE.Matrix4; widthMm: number; heightMm: number }[] = [];
+    const jambTopos: THREE.Matrix4[] = [];
+    const lintelTopos: THREE.Matrix4[] = [];
+    const sillTopos: THREE.Matrix4[] = [];
 
     openings.forEach(opening => {
       const chain = chains.find(c => c.id === opening.chainId);
@@ -358,95 +419,200 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
       const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
       const dirX = (chain.endX - chain.startX) / chain.lengthMm;
       const dirY = (chain.endY - chain.startY) / chain.lengthMm;
+      const perpX = -dirY; // Perpendicular for topos
+      const perpY = dirX;
 
-      // Get affected rows
       const { startRow, endRow } = getAffectedRows(opening.sillMm, opening.heightMm);
+      const visibleEndRow = Math.min(endRow, settings.currentRow);
+      
+      if (visibleEndRow <= startRow) return; // Not visible yet
 
-      // For each affected row that's visible
-      for (let row = startRow; row < Math.min(endRow, settings.currentRow); row++) {
-        const z = row * PANEL_HEIGHT;
-        
-        // Opening center position
-        const centerOffset = opening.offsetMm + opening.widthMm / 2;
-        const centerX = chain.startX + dirX * centerOffset;
-        const centerY = chain.startY + dirY * centerOffset;
+      // OPENING VOID VOLUME - single box covering full height of opening
+      const voidHeightMm = (visibleEndRow - startRow) * PANEL_HEIGHT;
+      const voidCenterY = (startRow * PANEL_HEIGHT + voidHeightMm / 2);
+      
+      const centerOffset = opening.offsetMm + opening.widthMm / 2;
+      const centerX = chain.startX + dirX * centerOffset;
+      const centerZ = chain.startY + dirY * centerOffset;
 
-        // Opening marker (red transparent box)
-        const openingMatrix = new THREE.Matrix4();
-        openingMatrix.compose(
-          new THREE.Vector3(centerX * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), centerY * SCALE),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-          new THREE.Vector3(opening.widthMm / PANEL_WIDTH, 1, 1)
-        );
-        openingPositions.push(openingMatrix);
+      const voidMatrix = new THREE.Matrix4();
+      voidMatrix.compose(
+        new THREE.Vector3(centerX * SCALE, voidCenterY * SCALE, centerZ * SCALE),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+        new THREE.Vector3(
+          opening.widthMm / PANEL_WIDTH, 
+          voidHeightMm / PANEL_HEIGHT, 
+          1
+        )
+      );
+      voidVolumes.push({ matrix: voidMatrix, widthMm: opening.widthMm, heightMm: voidHeightMm });
 
-        // Topos on each side of the opening
-        // Left topo
-        const leftOffset = opening.offsetMm;
+      // JAMB TOPOS (vertical pieces on left and right sides of opening)
+      // One topo per affected row on each side
+      for (let row = startRow; row < visibleEndRow; row++) {
+        const rowCenterY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+
+        // Left jamb topo
+        const leftOffset = opening.offsetMm - tc / 2;
         const leftX = chain.startX + dirX * leftOffset;
-        const leftY = chain.startY + dirY * leftOffset;
+        const leftZ = chain.startY + dirY * leftOffset;
         
-        const leftTopoMatrix = new THREE.Matrix4();
-        leftTopoMatrix.compose(
-          new THREE.Vector3(leftX * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), leftY * SCALE),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2),
+        const leftMatrix = new THREE.Matrix4();
+        leftMatrix.compose(
+          new THREE.Vector3(leftX * SCALE, rowCenterY * SCALE, leftZ * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
           new THREE.Vector3(1, 1, 1)
         );
-        topoPositions.push(leftTopoMatrix);
+        jambTopos.push(leftMatrix);
 
-        // Right topo
-        const rightOffset = opening.offsetMm + opening.widthMm;
+        // Right jamb topo
+        const rightOffset = opening.offsetMm + opening.widthMm + tc / 2;
         const rightX = chain.startX + dirX * rightOffset;
-        const rightY = chain.startY + dirY * rightOffset;
+        const rightZ = chain.startY + dirY * rightOffset;
         
-        const rightTopoMatrix = new THREE.Matrix4();
-        rightTopoMatrix.compose(
-          new THREE.Vector3(rightX * SCALE, z * SCALE + (PANEL_HEIGHT * SCALE / 2), rightY * SCALE),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2),
+        const rightMatrix = new THREE.Matrix4();
+        rightMatrix.compose(
+          new THREE.Vector3(rightX * SCALE, rowCenterY * SCALE, rightZ * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
           new THREE.Vector3(1, 1, 1)
         );
-        topoPositions.push(rightTopoMatrix);
+        jambTopos.push(rightMatrix);
+      }
+
+      // LINTEL TOPO (horizontal piece at top of opening)
+      if (visibleEndRow >= endRow) {
+        const lintelY = endRow * PANEL_HEIGHT - PANEL_HEIGHT / 2;
+        const lintelMatrix = new THREE.Matrix4();
+        lintelMatrix.compose(
+          new THREE.Vector3(centerX * SCALE, lintelY * SCALE, centerZ * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+          new THREE.Vector3(opening.widthMm / PANEL_WIDTH, 0.5, 1) // Half height
+        );
+        lintelTopos.push(lintelMatrix);
+      }
+
+      // SILL TOPO (horizontal piece at bottom of opening - for WINDOWS only)
+      if (opening.kind === 'window' && opening.sillMm > 0 && startRow >= 0 && settings.currentRow > startRow) {
+        const sillY = startRow * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+        const sillMatrix = new THREE.Matrix4();
+        sillMatrix.compose(
+          new THREE.Vector3(centerX * SCALE, sillY * SCALE, centerZ * SCALE),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+          new THREE.Vector3(opening.widthMm / PANEL_WIDTH, 0.5, 1) // Half height
+        );
+        sillTopos.push(sillMatrix);
       }
     });
 
-    return { openingPositions, topoPositions };
-  }, [chains, openings, settings.currentRow]);
+    return { 
+      voidVolumes, 
+      jambTopos, 
+      lintelTopos, 
+      sillTopos,
+      topoCounts: {
+        jambs: jambTopos.length,
+        lintels: lintelTopos.length,
+        sills: sillTopos.length,
+        total: jambTopos.length + lintelTopos.length + sillTopos.length,
+      }
+    };
+  }, [chains, openings, settings.currentRow, tc]);
 
-  // Update opening markers
-  useMemo(() => {
-    if (!meshRef.current || openingPositions.length === 0) return;
-    openingPositions.forEach((matrix, i) => {
-      meshRef.current!.setMatrixAt(i, matrix);
+  // Update void volumes
+  useEffect(() => {
+    if (!voidMeshRef.current || voidVolumes.length === 0) return;
+    voidVolumes.forEach(({ matrix }, i) => {
+      voidMeshRef.current!.setMatrixAt(i, matrix);
     });
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  }, [openingPositions]);
+    voidMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [voidVolumes]);
 
-  // Update topos
-  useMemo(() => {
-    if (!topoMeshRef.current || topoPositions.length === 0) return;
-    topoPositions.forEach((matrix, i) => {
-      topoMeshRef.current!.setMatrixAt(i, matrix);
+  // Update jamb topos
+  useEffect(() => {
+    if (!topoJambMeshRef.current || jambTopos.length === 0) return;
+    jambTopos.forEach((matrix, i) => {
+      topoJambMeshRef.current!.setMatrixAt(i, matrix);
     });
-    topoMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [topoPositions]);
+    topoJambMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [jambTopos]);
 
-  const tc = parseInt(settings.concreteThickness) || 150;
-  const topoGeometry = new THREE.BoxGeometry(tc * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
-  const openingGeometry = new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 0.5);
+  // Update lintel topos
+  useEffect(() => {
+    if (!topoLintelMeshRef.current || lintelTopos.length === 0) return;
+    lintelTopos.forEach((matrix, i) => {
+      topoLintelMeshRef.current!.setMatrixAt(i, matrix);
+    });
+    topoLintelMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [lintelTopos]);
+
+  // Update sill topos
+  useEffect(() => {
+    if (!topoSillMeshRef.current || sillTopos.length === 0) return;
+    sillTopos.forEach((matrix, i) => {
+      topoSillMeshRef.current!.setMatrixAt(i, matrix);
+    });
+    topoSillMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [sillTopos]);
+
+  // Geometries
+  const voidGeometry = useMemo(() => 
+    new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 0.8), 
+  []);
+  const topoJambGeometry = useMemo(() => 
+    new THREE.BoxGeometry(tc * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 1.1),
+  [tc]);
+  const topoHorizGeometry = useMemo(() => 
+    new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE * 0.5, PANEL_THICKNESS * SCALE * 1.1),
+  []);
 
   return (
     <>
-      {/* Opening markers (translucent) */}
-      {openingPositions.length > 0 && settings.showOpenings && (
-        <instancedMesh ref={meshRef} args={[openingGeometry, undefined, Math.max(openingPositions.length, 1)]} frustumCulled={false}>
-          <meshStandardMaterial color="#ff6b6b" opacity={0.3} transparent />
+      {/* Opening VOID volumes (red translucent - ALWAYS visible) */}
+      {voidVolumes.length > 0 && settings.showOpenings && (
+        <instancedMesh 
+          ref={voidMeshRef} 
+          args={[voidGeometry, undefined, voidVolumes.length]} 
+          frustumCulled={false}
+        >
+          <meshStandardMaterial 
+            color={PANEL_COLORS.OPENING_VOID} 
+            opacity={0.35} 
+            transparent 
+            side={THREE.DoubleSide}
+          />
         </instancedMesh>
       )}
 
-      {/* Topos (dark green) */}
-      {topoPositions.length > 0 && settings.showTopos && (
-        <instancedMesh ref={topoMeshRef} args={[topoGeometry, undefined, Math.max(topoPositions.length, 1)]} frustumCulled={false}>
-          <meshStandardMaterial color="#2d5a27" roughness={0.6} metalness={0.2} />
+      {/* JAMB Topos (dark green - vertical on sides) */}
+      {jambTopos.length > 0 && settings.showTopos && (
+        <instancedMesh 
+          ref={topoJambMeshRef} 
+          args={[topoJambGeometry, undefined, jambTopos.length]} 
+          frustumCulled={false}
+        >
+          <meshStandardMaterial color={PANEL_COLORS.TOPO} roughness={0.5} metalness={0.2} />
+        </instancedMesh>
+      )}
+
+      {/* LINTEL Topos (dark green - horizontal at top) */}
+      {lintelTopos.length > 0 && settings.showTopos && (
+        <instancedMesh 
+          ref={topoLintelMeshRef} 
+          args={[topoHorizGeometry, undefined, lintelTopos.length]} 
+          frustumCulled={false}
+        >
+          <meshStandardMaterial color={PANEL_COLORS.TOPO} roughness={0.5} metalness={0.2} />
+        </instancedMesh>
+      )}
+
+      {/* SILL Topos (dark green - horizontal at bottom, windows only) */}
+      {sillTopos.length > 0 && settings.showTopos && (
+        <instancedMesh 
+          ref={topoSillMeshRef} 
+          args={[topoHorizGeometry, undefined, sillTopos.length]} 
+          frustumCulled={false}
+        >
+          <meshStandardMaterial color={PANEL_COLORS.TOPO} roughness={0.5} metalness={0.2} />
         </instancedMesh>
       )}
     </>
