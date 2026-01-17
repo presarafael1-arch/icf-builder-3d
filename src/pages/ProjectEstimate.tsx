@@ -86,6 +86,7 @@ export default function ProjectEstimate() {
     showIndexFromSeed: false,
     showMiddleZone: false,
     showThicknessDetection: false,
+    showLJunctionArrows: false,
   });
   
   useEffect(() => {

@@ -274,6 +274,7 @@ export default function ProjectEditor() {
     showIndexFromSeed: false,
     showMiddleZone: false,
     showThicknessDetection: false,
+    showLJunctionArrows: false,
   });
   
   // Build chains from walls (with candidate detection enabled)

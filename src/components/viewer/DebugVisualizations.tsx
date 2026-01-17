@@ -154,6 +154,200 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
   );
 }
 
+// L-junction arrows visualization - shows PRIMARY (exterior) vs SECONDARY (interior) arms
+function LJunctionArrows({ chainsResult, settings }: DebugVisualizationsProps) {
+  const { chains } = chainsResult;
+  const lJunctions = useMemo(() => detectLJunctions(chains), [chains]);
+  
+  // Get chain by ID
+  const chainMap = useMemo(() => {
+    const map = new Map<string, typeof chains[0]>();
+    chains.forEach(c => map.set(c.id, c));
+    return map;
+  }, [chains]);
+  
+  const y = settings.maxRows * PANEL_HEIGHT * SCALE / 2;
+  const arrowLength = 1.0; // 1m visual length
+  const arrowHeadSize = 0.15;
+  
+  return (
+    <group>
+      {lJunctions.map((lj) => {
+        const primaryChain = chainMap.get(lj.primaryChainId);
+        const secondaryChain = chainMap.get(lj.secondaryChainId);
+        if (!primaryChain || !secondaryChain) return null;
+        
+        // Compute direction vectors pointing OUTWARD from junction
+        const getPrimaryDir = () => {
+          // Check if junction is at start or end of primary chain
+          const distToStart = Math.hypot(lj.x - primaryChain.startX, lj.y - primaryChain.startY);
+          const distToEnd = Math.hypot(lj.x - primaryChain.endX, lj.y - primaryChain.endY);
+          
+          if (distToStart < distToEnd) {
+            // Junction is at chain start, arrow points toward end
+            return { 
+              x: (primaryChain.endX - primaryChain.startX) / primaryChain.lengthMm,
+              y: (primaryChain.endY - primaryChain.startY) / primaryChain.lengthMm
+            };
+          } else {
+            // Junction is at chain end, arrow points toward start
+            return {
+              x: (primaryChain.startX - primaryChain.endX) / primaryChain.lengthMm,
+              y: (primaryChain.startY - primaryChain.endY) / primaryChain.lengthMm
+            };
+          }
+        };
+        
+        const getSecondaryDir = () => {
+          const distToStart = Math.hypot(lj.x - secondaryChain.startX, lj.y - secondaryChain.startY);
+          const distToEnd = Math.hypot(lj.x - secondaryChain.endX, lj.y - secondaryChain.endY);
+          
+          if (distToStart < distToEnd) {
+            return { 
+              x: (secondaryChain.endX - secondaryChain.startX) / secondaryChain.lengthMm,
+              y: (secondaryChain.endY - secondaryChain.startY) / secondaryChain.lengthMm
+            };
+          } else {
+            return {
+              x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm,
+              y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm
+            };
+          }
+        };
+        
+        const primDir = getPrimaryDir();
+        const secDir = getSecondaryDir();
+        
+        const junctionPos = new THREE.Vector3(lj.x * SCALE, y, lj.y * SCALE);
+        
+        // Arrow endpoints
+        const primEnd = new THREE.Vector3(
+          (lj.x + primDir.x * arrowLength * 1000) * SCALE,
+          y,
+          (lj.y + primDir.y * arrowLength * 1000) * SCALE
+        );
+        const secEnd = new THREE.Vector3(
+          (lj.x + secDir.x * arrowLength * 1000) * SCALE,
+          y,
+          (lj.y + secDir.y * arrowLength * 1000) * SCALE
+        );
+        
+        // Arrow head geometry helper
+        const createArrowHead = (endPos: THREE.Vector3, dir: { x: number; y: number }, color: string) => {
+          const angle = Math.atan2(dir.y, dir.x);
+          const leftAngle = angle + Math.PI + Math.PI / 6;
+          const rightAngle = angle + Math.PI - Math.PI / 6;
+          
+          const leftPoint = new THREE.Vector3(
+            endPos.x + Math.cos(leftAngle) * arrowHeadSize,
+            y,
+            endPos.z + Math.sin(leftAngle) * arrowHeadSize
+          );
+          const rightPoint = new THREE.Vector3(
+            endPos.x + Math.cos(rightAngle) * arrowHeadSize,
+            y,
+            endPos.z + Math.sin(rightAngle) * arrowHeadSize
+          );
+          
+          return (
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={4}
+                  array={new Float32Array([
+                    leftPoint.x, leftPoint.y, leftPoint.z,
+                    endPos.x, endPos.y, endPos.z,
+                    endPos.x, endPos.y, endPos.z,
+                    rightPoint.x, rightPoint.y, rightPoint.z,
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color={color} linewidth={2} />
+            </line>
+          );
+        };
+        
+        return (
+          <group key={lj.nodeId}>
+            {/* PRIMARY arrow (EXTERIOR) - YELLOW - gets FULL panels on odd rows */}
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={2}
+                  array={new Float32Array([
+                    junctionPos.x, junctionPos.y, junctionPos.z,
+                    primEnd.x, primEnd.y, primEnd.z,
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color="#E6D44A" linewidth={3} />
+            </line>
+            {createArrowHead(primEnd, primDir, '#E6D44A')}
+            
+            {/* SECONDARY arrow (INTERIOR) - RED - gets CORNER_CUT on odd rows */}
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={2}
+                  array={new Float32Array([
+                    junctionPos.x, junctionPos.y, junctionPos.z,
+                    secEnd.x, secEnd.y, secEnd.z,
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color="#C83A3A" linewidth={3} />
+            </line>
+            {createArrowHead(secEnd, secDir, '#C83A3A')}
+            
+            {/* Labels */}
+            <Html
+              position={[primEnd.x, primEnd.y + 0.15, primEnd.z]}
+              center
+              distanceFactor={12}
+              style={{
+                color: '#000',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                background: '#E6D44A',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}
+            >
+              EXT (FULL)
+            </Html>
+            
+            <Html
+              position={[secEnd.x, secEnd.y + 0.15, secEnd.z]}
+              center
+              distanceFactor={12}
+              style={{
+                color: '#fff',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                background: '#C83A3A',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}
+            >
+              INT (CUT)
+            </Html>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 // T-junction axes visualization
 function TJunctionAxes({ chainsResult, settings }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
@@ -459,6 +653,10 @@ export function DebugVisualizations({ chainsResult, settings }: DebugVisualizati
       
       {settings.showIndexFromSeed && (
         <IndexFromSeedOverlay chainsResult={chainsResult} settings={settings} />
+      )}
+      
+      {settings.showLJunctionArrows && (
+        <LJunctionArrows chainsResult={chainsResult} settings={settings} />
       )}
     </group>
   );

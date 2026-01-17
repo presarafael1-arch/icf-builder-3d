@@ -215,6 +215,7 @@ export interface ViewerSettings {
   showIndexFromSeed: boolean; // Overlay index numbers
   showMiddleZone: boolean; // Zone where orange cuts are allowed
   showThicknessDetection: boolean; // Show wall thickness detection info
+  showLJunctionArrows: boolean; // Show primary/secondary arrows at L-junctions
 }
 
 // DXF parsing result
