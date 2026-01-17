@@ -16,8 +16,8 @@ interface DiagnosticsHUDProps {
   panelMeshVisible?: boolean;
   panelMeshBBoxSizeM?: { x: number; y: number; z: number };
   instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
-  lJunctionStats?: { lJunctions: number; templatesApplied: number };
-  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number };
+  layoutStats?: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number };
+  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number; TOPO?: number };
 }
 
 export function DiagnosticsHUD({
@@ -32,7 +32,7 @@ export function DiagnosticsHUD({
   panelMeshVisible,
   panelMeshBBoxSizeM,
   instancePosRangeM,
-  lJunctionStats,
+  layoutStats,
   panelCountsByType,
 }: DiagnosticsHUDProps) {
   const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
@@ -139,23 +139,32 @@ export function DiagnosticsHUD({
         </div>
       )}
       
-      {/* L-JUNCTION and PANEL TYPES section */}
-      {lJunctionStats && (
+      {/* JUNCTION and LAYOUT STATS section */}
+      {layoutStats && (
         <>
           <div className="border-t border-border my-1 pt-1" />
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">L-junções:</span>
-            <span className="text-cyan-400">{lJunctionStats.lJunctions}</span>
+            <span className="text-cyan-400">{layoutStats.lJunctions}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">T-junções:</span>
+            <span className="text-purple-400">{layoutStats.tJunctions}</span>
           </div>
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">corner templates:</span>
-            <span className="text-red-400">{lJunctionStats.templatesApplied}</span>
+            <span className="text-red-400">{layoutStats.templatesApplied}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">topos (T-junc):</span>
+            <span className="text-green-600">{layoutStats.toposPlaced}</span>
           </div>
         </>
       )}
       
       {panelCountsByType && (
         <>
+          <div className="border-t border-border my-1 pt-1" />
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">FULL (amarelo):</span>
             <span className="text-yellow-400">{panelCountsByType.FULL}</span>
@@ -168,6 +177,12 @@ export function DiagnosticsHUD({
             <span className="text-muted-foreground">CUT_DOUBLE (laranja):</span>
             <span className="text-orange-400">{panelCountsByType.CUT_DOUBLE}</span>
           </div>
+          {panelCountsByType.CUT_SINGLE > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">CUT_SINGLE (verde):</span>
+              <span className="text-green-400">{panelCountsByType.CUT_SINGLE}</span>
+            </div>
+          )}
         </>
       )}
       
@@ -190,7 +205,7 @@ export function DiagnosticsHUD({
         </div>
       )}
 
-      {typeof geometryScaleApplied === 'number' && (
+      {typeof geometryScaleApplied === 'number' && geometryScaleApplied !== 1 && (
         <div className="flex justify-between gap-4">
           <span className="text-muted-foreground">geoScale:</span>
           <span>{geometryScaleApplied.toFixed(4)}x</span>
@@ -204,7 +219,7 @@ export function DiagnosticsHUD({
         </div>
       )}
 
-      {panelMeshBBoxSizeM && (
+      {panelMeshBBoxSizeM && panelMeshBBoxSizeM.x > 0 && (
         <div className="flex justify-between gap-4">
           <span className="text-muted-foreground">panelBBox:</span>
           <span>{panelMeshBBoxSizeM.x.toFixed(2)}×{panelMeshBBoxSizeM.y.toFixed(2)}×{panelMeshBBoxSizeM.z.toFixed(2)}m</span>
@@ -214,18 +229,11 @@ export function DiagnosticsHUD({
       {instancePosRangeM && (
         <div className="flex justify-between gap-4">
           <span className="text-muted-foreground">instRange:</span>
-          <span>
-            {instancePosRangeM.min.x.toFixed(2)},{instancePosRangeM.min.y.toFixed(2)},{instancePosRangeM.min.z.toFixed(2)}
-            →
-            {instancePosRangeM.max.x.toFixed(2)},{instancePosRangeM.max.y.toFixed(2)},{instancePosRangeM.max.z.toFixed(2)}
+          <span className="text-[10px]">
+            {instancePosRangeM.min.x.toFixed(1)},{instancePosRangeM.min.y.toFixed(1)}→{instancePosRangeM.max.x.toFixed(1)},{instancePosRangeM.max.y.toFixed(1)}
           </span>
         </div>
       )}
-      
-      <div className="flex justify-between gap-4">
-        <span className="text-muted-foreground">scale:</span>
-        <span>0.001 (mm→m)</span>
-      </div>
       
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">panelSize:</span>
