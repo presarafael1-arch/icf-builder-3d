@@ -45,7 +45,13 @@
 
 import { WallChain, ChainNode } from './wall-chains';
 import * as THREE from 'three';
-import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS } from '@/types/icf';
+import { 
+  PANEL_WIDTH, 
+  PANEL_HEIGHT, 
+  FOAM_THICKNESS,
+  getWallTotalThickness,
+  ConcreteThickness 
+} from '@/types/icf';
 
 // Scale factor: mm to meters
 const SCALE = 0.001;
@@ -857,9 +863,8 @@ export function layoutPanelsForChainWithJunctions(
     // For interior panels, offset perpendicular to the wall
     // The perpendicular direction is (-dirY, dirX) for left side, (dirY, -dirX) for right side
     // Interior panels are offset in the "inward" direction
-    // We use concrete thickness + panel thickness to offset
-    const concreteThicknessMm = 150; // TODO: get from settings
-    const wallTotalThicknessMm = PANEL_THICKNESS * 2 + concreteThicknessMm; // Two panels + concrete core
+    // Wall total thickness: FOAM + concrete + FOAM (e.g., 66.5 + 150 + 66.5 = 283mm)
+    const wallTotalThicknessMm = getWallTotalThickness('150'); // TODO: pass from settings
     const halfWallThickness = wallTotalThicknessMm / 2;
     
     // Perpendicular unit vector (90° CW from wall direction)
@@ -868,13 +873,13 @@ export function layoutPanelsForChainWithJunctions(
     
     if (side === 'interior') {
       // Offset interior panels perpendicular to wall (on the "inside" of the building)
-      // We offset by panel thickness (70.59mm) to place interior panel on opposite face
-      const offsetMm = wallTotalThicknessMm - PANEL_THICKNESS; // Offset from center to interior face
+      // We offset by the full wall thickness minus one foam panel to place interior panel on opposite face
+      const offsetMm = wallTotalThicknessMm - FOAM_THICKNESS; // Offset from center to interior face
       posX += perpX * offsetMm;
       posZ += perpZ * offsetMm;
     } else {
       // Exterior panels offset to the exterior face
-      const offsetMm = -PANEL_THICKNESS; // Slight offset for exterior positioning
+      const offsetMm = -FOAM_THICKNESS; // Slight offset for exterior positioning
       // For now, keep exterior at the centerline position (no offset for visual simplicity)
     }
 

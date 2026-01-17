@@ -1,9 +1,31 @@
 // ICF System Types for OMNI ICF WALLS 3D PLANNER
 
 // Panel dimensions (in mm)
+// Each ICF panel: 1200 x 400mm, thickness depends on concrete core
 export const PANEL_WIDTH = 1200;
 export const PANEL_HEIGHT = 400;
-export const PANEL_THICKNESS = 70.59; // 1200 / 17
+
+// Foam panel thickness on each side (EPS)
+export const FOAM_THICKNESS = 66.5; // mm per side
+
+// Wall total thickness based on concrete core:
+// - 150mm concrete: 66.5 + 150 + 66.5 = 283mm total
+// - 200mm concrete: 66.5 + 200 + 66.5 = 333mm total
+export const WALL_THICKNESS_150 = 283; // mm (for 150mm concrete)
+export const WALL_THICKNESS_200 = 333; // mm (for 200mm concrete)
+
+// Legacy constant for backwards compatibility (average)
+export const PANEL_THICKNESS = FOAM_THICKNESS;
+
+// Helper function to get total wall thickness based on concrete thickness
+export function getWallTotalThickness(concreteThickness: ConcreteThickness): number {
+  return concreteThickness === '150' ? WALL_THICKNESS_150 : WALL_THICKNESS_200;
+}
+
+// Helper function to get concrete thickness in mm
+export function getConcreteThicknessMm(concreteThickness: ConcreteThickness): number {
+  return concreteThickness === '150' ? 150 : 200;
+}
 
 // Core thickness options
 export type ConcreteThickness = '150' | '200';
