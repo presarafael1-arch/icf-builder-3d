@@ -269,6 +269,15 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                       onCheckedChange={() => toggleSetting('showThicknessDetection')}
                     />
                   </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-ljunction-arrows" className="text-sm text-red-400">Setas L (ext/int)</Label>
+                    <Switch
+                      id="show-ljunction-arrows"
+                      checked={settings.showLJunctionArrows}
+                      onCheckedChange={() => toggleSetting('showLJunctionArrows')}
+                    />
+                  </div>
                 </div>
               </div>
               
