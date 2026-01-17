@@ -171,8 +171,6 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
       primaryAngle: node.angles[primaryIdx],
       secondaryAngle: node.angles[secondaryIdx],
     });
-    
-    console.log(`[detectLJunctions] Found L at (${node.x.toFixed(0)}, ${node.y.toFixed(0)}): primary=${primaryChainId}, secondary=${secondaryChainId}`);
   });
   
   return lJunctions;
@@ -453,18 +451,15 @@ function getStartCap(
           // PRIMARY chain = exterior arm → FULL panel
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          console.log(`[L-CORNER START] Row 1, chain ${chain.id}: PRIMARY (exterior) → FULL`);
         } else {
           // SECONDARY chain = interior arm → CORNER_CUT (1*TOOTH cut)
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          console.log(`[L-CORNER START] Row 1, chain ${chain.id}: SECONDARY (interior) → CORNER_CUT`);
         }
       } else if (isRow2) {
         // ROW 2: ALL 4 panels get CORNER_CUT (both exterior and interior)
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
-        console.log(`[L-CORNER START] Row 2, chain ${chain.id}: CORNER_CUT (always)`);
       } else {
         // Other rows: alternate pattern like row 1 / row 2
         if (row % 2 === 0) {
@@ -565,18 +560,15 @@ function getEndCap(
           // PRIMARY chain = exterior arm → FULL panel
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          console.log(`[L-CORNER END] Row 1, chain ${chain.id}: PRIMARY (exterior) → FULL`);
         } else {
           // SECONDARY chain = interior arm → CORNER_CUT (1*TOOTH cut)
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          console.log(`[L-CORNER END] Row 1, chain ${chain.id}: SECONDARY (interior) → CORNER_CUT`);
         }
       } else if (isRow2) {
         // ROW 2: ALL 4 panels get CORNER_CUT (both exterior and interior)
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
-        console.log(`[L-CORNER END] Row 2, chain ${chain.id}: CORNER_CUT (always)`);
       } else {
         // Other rows: alternate pattern
         if (row % 2 === 0) {
@@ -864,48 +856,51 @@ export function generatePanelLayout(
   let chainsProcessed = 0;
   let intervalsProcessed = 0;
   
-  chains.forEach((chain) => {
-    if (chain.lengthMm < 50) {
-      console.log('[generatePanelLayout] Skipping short chain:', chain.id, chain.lengthMm);
-      return;
-    }
-    chainsProcessed++;
-    
-    for (let row = 0; row < Math.min(visibleRows, maxRows); row++) {
-      const intervals = getIntervalsForRow(chain, row);
-      
-      if (row === 0 && chainsProcessed === 1) {
-        console.log('[generatePanelLayout] First chain intervals:', { chainId: chain.id, lengthMm: chain.lengthMm, intervals });
+  try {
+    chains.forEach((chain) => {
+      if (chain.lengthMm < 50) {
+        return;
       }
+      chainsProcessed++;
       
-      intervals.forEach((interval) => {
-        intervalsProcessed++;
-        const { panels, topos } = layoutPanelsForChainWithJunctions(
-          chain,
-          interval.start,
-          interval.end,
-          row,
-          lJunctions,
-          tJunctions,
-          freeEnds
-        );
+      for (let row = 0; row < Math.min(visibleRows, maxRows); row++) {
+        const intervals = getIntervalsForRow(chain, row);
         
-        if (row === 0 && intervalsProcessed === 1) {
-          console.log('[generatePanelLayout] First interval result:', { panels: panels.length, topos: topos.length });
-        }
-        
-        panels.forEach(panel => {
-          panelsByType[panel.type].push(panel);
-          allPanels.push(panel);
-          if (panel.isCornerPiece) cornerTemplatesApplied++;
+        intervals.forEach((interval) => {
+          intervalsProcessed++;
+          const { panels, topos } = layoutPanelsForChainWithJunctions(
+            chain,
+            interval.start,
+            interval.end,
+            row,
+            lJunctions,
+            tJunctions,
+            freeEnds
+          );
+          
+          panels.forEach(panel => {
+            panelsByType[panel.type].push(panel);
+            allPanels.push(panel);
+            if (panel.isCornerPiece) cornerTemplatesApplied++;
+          });
+          
+          allTopos.push(...topos);
         });
-        
-        allTopos.push(...topos);
-      });
-    }
-  });
+      }
+    });
+  } catch (error) {
+    console.error('[generatePanelLayout] Error during panel generation:', error);
+  }
   
-  console.log('[generatePanelLayout] Processed:', { chainsProcessed, intervalsProcessed, panelsTotal: allPanels.length });
+  console.log('[generatePanelLayout] RESULT:', { 
+    chainsProcessed, 
+    intervalsProcessed, 
+    panelsTotal: allPanels.length,
+    FULL: panelsByType.FULL.length,
+    CORNER_CUT: panelsByType.CORNER_CUT.length,
+    CUT_DOUBLE: panelsByType.CUT_DOUBLE.length,
+    topos: allTopos.length
+  });
   
   return {
     panelsByType,
