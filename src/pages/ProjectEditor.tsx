@@ -23,7 +23,7 @@ import { OpeningData, OpeningCandidate } from '@/types/openings';
 import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType, ThicknessDetectionResult } from '@/types/panel-selection';
 import { ClassifiedPanel, PanelType, TopoPlacement, TOOTH } from '@/lib/panel-layout';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
-import { buildWallChains } from '@/lib/wall-chains';
+import { buildWallChains, buildWallChainsAutoTuned } from '@/lib/wall-chains';
 import { DXFSegment, NormalizedDXFResult } from '@/lib/dxf-parser';
 
 interface Project {
@@ -47,7 +47,7 @@ interface Wall {
 function WallListPanel({ walls, onDeleteWall }: { walls: WallSegment[]; onDeleteWall: (id: string) => void }) {
   const [showChains, setShowChains] = useState(true);
   
-  const chainsResult = useMemo(() => buildWallChains(walls), [walls]);
+  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   const { chains, stats, junctionCounts } = chainsResult;
   
   const totalMM = walls.reduce((sum, w) => sum + w.length, 0);

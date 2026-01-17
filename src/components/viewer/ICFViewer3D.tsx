@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
 import { OpeningData, OpeningCandidate, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
-import { buildWallChains, WallChain } from '@/lib/wall-chains';
+import { buildWallChains, buildWallChainsAutoTuned, WallChain } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
 import { 
   generatePanelLayout, 
@@ -139,7 +139,7 @@ function DXFDebugLines({ walls }: { walls: WallSegment[] }) {
 
 // Chain overlay (thick cyan lines) - uses consolidated chains
 function ChainOverlay({ walls }: { walls: WallSegment[] }) {
-  const chainsResult = useMemo(() => buildWallChains(walls), [walls]);
+  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   
   const geometry = useMemo(() => {
     const chains = chainsResult.chains;
@@ -1193,17 +1193,8 @@ function Scene({
 }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
-  // Build chains once for the scene with candidate detection enabled
-  const chainsResult = useMemo(
-    () => buildWallChains(walls, { 
-      snapTolMm: 5, 
-      gapTolMm: 10, 
-      angleTolDeg: 2, 
-      noiseMinMm: 100, 
-      detectCandidates: true 
-    }),
-    [walls]
-  );
+  // Build chains once for the scene (auto-tuned presets) with candidate detection enabled
+  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   const chains = chainsResult.chains;
   
   // Merge external candidates with auto-detected ones

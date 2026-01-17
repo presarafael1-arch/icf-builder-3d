@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { AlertTriangle, CheckCircle, Info, Scan } from 'lucide-react';
 import { WallSegment, ViewerSettings, PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
 import { OpeningData, OpeningCandidate, calculateOpeningTopos } from '@/types/openings';
-import { buildWallChains } from '@/lib/wall-chains';
+import { buildWallChainsAutoTuned } from '@/lib/wall-chains';
 
 interface DiagnosticsHUDProps {
   walls: WallSegment[];
@@ -35,7 +35,7 @@ export function DiagnosticsHUD({
   layoutStats,
   panelCountsByType,
 }: DiagnosticsHUDProps) {
-  const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
+  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   const { chains, stats, candidates: detectedCandidates } = chainsResult;
   
   const viewModeLabel = {
