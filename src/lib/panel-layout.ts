@@ -209,20 +209,23 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
     // 2D cross product: dir0 × dir1 = dir0.x * dir1.y - dir0.y * dir1.x
     const cross = dir0.x * dir1.y - dir0.y * dir1.x;
     
-    // If cross > 0: turning counter-clockwise from dir0 to dir1 → dir0 is "exterior" (primary)
-    // If cross < 0: turning clockwise → dir1 is "exterior" (primary)
-    // If cross ≈ 0: fallback to alphabetical
+    // WINDING RULE for L-corners (exterior face convention):
+    // The "exterior" face of an L-corner is the CONVEX side (outside of building).
+    // Using cross product to determine handedness:
+    // - If cross < 0 (clockwise turn from dir0 to dir1): chain0 is on exterior
+    // - If cross > 0 (counter-clockwise turn): chain1 is on exterior
+    // This matches typical architectural conventions where exterior = convex face.
     let primaryIdx: number;
     let secondaryIdx: number;
     
     if (Math.abs(cross) < 0.1) {
       // Nearly parallel (shouldn't happen for L-junctions but fallback)
       primaryIdx = node.chainIds[0] < node.chainIds[1] ? 0 : 1;
-    } else if (cross > 0) {
-      // Counter-clockwise: chain at index 0 is exterior (primary)
+    } else if (cross < 0) {
+      // Clockwise turn: chain at index 0 is exterior (primary) - gets FULL panels
       primaryIdx = 0;
     } else {
-      // Clockwise: chain at index 1 is exterior (primary)
+      // Counter-clockwise turn: chain at index 1 is exterior (primary)
       primaryIdx = 1;
     }
     secondaryIdx = 1 - primaryIdx;
