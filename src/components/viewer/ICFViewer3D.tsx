@@ -7,6 +7,14 @@ import { OpeningData, OpeningCandidate, getAffectedRows } from '@/types/openings
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, WallChain } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
+import { 
+  generatePanelLayout, 
+  PanelType, 
+  ClassifiedPanel, 
+  TopoPlacement,
+  detectLJunctions,
+  detectTJunctions 
+} from '@/lib/panel-layout';
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
@@ -35,8 +43,6 @@ const SCALE = 0.001;
 // =============================================
 // PANEL COLORS - FIXED HEX VALUES (ALWAYS VISIBLE)
 // =============================================
-export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO';
-
 export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
   FULL: '#E6D44A',        // YELLOW - full panel (1200mm)
   CUT_SINGLE: '#6FD36F',  // LIGHT GREEN - cut on ONE side only (meio-corte)
@@ -45,12 +51,6 @@ export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
   TOPO: '#0F6B3E',        // DARK GREEN - topos
   OPENING_VOID: '#FF4444', // RED translucent - opening voids and candidates
 };
-
-// Stagger offset for odd rows (for interlocking pattern)
-const STAGGER_OFFSET = 600; // mm
-
-// Minimum cut length (anything less is waste)
-const MIN_CUT_MM = 100;
 
 // Calculate bounding box of WALL SEGMENTS in 3D space
 function calculateWallsBoundingBox(walls: WallSegment[], maxRows: number) {
@@ -186,285 +186,9 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
   );
 }
 
-// Panel instance with classification
-interface ClassifiedPanel {
-  matrix: THREE.Matrix4;
-  type: PanelType;
-  widthMm: number;
-  rowIndex: number;
-  chainId?: string;
-  isCornerPiece?: boolean;
-}
-
-// L-junction info for deterministic corner treatment
-interface LJunctionInfo {
-  nodeId: string;
-  x: number;
-  y: number;
-  primaryChainId: string;   // Lower chain ID = primary
-  secondaryChainId: string; // Higher chain ID = secondary
-  primaryAngle: number;
-  secondaryAngle: number;
-}
-
 // =============================================
-// DETECT L-JUNCTIONS AND ASSIGN PRIMARY/SECONDARY ARMS
-// Rule: Lower chainId = primary arm (deterministic, never flips)
-// =============================================
-function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
-  const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[] }>();
-  const TOLERANCE = 15; // mm
-  
-  const getNodeKey = (x: number, y: number) => {
-    const rx = Math.round(x / TOLERANCE) * TOLERANCE;
-    const ry = Math.round(y / TOLERANCE) * TOLERANCE;
-    return `${rx},${ry}`;
-  };
-  
-  chains.forEach(chain => {
-    // Start node
-    const startKey = getNodeKey(chain.startX, chain.startY);
-    if (!nodeMap.has(startKey)) {
-      nodeMap.set(startKey, { x: chain.startX, y: chain.startY, chainIds: [], angles: [] });
-    }
-    const startNode = nodeMap.get(startKey)!;
-    startNode.chainIds.push(chain.id);
-    startNode.angles.push(chain.angle);
-    
-    // End node
-    const endKey = getNodeKey(chain.endX, chain.endY);
-    if (!endKey) return;
-    if (!nodeMap.has(endKey)) {
-      nodeMap.set(endKey, { x: chain.endX, y: chain.endY, chainIds: [], angles: [] });
-    }
-    const endNode = nodeMap.get(endKey)!;
-    endNode.chainIds.push(chain.id);
-    endNode.angles.push(chain.angle + Math.PI);
-  });
-  
-  const lJunctions: LJunctionInfo[] = [];
-  
-  nodeMap.forEach((node, key) => {
-    if (node.chainIds.length !== 2) return; // Not an L-junction
-    
-    // Check if angles are roughly perpendicular (L-shape)
-    const angleDiff = Math.abs(node.angles[0] - node.angles[1]);
-    const isLShape = Math.abs(angleDiff - Math.PI / 2) < 0.3 || Math.abs(angleDiff - 3 * Math.PI / 2) < 0.3;
-    
-    if (!isLShape) return;
-    
-    // DETERMINISTIC: Lower chainId = primary arm
-    const [id1, id2] = node.chainIds;
-    const primaryChainId = id1 < id2 ? id1 : id2;
-    const secondaryChainId = id1 < id2 ? id2 : id1;
-    const primaryIdx = node.chainIds.indexOf(primaryChainId);
-    const secondaryIdx = 1 - primaryIdx;
-    
-    lJunctions.push({
-      nodeId: key,
-      x: node.x,
-      y: node.y,
-      primaryChainId,
-      secondaryChainId,
-      primaryAngle: node.angles[primaryIdx],
-      secondaryAngle: node.angles[secondaryIdx],
-    });
-  });
-  
-  console.log('[L-Junctions] Detected:', lJunctions.length, lJunctions.map(j => `${j.primaryChainId}/${j.secondaryChainId}`));
-  return lJunctions;
-}
-
-// =============================================
-// CHECK IF CHAIN STARTS/ENDS AT AN L-JUNCTION
-// =============================================
-function getCornerInfoForChain(
-  chain: WallChain,
-  lJunctions: LJunctionInfo[],
-  tolerance: number = 20
-): { 
-  startsAtL: LJunctionInfo | null; 
-  endsAtL: LJunctionInfo | null;
-  isPrimaryAtStart: boolean;
-  isPrimaryAtEnd: boolean;
-} {
-  let startsAtL: LJunctionInfo | null = null;
-  let endsAtL: LJunctionInfo | null = null;
-  let isPrimaryAtStart = false;
-  let isPrimaryAtEnd = false;
-  
-  for (const lj of lJunctions) {
-    const distToStart = Math.sqrt((chain.startX - lj.x) ** 2 + (chain.startY - lj.y) ** 2);
-    const distToEnd = Math.sqrt((chain.endX - lj.x) ** 2 + (chain.endY - lj.y) ** 2);
-    
-    if (distToStart < tolerance) {
-      startsAtL = lj;
-      isPrimaryAtStart = lj.primaryChainId === chain.id;
-    }
-    if (distToEnd < tolerance) {
-      endsAtL = lj;
-      isPrimaryAtEnd = lj.primaryChainId === chain.id;
-    }
-  }
-  
-  return { startsAtL, endsAtL, isPrimaryAtStart, isPrimaryAtEnd };
-}
-
-// =============================================
-// PANEL LAYOUT ALGORITHM: L-CORNER TEMPLATE + CUTS IN THE MIDDLE
-// 
-// RULE FOR L-CORNERS (PAR/ÍMPAR ALTERNATION):
-// - Even rows: primary arm gets FULL panel at corner, secondary gets 600mm CORNER_CUT
-// - Odd rows: primary arm gets 600mm CORNER_CUT, secondary gets FULL panel at corner
-// 
-// RULE FOR MIDDLE:
-// - Start from both ends with full panels
-// - Push cuts/remainders to the CENTER
-// =============================================
-function layoutPanelsForChainWithLCorners(
-  chain: WallChain,
-  intervalStart: number,
-  intervalEnd: number,
-  row: number,
-  lJunctions: LJunctionInfo[]
-): ClassifiedPanel[] {
-  const panels: ClassifiedPanel[] = [];
-  const intervalLength = intervalEnd - intervalStart;
-  
-  if (intervalLength < MIN_CUT_MM) return panels;
-  
-  const isOddRow = row % 2 === 1;
-  const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
-  const dirX = (chain.endX - chain.startX) / chain.lengthMm;
-  const dirY = (chain.endY - chain.startY) / chain.lengthMm;
-  
-  const cornerInfo = getCornerInfoForChain(chain, lJunctions);
-  
-  // Determine corner template at START
-  let leftReservation = 0;
-  let leftIsCornerCut = false;
-  
-  if (cornerInfo.startsAtL && intervalStart === 0) {
-    // L-corner at chain start
-    // PAR/ÍMPAR RULE:
-    // - Even rows: primary = full (1200), secondary = 600 (CORNER_CUT)
-    // - Odd rows: primary = 600 (CORNER_CUT), secondary = full (1200)
-    const isPrimary = cornerInfo.isPrimaryAtStart;
-    
-    if (!isOddRow) {
-      // EVEN ROW
-      leftReservation = isPrimary ? PANEL_WIDTH : STAGGER_OFFSET;
-      leftIsCornerCut = !isPrimary; // Secondary gets corner cut
-    } else {
-      // ODD ROW
-      leftReservation = isPrimary ? STAGGER_OFFSET : PANEL_WIDTH;
-      leftIsCornerCut = isPrimary; // Primary gets corner cut
-    }
-  } else if (isOddRow && intervalStart === 0) {
-    // No L-junction but odd row: apply standard stagger
-    leftReservation = STAGGER_OFFSET;
-    leftIsCornerCut = true;
-  }
-  
-  // Determine corner template at END
-  let rightReservation = 0;
-  let rightIsCornerCut = false;
-  
-  if (cornerInfo.endsAtL && intervalEnd === chain.lengthMm) {
-    const isPrimary = cornerInfo.isPrimaryAtEnd;
-    
-    if (!isOddRow) {
-      rightReservation = isPrimary ? PANEL_WIDTH : STAGGER_OFFSET;
-      rightIsCornerCut = !isPrimary;
-    } else {
-      rightReservation = isPrimary ? STAGGER_OFFSET : PANEL_WIDTH;
-      rightIsCornerCut = isPrimary;
-    }
-  }
-  
-  const createPanel = (centerPos: number, width: number, type: PanelType, isCorner = false) => {
-    const posX = chain.startX + dirX * centerPos;
-    const posZ = chain.startY + dirY * centerPos;
-    const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
-
-    const matrix = new THREE.Matrix4();
-    matrix.compose(
-      new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
-      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-      new THREE.Vector3(width / PANEL_WIDTH, 1, 1)
-    );
-
-    return { matrix, type, widthMm: width, rowIndex: row, chainId: chain.id, isCornerPiece: isCorner };
-  };
-  
-  // Place LEFT corner reservation
-  let cursor = intervalStart;
-  if (leftReservation > 0) {
-    const reserveWidth = Math.min(leftReservation, intervalLength);
-    if (reserveWidth >= MIN_CUT_MM) {
-      const centerPos = cursor + reserveWidth / 2;
-      const type: PanelType = leftIsCornerCut ? 'CORNER_CUT' : 'FULL';
-      panels.push(createPanel(centerPos, reserveWidth, type, true));
-    }
-    cursor += leftReservation;
-  }
-  
-  // Place RIGHT corner reservation (calculate but don't place yet)
-  const rightEdge = intervalEnd;
-  const rightStart = rightEdge - rightReservation;
-  
-  // Calculate middle section
-  const middleStart = cursor;
-  const middleEnd = rightReservation > 0 ? rightStart : rightEdge;
-  const middleLength = Math.max(0, middleEnd - middleStart);
-  
-  if (middleLength >= MIN_CUT_MM) {
-    // Calculate how many full panels fit and the remainder
-    const fullPanelCount = Math.floor(middleLength / PANEL_WIDTH);
-    const remainder = middleLength - (fullPanelCount * PANEL_WIDTH);
-    
-    // LAYOUT: Place from BOTH ends, cut piece in MIDDLE
-    const leftCount = Math.floor(fullPanelCount / 2);
-    const rightCount = Math.ceil(fullPanelCount / 2);
-    
-    // Place LEFT side panels
-    for (let i = 0; i < leftCount; i++) {
-      const centerPos = cursor + PANEL_WIDTH / 2;
-      panels.push(createPanel(centerPos, PANEL_WIDTH, 'FULL'));
-      cursor += PANEL_WIDTH;
-    }
-    
-    // Place MIDDLE cut piece (if any)
-    if (remainder >= MIN_CUT_MM) {
-      const centerPos = cursor + remainder / 2;
-      panels.push(createPanel(centerPos, remainder, 'CUT_DOUBLE')); // Orange - cut on both sides
-      cursor += remainder;
-    }
-    
-    // Place RIGHT side panels
-    for (let i = 0; i < rightCount; i++) {
-      const centerPos = cursor + PANEL_WIDTH / 2;
-      panels.push(createPanel(centerPos, PANEL_WIDTH, 'FULL'));
-      cursor += PANEL_WIDTH;
-    }
-  }
-  
-  // Place RIGHT corner reservation
-  if (rightReservation > 0 && rightStart < rightEdge) {
-    const reserveWidth = Math.min(rightReservation, rightEdge - rightStart);
-    if (reserveWidth >= MIN_CUT_MM) {
-      const centerPos = rightStart + reserveWidth / 2;
-      const type: PanelType = rightIsCornerCut ? 'CORNER_CUT' : 'FULL';
-      panels.push(createPanel(centerPos, reserveWidth, type, true));
-    }
-  }
-  
-  return panels;
-}
-
-// =============================================
-// BATCH RENDER: One InstancedMesh per panel type + OUTLINE mesh
-// This ensures colors are ALWAYS visible (no instanceColor issues)
+// BATCH RENDER: One InstancedMesh per panel type + OUTLINE mesh + TOPO mesh
+// This ensures colors are ALWAYS visible
 // =============================================
 function BatchedPanelInstances({ 
   chains, 
@@ -476,7 +200,7 @@ function BatchedPanelInstances({
   onCountsChange,
   onGeometrySourceChange,
   onGeometryMetaChange,
-  onLJunctionStatsChange,
+  onLayoutStatsChange,
 }: { 
   chains: WallChain[];
   settings: ViewerSettings; 
@@ -493,15 +217,19 @@ function BatchedPanelInstances({
     panelMeshBBoxSizeM: { x: number; y: number; z: number };
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
-  onLJunctionStatsChange?: (stats: { lJunctions: number; templatesApplied: number }) => void;
+  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number }) => void;
 }) {
   // Refs for each panel type mesh
   const fullMeshRef = useRef<THREE.InstancedMesh>(null);
   const cutSingleMeshRef = useRef<THREE.InstancedMesh>(null);
   const cutDoubleMeshRef = useRef<THREE.InstancedMesh>(null);
   const cornerMeshRef = useRef<THREE.InstancedMesh>(null);
-  // Outline mesh ref
+  
+  // OUTLINE mesh ref - second InstancedMesh for permanent outlines
   const outlineMeshRef = useRef<THREE.InstancedMesh>(null);
+  
+  // TOPO mesh ref for T-junction topos
+  const topoMeshRef = useRef<THREE.InstancedMesh>(null);
 
   // Get panel geometry from hook (ALWAYS returns valid geometry)
   const {
@@ -527,69 +255,47 @@ function BatchedPanelInstances({
     });
   }, [highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied, geometryValid]);
 
-  // Detect L-junctions for deterministic corner treatment
-  const lJunctions = useMemo(() => detectLJunctions(chains), [chains]);
+  // Concrete thickness for topo sizing
+  const tc = parseInt(settings.concreteThickness) || 150;
 
-  // Generate classified panel placements using L-corner aware layout algorithm
-  const { panelsByType, allPanels, lJunctionStats } = useMemo(() => {
-    const byType: Record<PanelType, ClassifiedPanel[]> = {
-      FULL: [],
-      CUT_SINGLE: [],
-      CUT_DOUBLE: [],
-      CORNER_CUT: [],
-      TOPO: [],
-    };
-    const all: ClassifiedPanel[] = [];
-    let lCornerTemplatesApplied = 0;
-
+  // Generate panel layout with L-corner and T-junction awareness
+  const { panelsByType, allPanels, allTopos, layoutStats } = useMemo(() => {
     if (chains.length === 0) {
       console.log('[BatchedPanelInstances] No chains, skipping panel generation');
-      return { panelsByType: byType, allPanels: all, lJunctionStats: { lJunctions: 0, templatesApplied: 0 } };
+      return { 
+        panelsByType: { FULL: [], CUT_SINGLE: [], CUT_DOUBLE: [], CORNER_CUT: [], TOPO: [] },
+        allPanels: [] as ClassifiedPanel[],
+        allTopos: [] as TopoPlacement[],
+        layoutStats: { lJunctions: 0, tJunctions: 0, cornerTemplatesApplied: 0, toposPlaced: 0 }
+      };
     }
 
-    chains.forEach((chain) => {
-      const chainLength = chain.lengthMm;
-      if (chainLength < 50) return;
-      
-      const visibleRows = Math.min(settings.currentRow, settings.maxRows);
-      
-      for (let row = 0; row < visibleRows; row++) {
-        const intervals = getRemainingIntervalsForRow(chain, openings, row);
+    const visibleRows = Math.min(settings.currentRow, settings.maxRows);
+    
+    // Create interval getter that respects openings
+    const getIntervalsForRow = (chain: WallChain, row: number) => {
+      return getRemainingIntervalsForRow(chain, openings, row);
+    };
+    
+    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow);
 
-        intervals.forEach((interval) => {
-          const rowPanels = layoutPanelsForChainWithLCorners(
-            chain, 
-            interval.start, 
-            interval.end, 
-            row, 
-            lJunctions
-          );
-          
-          rowPanels.forEach(panel => {
-            byType[panel.type].push(panel);
-            all.push(panel);
-            if (panel.isCornerPiece) lCornerTemplatesApplied++;
-          });
-        });
-      }
-    });
-
-    console.log('[BatchedPanelInstances] Generated panels by type:', {
-      FULL: byType.FULL.length,
-      CUT_SINGLE: byType.CUT_SINGLE.length,
-      CUT_DOUBLE: byType.CUT_DOUBLE.length,
-      CORNER_CUT: byType.CORNER_CUT.length,
-      total: all.length,
-      lJunctions: lJunctions.length,
-      lCornerTemplatesApplied,
+    console.log('[BatchedPanelInstances] Generated panels:', {
+      FULL: result.panelsByType.FULL.length,
+      CUT_SINGLE: result.panelsByType.CUT_SINGLE.length,
+      CUT_DOUBLE: result.panelsByType.CUT_DOUBLE.length,
+      CORNER_CUT: result.panelsByType.CORNER_CUT.length,
+      total: result.allPanels.length,
+      topos: result.allTopos.length,
+      stats: result.stats,
     });
     
-    return { 
-      panelsByType: byType, 
-      allPanels: all, 
-      lJunctionStats: { lJunctions: lJunctions.length, templatesApplied: lCornerTemplatesApplied } 
+    return {
+      panelsByType: result.panelsByType,
+      allPanels: result.allPanels,
+      allTopos: result.allTopos,
+      layoutStats: result.stats,
     };
-   }, [chains, openings, settings.currentRow, settings.maxRows, lJunctions]);
+  }, [chains, openings, settings.currentRow, settings.maxRows]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;
@@ -634,16 +340,21 @@ function BatchedPanelInstances({
     CUT_SINGLE: panelsByType.CUT_SINGLE.length,
     CUT_DOUBLE: panelsByType.CUT_DOUBLE.length,
     CORNER_CUT: panelsByType.CORNER_CUT.length,
-    TOPO: 0,
+    TOPO: allTopos.length,
     OPENING_VOID: 0,
   };
 
-  // Report counts and L-junction stats to parent
+  // Report counts and layout stats to parent
   useEffect(() => {
     onInstanceCountChange?.(totalCount);
     onCountsChange?.(counts);
-    onLJunctionStatsChange?.(lJunctionStats);
-  }, [totalCount, counts.FULL, counts.CUT_SINGLE, counts.CUT_DOUBLE, counts.CORNER_CUT, lJunctionStats]);
+    onLayoutStatsChange?.({
+      lJunctions: layoutStats.lJunctions,
+      tJunctions: layoutStats.tJunctions,
+      templatesApplied: layoutStats.cornerTemplatesApplied,
+      toposPlaced: layoutStats.toposPlaced,
+    });
+  }, [totalCount, counts.FULL, counts.CUT_SINGLE, counts.CUT_DOUBLE, counts.CORNER_CUT, counts.TOPO, layoutStats]);
 
   // Update FULL panels mesh
   useEffect(() => {
@@ -685,12 +396,35 @@ function BatchedPanelInstances({
   useEffect(() => {
     if (!outlineMeshRef.current || allPanels.length === 0) return;
     allPanels.forEach((panel, i) => {
-      outlineMeshRef.current!.setMatrixAt(i, panel.matrix);
+      // Clone matrix and apply slight scale-up for outline visibility
+      const outlineMatrix = panel.matrix.clone();
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      outlineMatrix.decompose(pos, quat, scale);
+      // Scale up slightly for outline offset
+      scale.multiplyScalar(1.002);
+      outlineMatrix.compose(pos, quat, scale);
+      outlineMeshRef.current!.setMatrixAt(i, outlineMatrix);
     });
     outlineMeshRef.current.instanceMatrix.needsUpdate = true;
   }, [allPanels, outlineGeometry]);
 
+  // Update TOPO mesh (T-junction topos)
+  useEffect(() => {
+    if (!topoMeshRef.current || allTopos.length === 0) return;
+    allTopos.forEach((topo, i) => {
+      topoMeshRef.current!.setMatrixAt(i, topo.matrix);
+    });
+    topoMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [allTopos]);
+
   const wireframe = settings.wireframe;
+
+  // Topo geometry - small block for T-junction placement
+  const topoGeometry = useMemo(() => {
+    return new THREE.BoxGeometry(tc * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 1.2);
+  }, [tc]);
 
   // Don't render if no panels
   if (totalCount === 0) return null;
@@ -769,25 +503,42 @@ function BatchedPanelInstances({
         </instancedMesh>
       )}
 
-      {/* OUTLINE mesh - wireframe overlay for all panels (permanent, always visible by default) */}
+      {/* OUTLINE mesh - PERMANENT wireframe overlay for all panels */}
       {/* Uses slightly larger geometry with wireframe material + polygonOffset for z-fighting prevention */}
       {showOutlines && allPanels.length > 0 && !wireframe && (
         <instancedMesh 
           ref={outlineMeshRef} 
           args={[outlineGeometry, undefined, allPanels.length]} 
           frustumCulled={false}
-          renderOrder={1}
+          renderOrder={10}
         >
           <meshBasicMaterial 
-            color="#1a1a1a"
+            color="#0B0F14"
             wireframe={true}
-            opacity={0.9}
+            opacity={0.65}
             transparent
             polygonOffset={true}
-            polygonOffsetFactor={-1}
-            polygonOffsetUnits={-1}
+            polygonOffsetFactor={-2}
+            polygonOffsetUnits={-2}
             depthTest={true}
             depthWrite={false}
+          />
+        </instancedMesh>
+      )}
+
+      {/* TOPO mesh - Dark green blocks at T-junctions */}
+      {settings.showTopos && allTopos.length > 0 && (
+        <instancedMesh 
+          ref={topoMeshRef} 
+          args={[topoGeometry, undefined, allTopos.length]} 
+          frustumCulled={false}
+        >
+          <meshStandardMaterial 
+            color={PANEL_COLORS.TOPO}
+            roughness={0.4} 
+            metalness={0.2}
+            emissive={PANEL_COLORS.TOPO}
+            emissiveIntensity={0.2}
           />
         </instancedMesh>
       )}
@@ -1285,10 +1036,10 @@ interface SceneProps {
     panelMeshBBoxSizeM: { x: number; y: number; z: number };
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
-  onLJunctionStatsChange?: (stats: { lJunctions: number; templatesApplied: number }) => void;
+  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number }) => void;
 }
 
-function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange, onGeometryMetaChange, onLJunctionStatsChange }: SceneProps) {
+function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange, onGeometryMetaChange, onLayoutStatsChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Build chains once for the scene with candidate detection enabled
@@ -1383,7 +1134,7 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
         />
       )}
 
-      {/* ICF Panels - BATCH RENDER by type for permanent colors + OUTLINES */}
+      {/* ICF Panels - BATCH RENDER by type for permanent colors + OUTLINES + TOPOS */}
       {showPanelsLayer && (
         <BatchedPanelInstances 
           chains={chains}
@@ -1395,7 +1146,7 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
           onCountsChange={onPanelCountsChange}
           onGeometrySourceChange={onGeometrySourceChange}
           onGeometryMetaChange={onGeometryMetaChange}
-          onLJunctionStatsChange={onLJunctionStatsChange}
+          onLayoutStatsChange={onLayoutStatsChange}
         />
       )}
 
@@ -1437,7 +1188,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
   const [panelMeshVisible, setPanelMeshVisible] = useState<boolean | undefined>(undefined);
   const [panelMeshBBoxSizeM, setPanelMeshBBoxSizeM] = useState<{ x: number; y: number; z: number } | undefined>(undefined);
   const [instancePosRangeM, setInstancePosRangeM] = useState<{ min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | undefined>(undefined);
-  const [lJunctionStats, setLJunctionStats] = useState<{ lJunctions: number; templatesApplied: number } | undefined>(undefined);
+  const [layoutStats, setLayoutStats] = useState<{ lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number } | undefined>(undefined);
   const [showLegend, setShowLegend] = useState(true);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
@@ -1470,7 +1221,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
             setPanelMeshBBoxSizeM(panelMeshBBoxSizeM);
             setInstancePosRangeM(instancePosRangeM);
           }}
-          onLJunctionStatsChange={setLJunctionStats}
+          onLayoutStatsChange={setLayoutStats}
         />
       </Canvas>
 
@@ -1479,7 +1230,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
           visible={showLegend}
           onToggle={() => setShowLegend(!showLegend)}
           showOpenings={settings.showOpenings && (openings.length > 0 || candidates.length > 0)}
-          showTopos={settings.showTopos && openings.length > 0}
+          showTopos={settings.showTopos && (openings.length > 0 || (layoutStats?.toposPlaced || 0) > 0)}
           counts={panelCounts}
         />
       )}
@@ -1496,7 +1247,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
         panelMeshVisible={panelMeshVisible}
         panelMeshBBoxSizeM={panelMeshBBoxSizeM}
         instancePosRangeM={instancePosRangeM}
-        lJunctionStats={lJunctionStats}
+        layoutStats={layoutStats}
         panelCountsByType={panelCounts}
       />
 
