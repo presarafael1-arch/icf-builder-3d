@@ -16,7 +16,7 @@ interface DiagnosticsHUDProps {
   panelMeshVisible?: boolean;
   panelMeshBBoxSizeM?: { x: number; y: number; z: number };
   instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
-  layoutStats?: { lJunctions: number; tJunctions: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number };
+  layoutStats?: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number };
   panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number; TOPO?: number; END_CUT?: number };
 }
 
@@ -151,6 +151,12 @@ export function DiagnosticsHUD({
             <span className="text-muted-foreground">T-junções:</span>
             <span className="text-purple-400">{layoutStats.tJunctions}</span>
           </div>
+          {layoutStats.xJunctions !== undefined && layoutStats.xJunctions > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">X-junções:</span>
+              <span className="text-pink-400">{layoutStats.xJunctions}</span>
+            </div>
+          )}
           {layoutStats.freeEnds !== undefined && layoutStats.freeEnds > 0 && (
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">pontas livres:</span>

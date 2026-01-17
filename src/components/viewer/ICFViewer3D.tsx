@@ -225,7 +225,7 @@ function BatchedPanelInstances({
     panelMeshBBoxSizeM: { x: number; y: number; z: number };
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
-  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
+  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
 }) {
   // Selection mesh ref for highlight
@@ -277,7 +277,7 @@ function BatchedPanelInstances({
         panelsByType: { FULL: [], CUT_SINGLE: [], CUT_DOUBLE: [], CORNER_CUT: [], TOPO: [], END_CUT: [] },
         allPanels: [] as ClassifiedPanel[],
         allTopos: [] as TopoPlacement[],
-        layoutStats: { lJunctions: 0, tJunctions: 0, freeEnds: 0, cornerTemplatesApplied: 0, toposPlaced: 0, effectiveOffset: 600 }
+        layoutStats: { lJunctions: 0, tJunctions: 0, xJunctions: 0, freeEnds: 0, cornerTemplatesApplied: 0, toposPlaced: 0, effectiveOffset: 600 }
       };
     }
 
@@ -428,6 +428,7 @@ function BatchedPanelInstances({
     onLayoutStatsChange?.({
       lJunctions: layoutStats.lJunctions,
       tJunctions: layoutStats.tJunctions,
+      xJunctions: 'xJunctions' in layoutStats ? layoutStats.xJunctions : 0,
       freeEnds: 'freeEnds' in layoutStats ? layoutStats.freeEnds : 0,
       templatesApplied: layoutStats.cornerTemplatesApplied,
       toposPlaced: layoutStats.toposPlaced,
@@ -1173,7 +1174,7 @@ interface SceneProps {
     panelMeshBBoxSizeM: { x: number; y: number; z: number };
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
-  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number }) => void;
+  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
 }
 
 function Scene({ 
@@ -1356,7 +1357,7 @@ export function ICFViewer3D({
   const [panelMeshVisible, setPanelMeshVisible] = useState<boolean | undefined>(undefined);
   const [panelMeshBBoxSizeM, setPanelMeshBBoxSizeM] = useState<{ x: number; y: number; z: number } | undefined>(undefined);
   const [instancePosRangeM, setInstancePosRangeM] = useState<{ min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | undefined>(undefined);
-  const [layoutStats, setLayoutStats] = useState<{ lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number } | undefined>(undefined);
+  const [layoutStats, setLayoutStats] = useState<{ lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number } | undefined>(undefined);
   const [showLegend, setShowLegend] = useState(true);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 

@@ -121,6 +121,15 @@ export interface TJunctionInfo {
   branchAngle: number;
 }
 
+// X-junction info (4 or more chains meeting at a point)
+export interface XJunctionInfo {
+  nodeId: string;
+  x: number;
+  y: number;
+  chainIds: string[];
+  angles: number[];
+}
+
 // Endpoint info for free-end detection
 interface EndpointInfo {
   x: number;
@@ -286,6 +295,65 @@ export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
   });
   
   return tJunctions;
+}
+
+/**
+ * Detect X-junctions (4 or more chains meeting at a point)
+ */
+export function detectXJunctions(chains: WallChain[]): XJunctionInfo[] {
+  const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[] }>();
+  const TOLERANCE = 20; // mm
+  
+  const getNodeKey = (x: number, y: number) => {
+    const rx = Math.round(x / TOLERANCE) * TOLERANCE;
+    const ry = Math.round(y / TOLERANCE) * TOLERANCE;
+    return `${rx},${ry}`;
+  };
+  
+  const getChainAngle = (chain: WallChain) => Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+  
+  chains.forEach(chain => {
+    const angle = getChainAngle(chain);
+    
+    // Start node
+    const startKey = getNodeKey(chain.startX, chain.startY);
+    if (!nodeMap.has(startKey)) {
+      nodeMap.set(startKey, { x: chain.startX, y: chain.startY, chainIds: [], angles: [] });
+    }
+    const startNode = nodeMap.get(startKey)!;
+    if (!startNode.chainIds.includes(chain.id)) {
+      startNode.chainIds.push(chain.id);
+      startNode.angles.push(angle);
+    }
+    
+    // End node
+    const endKey = getNodeKey(chain.endX, chain.endY);
+    if (!nodeMap.has(endKey)) {
+      nodeMap.set(endKey, { x: chain.endX, y: chain.endY, chainIds: [], angles: [] });
+    }
+    const endNode = nodeMap.get(endKey)!;
+    if (!endNode.chainIds.includes(chain.id)) {
+      endNode.chainIds.push(chain.id);
+      endNode.angles.push(angle + Math.PI);
+    }
+  });
+  
+  const xJunctions: XJunctionInfo[] = [];
+  
+  nodeMap.forEach((node, key) => {
+    // X-junction = 4 or more chains meeting
+    if (node.chainIds.length >= 4) {
+      xJunctions.push({
+        nodeId: key,
+        x: node.x,
+        y: node.y,
+        chainIds: node.chainIds,
+        angles: node.angles,
+      });
+    }
+  });
+  
+  return xJunctions;
 }
 
 /**
@@ -910,6 +978,7 @@ export function generatePanelLayout(
   stats: {
     lJunctions: number;
     tJunctions: number;
+    xJunctions: number;
     freeEnds: number;
     cornerTemplatesApplied: number;
     toposPlaced: number;
@@ -918,11 +987,13 @@ export function generatePanelLayout(
 } {
   const lJunctions = detectLJunctions(chains);
   const tJunctions = detectTJunctions(chains);
+  const xJunctions = detectXJunctions(chains);
   const freeEnds = detectFreeEnds(chains);
   
   console.log('[generatePanelLayout] Detected:', {
     lJunctions: lJunctions.length,
     tJunctions: tJunctions.length,
+    xJunctions: xJunctions.length,
     freeEnds: freeEnds.length,
     chainsCount: chains.length,
     visibleRows,
@@ -997,10 +1068,11 @@ export function generatePanelLayout(
     stats: {
       lJunctions: lJunctions.length,
       tJunctions: tJunctions.length,
+      xJunctions: xJunctions.length,
       freeEnds: freeEnds.length,
       cornerTemplatesApplied,
       toposPlaced: allTopos.length,
-      effectiveOffset: TOOTH, // Report TOOTH as the effective offset step
+      effectiveOffset: TOOTH,
     },
   };
 }
