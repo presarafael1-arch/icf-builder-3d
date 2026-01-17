@@ -822,6 +822,9 @@ export function generatePanelLayout(
     lJunctions: lJunctions.length,
     tJunctions: tJunctions.length,
     freeEnds: freeEnds.length,
+    chainsCount: chains.length,
+    visibleRows,
+    maxRows,
   });
   
   const panelsByType: Record<PanelType, ClassifiedPanel[]> = {
@@ -836,13 +839,25 @@ export function generatePanelLayout(
   const allTopos: TopoPlacement[] = [];
   let cornerTemplatesApplied = 0;
   
+  let chainsProcessed = 0;
+  let intervalsProcessed = 0;
+  
   chains.forEach((chain) => {
-    if (chain.lengthMm < 50) return;
+    if (chain.lengthMm < 50) {
+      console.log('[generatePanelLayout] Skipping short chain:', chain.id, chain.lengthMm);
+      return;
+    }
+    chainsProcessed++;
     
     for (let row = 0; row < Math.min(visibleRows, maxRows); row++) {
       const intervals = getIntervalsForRow(chain, row);
       
+      if (row === 0 && chainsProcessed === 1) {
+        console.log('[generatePanelLayout] First chain intervals:', { chainId: chain.id, lengthMm: chain.lengthMm, intervals });
+      }
+      
       intervals.forEach((interval) => {
+        intervalsProcessed++;
         const { panels, topos } = layoutPanelsForChainWithJunctions(
           chain,
           interval.start,
@@ -852,6 +867,10 @@ export function generatePanelLayout(
           tJunctions,
           freeEnds
         );
+        
+        if (row === 0 && intervalsProcessed === 1) {
+          console.log('[generatePanelLayout] First interval result:', { panels: panels.length, topos: topos.length });
+        }
         
         panels.forEach(panel => {
           panelsByType[panel.type].push(panel);
@@ -863,6 +882,8 @@ export function generatePanelLayout(
       });
     }
   });
+  
+  console.log('[generatePanelLayout] Processed:', { chainsProcessed, intervalsProcessed, panelsTotal: allPanels.length });
   
   return {
     panelsByType,
