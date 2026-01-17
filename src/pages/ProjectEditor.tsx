@@ -209,7 +209,15 @@ export default function ProjectEditor() {
     
     // Panel geometry mode
     highFidelityPanels: false, // Default OFF for performance
-    showOutlines: true // Show panel outlines by default
+    showOutlines: true, // Show panel outlines by default
+    
+    // Debug visualization (panel inspection)
+    showSeeds: false,
+    showNodeAxes: false,
+    showRunSegments: false,
+    showIndexFromSeed: false,
+    showMiddleZone: false,
+    showThicknessDetection: false,
   });
   
   // Build chains from walls (with candidate detection enabled)

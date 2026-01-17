@@ -98,7 +98,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
               <span className="hidden sm:inline">Visibilidade</span>
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-72" align="start">
+          <PopoverContent className="w-80" align="start">
             <div className="space-y-4">
               <h4 className="text-sm font-medium">Camadas Visíveis</h4>
               
@@ -209,6 +209,66 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                     checked={settings.wireframe}
                     onCheckedChange={() => toggleSetting('wireframe')}
                   />
+                </div>
+              </div>
+              
+              {/* Debug Visualization Section */}
+              <div className="pt-3 border-t border-border">
+                <h4 className="text-sm font-medium mb-3 text-yellow-500">Debug (Paginação)</h4>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-seeds" className="text-sm text-muted-foreground">Seeds (nós)</Label>
+                    <Switch
+                      id="show-seeds"
+                      checked={settings.showSeeds}
+                      onCheckedChange={() => toggleSetting('showSeeds')}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-node-axes" className="text-sm text-muted-foreground">Eixos T</Label>
+                    <Switch
+                      id="show-node-axes"
+                      checked={settings.showNodeAxes}
+                      onCheckedChange={() => toggleSetting('showNodeAxes')}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-run-segments" className="text-sm text-muted-foreground">Runs segmentados</Label>
+                    <Switch
+                      id="show-run-segments"
+                      checked={settings.showRunSegments}
+                      onCheckedChange={() => toggleSetting('showRunSegments')}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-index-from-seed" className="text-sm text-muted-foreground">Index do Seed</Label>
+                    <Switch
+                      id="show-index-from-seed"
+                      checked={settings.showIndexFromSeed}
+                      onCheckedChange={() => toggleSetting('showIndexFromSeed')}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-middle-zone" className="text-sm text-orange-400">Middle Zone (laranja)</Label>
+                    <Switch
+                      id="show-middle-zone"
+                      checked={settings.showMiddleZone}
+                      onCheckedChange={() => toggleSetting('showMiddleZone')}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-thickness-detection" className="text-sm text-muted-foreground">Espessura (280/330)</Label>
+                    <Switch
+                      id="show-thickness-detection"
+                      checked={settings.showThicknessDetection}
+                      onCheckedChange={() => toggleSetting('showThicknessDetection')}
+                    />
+                  </div>
                 </div>
               </div>
               

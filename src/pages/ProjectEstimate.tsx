@@ -77,7 +77,15 @@ export default function ProjectEstimate() {
     
     // Panel geometry mode
     highFidelityPanels: false,
-    showOutlines: true
+    showOutlines: true,
+    
+    // Debug visualization (panel inspection)
+    showSeeds: false,
+    showNodeAxes: false,
+    showRunSegments: false,
+    showIndexFromSeed: false,
+    showMiddleZone: false,
+    showThicknessDetection: false,
   });
   
   useEffect(() => {
