@@ -17,6 +17,7 @@ import {
 } from '@/lib/panel-layout';
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
+import { DebugVisualizations } from './DebugVisualizations';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
 import { CoreConcreteMm, ExtendedPanelData } from '@/types/panel-selection';
 
@@ -1315,6 +1316,9 @@ function Scene({
 
       {settings.showWebs && <WebsInstances walls={walls} settings={settings} />}
       {settings.showGrids && <GridsInstances walls={walls} settings={settings} />}
+
+      {/* Debug Visualizations */}
+      <DebugVisualizations chainsResult={chainsResult} settings={settings} />
 
       <Environment preset="city" />
     </>
