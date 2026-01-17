@@ -1,5 +1,5 @@
-import { useRef, useMemo, useEffect, useState } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { useRef, useMemo, useEffect, useState, useCallback } from 'react';
+import { Canvas, useThree, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
@@ -18,6 +18,7 @@ import {
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
+import { CoreConcreteMm, ExtendedPanelData } from '@/types/panel-selection';
 
 // Panel counts by type for legend
 export interface PanelCounts {
@@ -197,17 +198,22 @@ function BatchedPanelInstances({
   openings = [],
   showOutlines = true,
   highFidelity = false,
+  selectedPanelId,
+  onPanelClick,
   onInstanceCountChange,
   onCountsChange,
   onGeometrySourceChange,
   onGeometryMetaChange,
   onLayoutStatsChange,
+  onPanelDataReady,
 }: { 
   chains: WallChain[];
   settings: ViewerSettings; 
   openings: OpeningData[];
   showOutlines?: boolean;
   highFidelity?: boolean;
+  selectedPanelId?: string | null;
+  onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
   onGeometrySourceChange?: (source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple') => void;
@@ -219,6 +225,7 @@ function BatchedPanelInstances({
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
+  onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
 }) {
   // Refs for each panel type mesh
   const fullMeshRef = useRef<THREE.InstancedMesh>(null);

@@ -1,6 +1,7 @@
 // CSV Export utilities for OMNI ICF WALLS 3D PLANNER
 import { BOMResult, ConcreteThickness } from '@/types/icf';
 import { OpeningData, getAffectedRows, calculateOpeningTopos } from '@/types/openings';
+import { PanelOverride } from '@/types/panel-selection';
 
 export interface CSVRow {
   itemCode: string;
@@ -17,6 +18,11 @@ export interface ExportParams {
   rebarSpacingCm: number;
   cornerMode: string;
   numberOfRows: number;
+  // Panel overrides (optional)
+  overrides?: PanelOverride[];
+  // Core concrete detection
+  coreConcreteMm?: 150 | 200;
+  wallOuterThicknessMm?: 280 | 330;
 }
 
 /**

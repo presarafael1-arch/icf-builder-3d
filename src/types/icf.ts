@@ -207,6 +207,14 @@ export interface ViewerSettings {
   // Panel geometry mode
   highFidelityPanels: boolean; // Use detailed/GLB geometry instead of simple boxes (default OFF)
   showOutlines: boolean; // Show panel outlines (default ON)
+  
+  // Debug visualization options (panel inspection)
+  showSeeds: boolean; // Show seed markers at junction nodes
+  showNodeAxes: boolean; // Show T-junction axes
+  showRunSegments: boolean; // Different colors per run
+  showIndexFromSeed: boolean; // Overlay index numbers
+  showMiddleZone: boolean; // Zone where orange cuts are allowed
+  showThicknessDetection: boolean; // Show wall thickness detection info
 }
 
 // DXF parsing result
