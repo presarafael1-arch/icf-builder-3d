@@ -613,18 +613,26 @@ function getStartCap(
       //   - ALL panels: CORNER_CUT for alternating pattern
       // =============================================
       if (isOddRow) {
-        // ODD ROWS (1, 3, 5...): exterior FULL, interior CORNER_CUT
-        if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY chain = exterior → starts with FULL at corner
+        // ODD ROWS (1, 3, 5...):
+        // - EXTERIOR side: ALWAYS FULL on BOTH arms (user rule: "por fora" é inteiro em ambos os lados do canto)
+        // - INTERIOR side: only one arm is shortened (CORNER_CUT) to create the interlock
+        if (side === 'exterior') {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         } else {
-          // SECONDARY chain = interior → CORNER_CUT for alignment
-          reservationMm = PANEL_WIDTH - TOOTH;
-          type = 'CORNER_CUT';
+          // INTERIOR side
+          if (endpointInfo.isPrimaryAtStart) {
+            // PRIMARY arm stays FULL on interior
+            reservationMm = PANEL_WIDTH;
+            type = 'FULL';
+          } else {
+            // SECONDARY arm gets the 1*TOOTH cut on interior
+            reservationMm = PANEL_WIDTH - TOOTH;
+            type = 'CORNER_CUT';
+          }
         }
       } else {
-        // EVEN ROWS (2, 4, 6...): both sides CORNER_CUT
+        // EVEN ROWS (2, 4, 6...): both sides CORNER_CUT (alternating pattern)
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
       }
@@ -696,20 +704,27 @@ function getEndCap(
       // L-CORNER CLOSURE RULES (at chain END):
       // Same logic as start - panels must reach the corner vertex.
       // =============================================
-      if (isOddRow) {
-        // ODD ROWS: exterior FULL, interior CORNER_CUT
-        if (endpointInfo.isPrimaryAtEnd) {
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-        } else {
-          reservationMm = PANEL_WIDTH - TOOTH;
-          type = 'CORNER_CUT';
-        }
-      } else {
-        // EVEN ROWS: both CORNER_CUT
-        reservationMm = PANEL_WIDTH - TOOTH;
-        type = 'CORNER_CUT';
-      }
+       if (isOddRow) {
+         // ODD ROWS (1, 3, 5...):
+         // - EXTERIOR side: ALWAYS FULL on BOTH arms
+         // - INTERIOR side: only one arm is shortened (CORNER_CUT)
+         if (side === 'exterior') {
+           reservationMm = PANEL_WIDTH;
+           type = 'FULL';
+         } else {
+           if (endpointInfo.isPrimaryAtEnd) {
+             reservationMm = PANEL_WIDTH;
+             type = 'FULL';
+           } else {
+             reservationMm = PANEL_WIDTH - TOOTH;
+             type = 'CORNER_CUT';
+           }
+         }
+       } else {
+         // EVEN ROWS: both CORNER_CUT
+         reservationMm = PANEL_WIDTH - TOOTH;
+         type = 'CORNER_CUT';
+       }
       break;
       
     case 'T':
