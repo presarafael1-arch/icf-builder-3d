@@ -1,6 +1,11 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { 
+  loadSTEPFromURL, 
+  loadCachedGeometry, 
+  cacheGeometry 
+} from '@/lib/step-to-glb-client';
 
 // Panel dimensions (mm)
 const PANEL_WIDTH_MM = 1200;
@@ -11,12 +16,9 @@ const PANEL_THICKNESS_MM = 70.59;
 const SCALE = 0.001;
 
 // Rib configuration for procedural geometry
-const RIB_COUNT = 5; // Number of vertical ribs
+const RIB_COUNT = 5;
 const RIB_WIDTH_MM = 20;
-const RIB_DEPTH_MM = 15; // How deep the ribs protrude
-const SLOT_WIDTH_MM = 40; // Width of web slots
-const SLOT_HEIGHT_MM = 30;
-const SLOT_POSITIONS = [300, 600, 900]; // mm from left edge
+const RIB_DEPTH_MM = 15;
 
 export interface PanelGeometryResult {
   geometry: THREE.BufferGeometry;
@@ -24,6 +26,7 @@ export interface PanelGeometryResult {
   isHighFidelity: boolean;
   isLoading: boolean;
   error: string | null;
+  source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple';
 }
 
 /**
@@ -37,75 +40,62 @@ function createDetailedPanelGeometry(): THREE.BufferGeometry {
   
   const ribWidth = RIB_WIDTH_MM * SCALE;
   const ribDepth = RIB_DEPTH_MM * SCALE;
-  const slotWidth = SLOT_WIDTH_MM * SCALE;
-  const slotHeight = SLOT_HEIGHT_MM * SCALE;
   
-  // Create compound geometry using CSG-like approach with multiple boxes
   const group = new THREE.Group();
   
   // Main body (slightly thinner to accommodate ribs)
-  const bodyWidth = width;
-  const bodyHeight = height;
   const bodyThickness = thickness - ribDepth * 2;
-  
-  const bodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyThickness);
+  const bodyGeo = new THREE.BoxGeometry(width, height, bodyThickness);
   const bodyMesh = new THREE.Mesh(bodyGeo);
-  bodyMesh.position.set(0, 0, 0);
   group.add(bodyMesh);
   
-  // Vertical ribs on front face
+  // Vertical ribs
   const ribSpacing = width / (RIB_COUNT + 1);
   for (let i = 1; i <= RIB_COUNT; i++) {
     const ribGeo = new THREE.BoxGeometry(ribWidth, height, ribDepth);
-    const ribMesh = new THREE.Mesh(ribGeo);
     const xPos = -width / 2 + ribSpacing * i;
+    
+    // Front rib
+    const ribMesh = new THREE.Mesh(ribGeo);
     ribMesh.position.set(xPos, 0, thickness / 2 - ribDepth / 2);
     group.add(ribMesh);
     
-    // Mirror on back face
+    // Back rib
     const ribMeshBack = new THREE.Mesh(ribGeo);
     ribMeshBack.position.set(xPos, 0, -thickness / 2 + ribDepth / 2);
     group.add(ribMeshBack);
   }
   
-  // Horizontal ribs (top and bottom edges)
+  // Horizontal edge ribs
   const hRibGeo = new THREE.BoxGeometry(width, ribWidth * 0.5, ribDepth);
   
-  // Top front
-  const topRibFront = new THREE.Mesh(hRibGeo);
-  topRibFront.position.set(0, height / 2 - ribWidth * 0.25, thickness / 2 - ribDepth / 2);
-  group.add(topRibFront);
+  const positions = [
+    { y: height / 2 - ribWidth * 0.25, z: thickness / 2 - ribDepth / 2 },
+    { y: -height / 2 + ribWidth * 0.25, z: thickness / 2 - ribDepth / 2 },
+    { y: height / 2 - ribWidth * 0.25, z: -thickness / 2 + ribDepth / 2 },
+    { y: -height / 2 + ribWidth * 0.25, z: -thickness / 2 + ribDepth / 2 },
+  ];
   
-  // Bottom front
-  const bottomRibFront = new THREE.Mesh(hRibGeo);
-  bottomRibFront.position.set(0, -height / 2 + ribWidth * 0.25, thickness / 2 - ribDepth / 2);
-  group.add(bottomRibFront);
+  for (const pos of positions) {
+    const rib = new THREE.Mesh(hRibGeo);
+    rib.position.set(0, pos.y, pos.z);
+    group.add(rib);
+  }
   
-  // Top back
-  const topRibBack = new THREE.Mesh(hRibGeo);
-  topRibBack.position.set(0, height / 2 - ribWidth * 0.25, -thickness / 2 + ribDepth / 2);
-  group.add(topRibBack);
-  
-  // Bottom back
-  const bottomRibBack = new THREE.Mesh(hRibGeo);
-  bottomRibBack.position.set(0, -height / 2 + ribWidth * 0.25, -thickness / 2 + ribDepth / 2);
-  group.add(bottomRibBack);
-  
-  // Merge all geometries
+  // Merge geometries
   const geometries: THREE.BufferGeometry[] = [];
   group.traverse((child) => {
     if (child instanceof THREE.Mesh && child.geometry) {
       const cloned = child.geometry.clone();
+      child.updateWorldMatrix(true, false);
       cloned.applyMatrix4(child.matrixWorld);
       geometries.push(cloned);
     }
   });
   
-  // Use BufferGeometryUtils-like merging
   const merged = mergeBufferGeometries(geometries);
-  
-  // Center the geometry
   merged.computeBoundingBox();
+  
   if (merged.boundingBox) {
     merged.translate(
       -(merged.boundingBox.min.x + merged.boundingBox.max.x) / 2,
@@ -120,9 +110,6 @@ function createDetailedPanelGeometry(): THREE.BufferGeometry {
   return merged;
 }
 
-/**
- * Simple merge of buffer geometries (non-indexed)
- */
 function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
@@ -153,9 +140,6 @@ function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.Buffer
   return merged;
 }
 
-/**
- * Creates a simple box geometry (fallback/low-fidelity mode)
- */
 function createSimplePanelGeometry(): THREE.BufferGeometry {
   return new THREE.BoxGeometry(
     PANEL_WIDTH_MM * SCALE,
@@ -164,9 +148,6 @@ function createSimplePanelGeometry(): THREE.BufferGeometry {
   );
 }
 
-/**
- * Creates outline geometry for panel edges
- */
 function createOutlineGeometry(): THREE.BufferGeometry {
   const boxGeo = new THREE.BoxGeometry(
     PANEL_WIDTH_MM * SCALE,
@@ -176,38 +157,28 @@ function createOutlineGeometry(): THREE.BufferGeometry {
   return new THREE.EdgesGeometry(boxGeo);
 }
 
-/**
- * Attempts to load GLB geometry from a file
- */
 async function loadGLBGeometry(url: string): Promise<THREE.BufferGeometry | null> {
   return new Promise((resolve) => {
     const loader = new GLTFLoader();
     loader.load(
       url,
       (gltf) => {
-        // Find the first mesh in the scene
         let geometry: THREE.BufferGeometry | null = null;
         gltf.scene.traverse((child) => {
           if (child instanceof THREE.Mesh && child.geometry && !geometry) {
             geometry = child.geometry.clone();
             
-            // Normalize the geometry: center it and scale to our units
             geometry.computeBoundingBox();
             if (geometry.boundingBox) {
-              const bbox = geometry.boundingBox;
               const center = new THREE.Vector3();
-              bbox.getCenter(center);
-              
-              // Center the geometry
+              geometry.boundingBox.getCenter(center);
               geometry.translate(-center.x, -center.y, -center.z);
               
-              // Calculate scale to match our panel dimensions
               const size = new THREE.Vector3();
-              bbox.getSize(size);
+              geometry.boundingBox.getSize(size);
               
-              // Assume the GLB is in mm, scale to meters
               const targetWidth = PANEL_WIDTH_MM * SCALE;
-              const currentWidth = size.x;
+              const currentWidth = Math.max(size.x, size.y, size.z);
               
               if (currentWidth > 0) {
                 const scaleFactor = targetWidth / currentWidth;
@@ -222,84 +193,133 @@ async function loadGLBGeometry(url: string): Promise<THREE.BufferGeometry | null
         resolve(geometry);
       },
       undefined,
-      (error) => {
-        console.warn('[usePanelGeometry] GLB load failed:', error);
-        resolve(null);
-      }
+      () => resolve(null)
     );
   });
 }
 
 /**
- * Hook that provides panel geometry with optional high-fidelity GLB loading
+ * Hook that provides panel geometry with real STEP/GLB loading
  */
 export function usePanelGeometry(highFidelity: boolean = false): PanelGeometryResult {
-  const [glbGeometry, setGlbGeometry] = useState<THREE.BufferGeometry | null>(null);
+  const [realGeometry, setRealGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<PanelGeometryResult['source']>('simple');
   
-  // Try to load GLB when high fidelity is enabled
-  useEffect(() => {
-    if (!highFidelity) {
-      setGlbGeometry(null);
-      setError(null);
-      return;
-    }
-    
+  const loadRealGeometry = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
-    // Try to load the GLB file
-    loadGLBGeometry('/assets/panels/1200_b26.glb')
-      .then((geo) => {
-        if (geo) {
-          setGlbGeometry(geo);
-          console.log('[usePanelGeometry] GLB loaded successfully');
-        } else {
-          setError('GLB not available, using procedural geometry');
-          console.log('[usePanelGeometry] GLB not found, using procedural fallback');
-        }
-      })
-      .finally(() => {
+    try {
+      // 1. Try to load from cache first
+      const cached = loadCachedGeometry();
+      if (cached) {
+        setRealGeometry(cached);
+        setSource('cache');
         setIsLoading(false);
-      });
-  }, [highFidelity]);
+        console.log('[usePanelGeometry] Loaded from cache');
+        return;
+      }
+      
+      // 2. Try to load pre-converted GLB
+      const glbGeometry = await loadGLBGeometry('/assets/panels/1200_b26.glb');
+      if (glbGeometry) {
+        setRealGeometry(glbGeometry);
+        setSource('glb');
+        cacheGeometry(glbGeometry);
+        console.log('[usePanelGeometry] Loaded from GLB');
+        setIsLoading(false);
+        return;
+      }
+      
+      // 3. Try to convert STEP directly in browser
+      console.log('[usePanelGeometry] GLB not found, trying STEP conversion...');
+      try {
+        const stepGeometry = await loadSTEPFromURL('/assets/panels/1200_b26.step');
+        setRealGeometry(stepGeometry);
+        setSource('step');
+        cacheGeometry(stepGeometry);
+        console.log('[usePanelGeometry] Converted from STEP');
+        setIsLoading(false);
+        return;
+      } catch (stepError) {
+        console.warn('[usePanelGeometry] STEP conversion failed:', stepError);
+      }
+      
+      // 4. Fallback to procedural geometry
+      console.log('[usePanelGeometry] Using procedural geometry fallback');
+      const procedural = createDetailedPanelGeometry();
+      setRealGeometry(procedural);
+      setSource('procedural');
+      setError('Real geometry unavailable, using procedural');
+      
+    } catch (err) {
+      console.error('[usePanelGeometry] Error loading geometry:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setRealGeometry(createDetailedPanelGeometry());
+      setSource('procedural');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
   
-  // Generate geometry based on mode
+  useEffect(() => {
+    if (highFidelity) {
+      loadRealGeometry();
+    } else {
+      setRealGeometry(null);
+      setSource('simple');
+      setError(null);
+    }
+  }, [highFidelity, loadRealGeometry]);
+  
   const result = useMemo((): PanelGeometryResult => {
     const outlineGeometry = createOutlineGeometry();
     
     if (highFidelity) {
-      // If GLB is available, use it
-      if (glbGeometry) {
+      if (isLoading) {
         return {
-          geometry: glbGeometry,
+          geometry: createSimplePanelGeometry(),
           outlineGeometry,
-          isHighFidelity: true,
-          isLoading: false,
+          isHighFidelity: false,
+          isLoading: true,
           error: null,
+          source: 'simple',
         };
       }
       
-      // Otherwise use detailed procedural geometry
+      if (realGeometry) {
+        return {
+          geometry: realGeometry,
+          outlineGeometry,
+          isHighFidelity: true,
+          isLoading: false,
+          error,
+          source,
+        };
+      }
+      
+      // Fallback while loading
       return {
         geometry: createDetailedPanelGeometry(),
         outlineGeometry,
         isHighFidelity: true,
-        isLoading,
-        error,
+        isLoading: false,
+        error: error || 'Loading...',
+        source: 'procedural',
       };
     }
     
-    // Low fidelity: simple box
     return {
       geometry: createSimplePanelGeometry(),
       outlineGeometry,
       isHighFidelity: false,
       isLoading: false,
       error: null,
+      source: 'simple',
     };
-  }, [highFidelity, glbGeometry, isLoading, error]);
+  }, [highFidelity, realGeometry, isLoading, error, source]);
   
   return result;
 }
