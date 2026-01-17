@@ -192,6 +192,15 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                     onCheckedChange={() => toggleSetting('showGrid')}
                   />
                 </div>
+
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="show-outlines" className="text-sm">Contornos Painéis</Label>
+                  <Switch
+                    id="show-outlines"
+                    checked={settings.showOutlines}
+                    onCheckedChange={() => toggleSetting('showOutlines')}
+                  />
+                </div>
                 
                 <div className="flex items-center justify-between">
                   <Label htmlFor="wireframe" className="text-sm">Wireframe</Label>
@@ -199,6 +208,21 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                     id="wireframe"
                     checked={settings.wireframe}
                     onCheckedChange={() => toggleSetting('wireframe')}
+                  />
+                </div>
+              </div>
+              
+              {/* High Fidelity Toggle */}
+              <div className="pt-3 border-t border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <Label htmlFor="high-fidelity" className="text-sm font-medium">Alta Fidelidade (GLB)</Label>
+                    <p className="text-[10px] text-muted-foreground">Geometria detalhada com ribs/furos</p>
+                  </div>
+                  <Switch
+                    id="high-fidelity"
+                    checked={settings.highFidelityPanels}
+                    onCheckedChange={() => toggleSetting('highFidelityPanels')}
                   />
                 </div>
               </div>

@@ -9,6 +9,7 @@ import { buildWallChains, WallChain } from '@/lib/wall-chains';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
+import { usePanelGeometry } from '@/hooks/usePanelGeometry';
 
 // Panel counts by type for legend
 export interface PanelCounts {
@@ -202,6 +203,7 @@ function BatchedPanelInstances({
   settings, 
   openings = [],
   showOutlines = true,
+  highFidelity = false,
   onInstanceCountChange,
   onCountsChange 
 }: { 
@@ -209,6 +211,7 @@ function BatchedPanelInstances({
   settings: ViewerSettings; 
   openings: OpeningData[];
   showOutlines?: boolean;
+  highFidelity?: boolean;
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
 }) {
@@ -220,16 +223,13 @@ function BatchedPanelInstances({
   // Outline mesh ref
   const outlineMeshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Stable geometry for panels
-  const panelGeometry = useMemo(() => {
-    return new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
-  }, []);
+  // Get panel geometry from hook (simple box or detailed/GLB)
+  const { geometry: panelGeometry, outlineGeometry, isHighFidelity, isLoading } = usePanelGeometry(highFidelity);
 
-  // Outline geometry (slightly larger for visibility, using EdgesGeometry)
-  const outlineGeometry = useMemo(() => {
-    const boxGeo = new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
-    return new THREE.EdgesGeometry(boxGeo);
-  }, []);
+  // Log geometry mode
+  useEffect(() => {
+    console.log('[BatchedPanelInstances] Geometry mode:', { highFidelity, isHighFidelity, isLoading });
+  }, [highFidelity, isHighFidelity, isLoading]);
 
   // Generate classified panel placements grouped by type
   const { panelsByType, allPanels } = useMemo(() => {
@@ -987,12 +987,11 @@ interface SceneProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
-  showOutlines?: boolean;
   onPanelCountChange?: (count: number) => void;
   onPanelCountsChange?: (counts: PanelCounts) => void;
 }
 
-function Scene({ walls, settings, openings = [], candidates = [], showOutlines = true, onPanelCountChange, onPanelCountsChange }: SceneProps) {
+function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Build chains once for the scene
@@ -1075,7 +1074,8 @@ function Scene({ walls, settings, openings = [], candidates = [], showOutlines =
           chains={chains}
           settings={settings} 
           openings={openings}
-          showOutlines={showOutlines}
+          showOutlines={settings.showOutlines}
+          highFidelity={settings.highFidelityPanels}
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
         />
@@ -1104,11 +1104,10 @@ interface ICFViewer3DProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
-  showOutlines?: boolean;
   className?: string;
 }
 
-export function ICFViewer3D({ walls, settings, openings = [], candidates = [], showOutlines = true, className = '' }: ICFViewer3DProps) {
+export function ICFViewer3D({ walls, settings, openings = [], candidates = [], className = '' }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
     FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
@@ -1135,7 +1134,6 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], s
           settings={settings} 
           openings={openings}
           candidates={candidates}
-          showOutlines={showOutlines}
           onPanelCountChange={setPanelInstancesCount}
           onPanelCountsChange={setPanelCounts}
         />

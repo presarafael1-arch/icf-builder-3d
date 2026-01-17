@@ -73,7 +73,11 @@ export default function ProjectEstimate() {
     maxRows: 7,
     wireframe: false,
     rebarSpacing: 20,
-    concreteThickness: '150'
+    concreteThickness: '150',
+    
+    // Panel geometry mode
+    highFidelityPanels: false,
+    showOutlines: true
   });
   
   useEffect(() => {

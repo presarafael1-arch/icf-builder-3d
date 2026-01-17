@@ -205,7 +205,11 @@ export default function ProjectEditor() {
     maxRows: 7,
     wireframe: false,
     rebarSpacing: 20,
-    concreteThickness: '150'
+    concreteThickness: '150',
+    
+    // Panel geometry mode
+    highFidelityPanels: false, // Default OFF for performance
+    showOutlines: true // Show panel outlines by default
   });
   
   // Build chains from walls (with candidate detection enabled)
