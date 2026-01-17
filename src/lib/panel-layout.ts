@@ -145,7 +145,7 @@ interface EndpointInfo {
  */
 export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
   const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[]; isStarts: boolean[] }>();
-  const TOLERANCE = 20; // mm
+  const TOLERANCE = 300; // mm - must be larger than wall thickness to group parallel wall endpoints
   
   const getNodeKey = (x: number, y: number) => {
     const rx = Math.round(x / TOLERANCE) * TOLERANCE;
@@ -220,7 +220,7 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
  */
 export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
   const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[] }>();
-  const TOLERANCE = 20; // mm
+  const TOLERANCE = 300; // mm - must be larger than wall thickness to group parallel wall endpoints
   
   const getNodeKey = (x: number, y: number) => {
     const rx = Math.round(x / TOLERANCE) * TOLERANCE;
@@ -302,7 +302,7 @@ export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
  */
 export function detectXJunctions(chains: WallChain[]): XJunctionInfo[] {
   const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[] }>();
-  const TOLERANCE = 20; // mm
+  const TOLERANCE = 300; // mm - must be larger than wall thickness to group parallel wall endpoints
   
   const getNodeKey = (x: number, y: number) => {
     const rx = Math.round(x / TOLERANCE) * TOLERANCE;
@@ -361,7 +361,7 @@ export function detectXJunctions(chains: WallChain[]): XJunctionInfo[] {
  */
 function detectFreeEnds(chains: WallChain[]): EndpointInfo[] {
   const nodeMap = new Map<string, EndpointInfo[]>();
-  const TOLERANCE = 20; // mm
+  const TOLERANCE = 300; // mm - must be larger than wall thickness to group parallel wall endpoints
   
   const getNodeKey = (x: number, y: number) => {
     const rx = Math.round(x / TOLERANCE) * TOLERANCE;
