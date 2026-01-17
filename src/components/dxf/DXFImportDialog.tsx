@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, Layers, Check, FileText, AlertCircle, Info, Ruler, GitMerge, Trash2, Settings2 } from 'lucide-react';
+import { Upload, Layers, Check, FileText, AlertCircle, Info, Ruler, GitMerge, Trash2, Settings2, AlertTriangle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -24,11 +24,13 @@ import {
   NormalizedDXFResult
 } from '@/lib/dxf-parser';
 import { buildWallChains, buildWallChainsAutoTuned, ChainPreset, getPresetOptions } from '@/lib/wall-chains';
+import { detectWallThickness } from '@/lib/thickness-detection';
+import { ThicknessDetectionResult, CoreConcreteMm } from '@/types/panel-selection';
 
 interface DXFImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImport: (segments: DXFSegment[], selectedLayers: string[], stats: NormalizedDXFResult['stats']) => void;
+  onImport: (segments: DXFSegment[], selectedLayers: string[], stats: NormalizedDXFResult['stats'], detectedThickness?: ThicknessDetectionResult) => void;
 }
 
 type ImportStep = 'upload' | 'layers' | 'preview';
@@ -44,6 +46,10 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
   const [selectedPreset, setSelectedPreset] = useState<ChainPreset>('auto');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  
+  // Thickness detection state
+  const [thicknessResult, setThicknessResult] = useState<ThicknessDetectionResult | null>(null);
+  const [manualThickness, setManualThickness] = useState<CoreConcreteMm | null>(null);
 
   const reset = () => {
     setStep('upload');
@@ -55,6 +61,8 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
     setSelectedPreset('auto');
     setError(null);
     setLoading(false);
+    setThicknessResult(null);
+    setManualThickness(null);
   };
 
   const handleClose = () => {
@@ -122,6 +130,28 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
       // Run the full normalization pipeline
       const result = processDXF(parseResult, selectedLayers, selectedUnit);
       setProcessedResult(result);
+      
+      // Detect wall thickness from parallel lines
+      const wallSegments = result.finalSegments.map((seg, i) => ({
+        id: `seg-${i}`,
+        projectId: 'temp',
+        startX: seg.startX,
+        startY: seg.startY,
+        endX: seg.endX,
+        endY: seg.endY,
+        layerName: seg.layerName,
+        length: Math.sqrt(Math.pow(seg.endX - seg.startX, 2) + Math.pow(seg.endY - seg.startY, 2)),
+        angle: Math.atan2(seg.endY - seg.startY, seg.endX - seg.startX) * 180 / Math.PI
+      }));
+      
+      const thicknessDetection = detectWallThickness(wallSegments);
+      setThicknessResult(thicknessDetection);
+      
+      // If not detected, reset manual selection
+      if (!thicknessDetection.detected) {
+        setManualThickness(null);
+      }
+      
       setStep('preview');
     } catch (err) {
       console.error('Error processing DXF:', err);
@@ -134,10 +164,24 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
   const handleConfirm = () => {
     if (!processedResult) return;
     
+    // Build final thickness result (either detected or manual)
+    let finalThickness = thicknessResult;
+    if (manualThickness !== null && thicknessResult && !thicknessResult.detected) {
+      finalThickness = {
+        detected: true,
+        coreConcreteMm: manualThickness,
+        wallOuterThicknessMm: manualThickness === 150 ? 280 : 330,
+        confidence: 'high',
+        detectionMethod: 'manual_selection',
+        message: `Selecionado manualmente: ${manualThickness}mm`
+      };
+    }
+    
     onImport(
       processedResult.finalSegments, 
       selectedLayers, 
-      processedResult.stats
+      processedResult.stats,
+      finalThickness || undefined
     );
     handleClose();
   };
@@ -476,6 +520,102 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
               );
             })()}
 
+            {/* Thickness Detection */}
+            {thicknessResult && (
+              <div className={`p-3 rounded-md space-y-2 ${
+                thicknessResult.detected 
+                  ? thicknessResult.confidence === 'high' 
+                    ? 'bg-green-500/10 border border-green-500/30' 
+                    : thicknessResult.confidence === 'medium'
+                      ? 'bg-yellow-500/10 border border-yellow-500/30'
+                      : 'bg-orange-500/10 border border-orange-500/30'
+                  : 'bg-destructive/10 border border-destructive/30'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium flex items-center gap-2">
+                    <Ruler className="h-4 w-4" />
+                    Espessura do Betão
+                  </div>
+                  {thicknessResult.detected && (
+                    <Badge variant={thicknessResult.confidence === 'high' ? 'default' : 'secondary'}>
+                      Confiança: {thicknessResult.confidence === 'high' ? 'Alta' : thicknessResult.confidence === 'medium' ? 'Média' : 'Baixa'}
+                    </Badge>
+                  )}
+                </div>
+                
+                {thicknessResult.detected ? (
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="p-2 bg-background rounded">
+                      <div className="text-xs text-muted-foreground">Betão (núcleo)</div>
+                      <div className="font-mono font-bold text-lg">{thicknessResult.coreConcreteMm}mm</div>
+                    </div>
+                    <div className="p-2 bg-background rounded">
+                      <div className="text-xs text-muted-foreground">Parede (exterior)</div>
+                      <div className="font-mono font-bold text-lg">{thicknessResult.wallOuterThicknessMm}mm</div>
+                    </div>
+                    <div className="col-span-2 text-xs text-muted-foreground">
+                      {thicknessResult.message}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <Alert variant="destructive" className="py-2">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription className="text-sm">
+                        {thicknessResult.message || 'Não foi possível detetar a espessura automaticamente.'}
+                        <br />
+                        <strong>Por favor, selecione manualmente:</strong>
+                      </AlertDescription>
+                    </Alert>
+                    
+                    <RadioGroup
+                      value={manualThickness?.toString() || ''}
+                      onValueChange={(v) => setManualThickness(parseInt(v) as CoreConcreteMm)}
+                      className="grid grid-cols-2 gap-2"
+                    >
+                      <label 
+                        className={`flex items-center justify-between p-3 rounded-md cursor-pointer transition-colors ${
+                          manualThickness === 150 
+                            ? 'bg-primary text-primary-foreground' 
+                            : 'bg-background hover:bg-muted'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="150" id="thickness-150" className="sr-only" />
+                          <div>
+                            <div className="font-bold">150mm</div>
+                            <div className={`text-xs ${manualThickness === 150 ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                              Parede 280mm
+                            </div>
+                          </div>
+                        </div>
+                        {manualThickness === 150 && <Check className="h-4 w-4" />}
+                      </label>
+                      
+                      <label 
+                        className={`flex items-center justify-between p-3 rounded-md cursor-pointer transition-colors ${
+                          manualThickness === 200 
+                            ? 'bg-primary text-primary-foreground' 
+                            : 'bg-background hover:bg-muted'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="200" id="thickness-200" className="sr-only" />
+                          <div>
+                            <div className="font-bold">200mm</div>
+                            <div className={`text-xs ${manualThickness === 200 ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                              Parede 330mm
+                            </div>
+                          </div>
+                        </div>
+                        {manualThickness === 200 && <Check className="h-4 w-4" />}
+                      </label>
+                    </RadioGroup>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Topology detection */}
             <div className="p-3 bg-muted/30 rounded-md space-y-2">
               <div className="text-sm font-medium">Topologia Detetada</div>
@@ -537,7 +677,10 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
               <Button variant="outline" onClick={() => setStep('layers')}>
                 Voltar
               </Button>
-              <Button onClick={handleConfirm}>
+              <Button 
+                onClick={handleConfirm}
+                disabled={thicknessResult && !thicknessResult.detected && manualThickness === null}
+              >
                 <Check className="mr-2 h-4 w-4" />
                 Importar
               </Button>

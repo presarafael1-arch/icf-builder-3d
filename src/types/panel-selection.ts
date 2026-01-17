@@ -144,7 +144,7 @@ export interface ThicknessDetectionResult {
   wallOuterThicknessMm: WallOuterThicknessMm | null;
   coreConcreteMm: CoreConcreteMm | null;
   confidence: 'high' | 'medium' | 'low' | 'none';
-  detectionMethod: 'parallel_lines' | 'user_input' | 'project_setting' | 'default';
+  detectionMethod: 'parallel_lines' | 'user_input' | 'project_setting' | 'default' | 'manual_selection';
   message: string;
 }
 
