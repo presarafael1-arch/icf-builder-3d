@@ -44,16 +44,19 @@ function createSimplePanelGeometry(): THREE.BufferGeometry {
 }
 
 /**
- * Create edges geometry for outlines - slightly larger for visibility
+ * Create outline geometry for wireframe rendering
+ * Slightly larger than panel for visibility, uses BoxGeometry for wireframe mode
  */
 function createOutlineGeometry(): THREE.BufferGeometry {
-  const OUTLINE_OFFSET = 0.002; // 2mm offset for visibility
-  const boxGeo = new THREE.BoxGeometry(
+  const OUTLINE_OFFSET = 0.003; // 3mm offset for visibility
+  const geo = new THREE.BoxGeometry(
     TARGET_WIDTH_M + OUTLINE_OFFSET,
     TARGET_HEIGHT_M + OUTLINE_OFFSET,
     TARGET_THICKNESS_M + OUTLINE_OFFSET
   );
-  return new THREE.EdgesGeometry(boxGeo);
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
 }
 
 function getBBoxSizeM(geometry: THREE.BufferGeometry): { x: number; y: number; z: number } {

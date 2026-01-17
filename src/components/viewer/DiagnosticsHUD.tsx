@@ -16,6 +16,8 @@ interface DiagnosticsHUDProps {
   panelMeshVisible?: boolean;
   panelMeshBBoxSizeM?: { x: number; y: number; z: number };
   instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
+  lJunctionStats?: { lJunctions: number; templatesApplied: number };
+  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number };
 }
 
 export function DiagnosticsHUD({
@@ -30,6 +32,8 @@ export function DiagnosticsHUD({
   panelMeshVisible,
   panelMeshBBoxSizeM,
   instancePosRangeM,
+  lJunctionStats,
+  panelCountsByType,
 }: DiagnosticsHUDProps) {
   const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
   const { chains, stats, candidates: detectedCandidates } = chainsResult;
@@ -133,6 +137,38 @@ export function DiagnosticsHUD({
           <span className="text-muted-foreground">topos (aberturas):</span>
           <span className="text-green-600">{totalOpeningTopos}</span>
         </div>
+      )}
+      
+      {/* L-JUNCTION and PANEL TYPES section */}
+      {lJunctionStats && (
+        <>
+          <div className="border-t border-border my-1 pt-1" />
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">L-junções:</span>
+            <span className="text-cyan-400">{lJunctionStats.lJunctions}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">corner templates:</span>
+            <span className="text-red-400">{lJunctionStats.templatesApplied}</span>
+          </div>
+        </>
+      )}
+      
+      {panelCountsByType && (
+        <>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">FULL (amarelo):</span>
+            <span className="text-yellow-400">{panelCountsByType.FULL}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">CORNER_CUT (verm):</span>
+            <span className="text-red-400">{panelCountsByType.CORNER_CUT}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">CUT_DOUBLE (laranja):</span>
+            <span className="text-orange-400">{panelCountsByType.CUT_DOUBLE}</span>
+          </div>
+        </>
       )}
       
       <div className="border-t border-border my-1 pt-1" />
