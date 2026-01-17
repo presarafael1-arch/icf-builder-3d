@@ -45,7 +45,7 @@
 
 import { WallChain, ChainNode } from './wall-chains';
 import * as THREE from 'three';
-import { PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
+import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS } from '@/types/icf';
 
 // Scale factor: mm to meters
 const SCALE = 0.001;
@@ -781,7 +781,8 @@ export function layoutPanelsForChainWithJunctions(
   row: number,
   lJunctions: LJunctionInfo[],
   tJunctions: TJunctionInfo[],
-  freeEnds: EndpointInfo[]
+  freeEnds: EndpointInfo[],
+  side: WallSide = 'exterior'
 ): { panels: ClassifiedPanel[]; topos: TopoPlacement[] } {
   const panels: ClassifiedPanel[] = [];
   const topos: TopoPlacement[] = [];
@@ -797,6 +798,9 @@ export function layoutPanelsForChainWithJunctions(
   
   // Slot counter for stable IDs
   let slotCounter = 0;
+  
+  // Side short code for IDs
+  const sideCode = side === 'exterior' ? 'ext' : 'int';
   
   // Helper to determine seed origin
   const getSeedOrigin = (isStart: boolean, isEnd: boolean): ClassifiedPanel['seedOrigin'] => {
@@ -833,6 +837,7 @@ export function layoutPanelsForChainWithJunctions(
   // Helper to create panel with stable ID
   // NOTE: startPos is the position along the chain where the panel STARTS (edge closest to chain start)
   // The panel's center is at startPos + width/2
+  // For interior panels, we offset perpendicular to the wall direction
   const createPanel = (
     startPos: number, 
     width: number, 
@@ -843,9 +848,35 @@ export function layoutPanelsForChainWithJunctions(
   ): ClassifiedPanel => {
     const endPos = startPos + width;
     const centerPos = startPos + width / 2;
-    const posX = chain.startX + dirX * centerPos;
-    const posZ = chain.startY + dirY * centerPos;
+    
+    // Base position along the wall centerline
+    let posX = chain.startX + dirX * centerPos;
+    let posZ = chain.startY + dirY * centerPos;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+    
+    // For interior panels, offset perpendicular to the wall
+    // The perpendicular direction is (-dirY, dirX) for left side, (dirY, -dirX) for right side
+    // Interior panels are offset in the "inward" direction
+    // We use concrete thickness + panel thickness to offset
+    const concreteThicknessMm = 150; // TODO: get from settings
+    const wallTotalThicknessMm = PANEL_THICKNESS * 2 + concreteThicknessMm; // Two panels + concrete core
+    const halfWallThickness = wallTotalThicknessMm / 2;
+    
+    // Perpendicular unit vector (90° CW from wall direction)
+    const perpX = -dirY;
+    const perpZ = dirX;
+    
+    if (side === 'interior') {
+      // Offset interior panels perpendicular to wall (on the "inside" of the building)
+      // We offset by panel thickness (70.59mm) to place interior panel on opposite face
+      const offsetMm = wallTotalThicknessMm - PANEL_THICKNESS; // Offset from center to interior face
+      posX += perpX * offsetMm;
+      posZ += perpZ * offsetMm;
+    } else {
+      // Exterior panels offset to the exterior face
+      const offsetMm = -PANEL_THICKNESS; // Slight offset for exterior positioning
+      // For now, keep exterior at the centerline position (no offset for visual simplicity)
+    }
 
     const matrix = new THREE.Matrix4();
     matrix.compose(
@@ -854,10 +885,10 @@ export function layoutPanelsForChainWithJunctions(
       new THREE.Vector3(width / PANEL_WIDTH, 1, 1)
     );
     
-    // Stable ID components
+    // Stable ID components - use sideCode for ext/int distinction
     const slotIndex = slotCounter++;
     const seedKey = `${endpointInfo.startType}-${endpointInfo.endType}`.slice(0, 8);
-    const panelId = `${chain.id.slice(0, 8)}:${row}:ext:${slotIndex}:${seedKey}`;
+    const panelId = `${chain.id.slice(0, 8)}:${row}:${sideCode}:${slotIndex}:${seedKey}`;
     
     // Node context
     const nearestNode = getNearestNode(centerPos);
@@ -882,6 +913,7 @@ export function layoutPanelsForChainWithJunctions(
       chainId: chain.id, 
       isCornerPiece: isCorner, 
       isEndPiece: isEnd,
+      side, // Include which side this panel is on
       // Stable ID data
       panelId,
       slotIndex,
@@ -918,16 +950,16 @@ export function layoutPanelsForChainWithJunctions(
   const isAtChainStart = intervalStart === 0;
   const isAtChainEnd = intervalEnd === chain.lengthMm;
   
-  // Left (start) cap
+  // Left (start) cap - pass side for correct L-corner rules
   let leftCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '' };
   if (isAtChainStart) {
-    leftCap = getStartCap(chain, endpointInfo, row);
+    leftCap = getStartCap(chain, endpointInfo, row, side);
   }
   
-  // Right (end) cap
+  // Right (end) cap - pass side for correct L-corner rules
   let rightCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '' };
   if (isAtChainEnd) {
-    rightCap = getEndCap(chain, endpointInfo, row);
+    rightCap = getEndCap(chain, endpointInfo, row, side);
   }
   
   // ============= HANDLE VERY SHORT INTERVALS =============
@@ -1086,25 +1118,34 @@ export function generatePanelLayout(
       for (let row = 0; row < Math.min(visibleRows, maxRows); row++) {
         const intervals = getIntervalsForRow(chain, row);
         
-        intervals.forEach((interval) => {
-          intervalsProcessed++;
-          const { panels, topos } = layoutPanelsForChainWithJunctions(
-            chain,
-            interval.start,
-            interval.end,
-            row,
-            lJunctions,
-            tJunctions,
-            freeEnds
-          );
-          
-          panels.forEach(panel => {
-            panelsByType[panel.type].push(panel);
-            allPanels.push(panel);
-            if (panel.isCornerPiece) cornerTemplatesApplied++;
+        // Process BOTH sides: exterior and interior
+        const sides: WallSide[] = ['exterior', 'interior'];
+        
+        sides.forEach((side) => {
+          intervals.forEach((interval) => {
+            intervalsProcessed++;
+            const { panels, topos } = layoutPanelsForChainWithJunctions(
+              chain,
+              interval.start,
+              interval.end,
+              row,
+              lJunctions,
+              tJunctions,
+              freeEnds,
+              side
+            );
+            
+            panels.forEach(panel => {
+              panelsByType[panel.type].push(panel);
+              allPanels.push(panel);
+              if (panel.isCornerPiece) cornerTemplatesApplied++;
+            });
+            
+            // Only add topos once (from exterior side) to avoid duplicates
+            if (side === 'exterior') {
+              allTopos.push(...topos);
+            }
           });
-          
-          allTopos.push(...topos);
         });
       }
     });
