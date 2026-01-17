@@ -16,8 +16,8 @@ interface DiagnosticsHUDProps {
   panelMeshVisible?: boolean;
   panelMeshBBoxSizeM?: { x: number; y: number; z: number };
   instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
-  layoutStats?: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number };
-  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number; TOPO?: number };
+  layoutStats?: { lJunctions: number; tJunctions: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number };
+  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number; TOPO?: number; END_CUT?: number };
 }
 
 export function DiagnosticsHUD({
@@ -151,14 +151,26 @@ export function DiagnosticsHUD({
             <span className="text-muted-foreground">T-junções:</span>
             <span className="text-purple-400">{layoutStats.tJunctions}</span>
           </div>
+          {layoutStats.freeEnds !== undefined && layoutStats.freeEnds > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">pontas livres:</span>
+              <span className="text-orange-400">{layoutStats.freeEnds}</span>
+            </div>
+          )}
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">corner templates:</span>
             <span className="text-red-400">{layoutStats.templatesApplied}</span>
           </div>
           <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">topos (T-junc):</span>
+            <span className="text-muted-foreground">topos (T+ends):</span>
             <span className="text-green-600">{layoutStats.toposPlaced}</span>
           </div>
+          {layoutStats.effectiveOffset !== undefined && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">offset (ímpar):</span>
+              <span>{layoutStats.effectiveOffset}mm</span>
+            </div>
+          )}
         </>
       )}
       

@@ -1,10 +1,29 @@
 /**
  * Panel Layout Engine for ICF Walls
  * 
- * Implements:
- * - L-corner templates with PAR/ÍMPAR alternation
- * - T-junction handling with MAIN/BRANCH detection and TOPO placement
- * - "Start from ends, cuts in the middle" fill strategy
+ * RULES:
+ * - TOOTH = 1200/17 ≈ 70.588mm (minimum step for cuts/offsets)
+ * - Standard panel = 1200mm x 400mm
+ * - Stagger offset = 600mm on odd rows (or nearest TOOTH multiple if needed)
+ * 
+ * L-CORNER RULES:
+ *   - Row 1 (even, index 0): Exterior starts with FULL, Interior starts with CORNER_CUT (TOOTH cut)
+ *   - Row 2 (odd, index 1): Both start with CORNER_CUT (TOOTH cut)
+ *   
+ * T-JUNCTION RULES:
+ *   - "Costas" (main wall) continues through
+ *   - "Perna" (branch) starts at junction
+ *   - Row 1: No TOPO on main, branch starts normally
+ *   - Row 2: TOPO on main at junction point
+ *   
+ * FREE ENDS (ponta livre):
+ *   - Must have TOPO to close for concrete fill
+ *   - Cut at end if not multiple of 1200
+ *   
+ * FILL STRATEGY:
+ *   - Start from BOTH ends
+ *   - Fill with full panels toward middle
+ *   - Any adjustment cut (ORANGE) goes in the MIDDLE only
  */
 
 import { WallChain, ChainNode } from './wall-chains';
@@ -14,14 +33,17 @@ import { PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
 // Scale factor: mm to meters
 const SCALE = 0.001;
 
-// Stagger offset for odd rows
-const STAGGER_OFFSET = 600; // mm
+// TOOTH = 1200/17 - minimum cut/offset step
+export const TOOTH = PANEL_WIDTH / 17; // ≈70.588mm
 
-// Minimum cut length
-const MIN_CUT_MM = 100;
+// Stagger offset for odd rows (600mm = 8.5 TOOTH, rounded to 8*TOOTH for cleaner math)
+const STAGGER_OFFSET = 600; // mm - use 600 directly for now
+
+// Minimum cut length to place a panel
+const MIN_CUT_MM = TOOTH;
 
 // Panel types
-export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO';
+export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT';
 
 // Classified panel placement
 export interface ClassifiedPanel {
@@ -32,14 +54,16 @@ export interface ClassifiedPanel {
   chainId: string;
   isCornerPiece: boolean;
   isTopoPiece?: boolean;
+  isEndPiece?: boolean;
 }
 
-// Topo placement for T-junctions
+// Topo placement for T-junctions and free ends
 export interface TopoPlacement {
   matrix: THREE.Matrix4;
   rowIndex: number;
   chainId: string;
   junctionId: string;
+  reason: 'T_junction' | 'free_end';
 }
 
 // L-junction info
@@ -64,13 +88,22 @@ export interface TJunctionInfo {
   branchAngle: number;
 }
 
+// Endpoint info for free-end detection
+interface EndpointInfo {
+  x: number;
+  y: number;
+  chainId: string;
+  isStart: boolean; // true = chain start, false = chain end
+  degree: number;   // how many chains connect here
+}
+
 /**
  * Detect L-junctions (exactly 2 chains meeting at ~90°)
  * Uses deterministic ordering: lower chainId = primary
  */
 export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
-  const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[] }>();
-  const TOLERANCE = 15; // mm
+  const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[]; isStarts: boolean[] }>();
+  const TOLERANCE = 20; // mm
   
   const getNodeKey = (x: number, y: number) => {
     const rx = Math.round(x / TOLERANCE) * TOLERANCE;
@@ -79,26 +112,30 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
   };
   
   chains.forEach(chain => {
+    const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+    
     // Start node
     const startKey = getNodeKey(chain.startX, chain.startY);
     if (!nodeMap.has(startKey)) {
-      nodeMap.set(startKey, { x: chain.startX, y: chain.startY, chainIds: [], angles: [] });
+      nodeMap.set(startKey, { x: chain.startX, y: chain.startY, chainIds: [], angles: [], isStarts: [] });
     }
     const startNode = nodeMap.get(startKey)!;
     if (!startNode.chainIds.includes(chain.id)) {
       startNode.chainIds.push(chain.id);
-      startNode.angles.push(chain.angle);
+      startNode.angles.push(angle); // outgoing angle
+      startNode.isStarts.push(true);
     }
     
     // End node
     const endKey = getNodeKey(chain.endX, chain.endY);
     if (!nodeMap.has(endKey)) {
-      nodeMap.set(endKey, { x: chain.endX, y: chain.endY, chainIds: [], angles: [] });
+      nodeMap.set(endKey, { x: chain.endX, y: chain.endY, chainIds: [], angles: [], isStarts: [] });
     }
     const endNode = nodeMap.get(endKey)!;
     if (!endNode.chainIds.includes(chain.id)) {
       endNode.chainIds.push(chain.id);
-      endNode.angles.push(chain.angle + Math.PI);
+      endNode.angles.push(angle + Math.PI); // incoming angle (reversed)
+      endNode.isStarts.push(false);
     }
   });
   
@@ -108,9 +145,10 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
     if (node.chainIds.length !== 2) return;
     
     // Check if angles are roughly perpendicular
-    const angleDiff = Math.abs(node.angles[0] - node.angles[1]);
-    const normalizedDiff = angleDiff % Math.PI;
-    const isLShape = Math.abs(normalizedDiff - Math.PI / 2) < 0.35;
+    let angleDiff = Math.abs(node.angles[0] - node.angles[1]);
+    // Normalize to [0, π]
+    while (angleDiff > Math.PI) angleDiff -= Math.PI;
+    const isLShape = Math.abs(angleDiff - Math.PI / 2) < 0.35; // ~20° tolerance
     
     if (!isLShape) return;
     
@@ -140,7 +178,7 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
  */
 export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
   const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[] }>();
-  const TOLERANCE = 15; // mm
+  const TOLERANCE = 20; // mm
   
   const getNodeKey = (x: number, y: number) => {
     const rx = Math.round(x / TOLERANCE) * TOLERANCE;
@@ -182,7 +220,6 @@ export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
     if (node.chainIds.length !== 3) return;
     
     // Find the two colinear chains (MAIN) and the perpendicular one (BRANCH)
-    // Two chains are colinear if their angle difference is close to 0 or π
     const { chainIds, angles } = node;
     
     let mainPair: [number, number] | null = null;
@@ -190,10 +227,10 @@ export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
     
     for (let i = 0; i < 3; i++) {
       for (let j = i + 1; j < 3; j++) {
-        const diff = Math.abs(angles[i] - angles[j]);
-        const normDiff = diff % Math.PI;
+        let diff = Math.abs(angles[i] - angles[j]);
+        while (diff > Math.PI) diff -= Math.PI;
         // Close to 0 or π means colinear (opposite directions)
-        if (normDiff < 0.25 || Math.abs(normDiff - Math.PI) < 0.25) {
+        if (diff < 0.35 || Math.abs(diff - Math.PI) < 0.35) {
           mainPair = [i, j];
           branchIdx = 3 - i - j; // The remaining index
           break;
@@ -219,83 +256,155 @@ export function detectTJunctions(chains: WallChain[]): TJunctionInfo[] {
 }
 
 /**
- * Get corner info for a chain (L-junction at start/end)
+ * Detect free ends (endpoints with degree 1 - only one chain connects)
  */
-function getCornerInfoForChain(
+function detectFreeEnds(chains: WallChain[]): EndpointInfo[] {
+  const nodeMap = new Map<string, EndpointInfo[]>();
+  const TOLERANCE = 20; // mm
+  
+  const getNodeKey = (x: number, y: number) => {
+    const rx = Math.round(x / TOLERANCE) * TOLERANCE;
+    const ry = Math.round(y / TOLERANCE) * TOLERANCE;
+    return `${rx},${ry}`;
+  };
+  
+  chains.forEach(chain => {
+    // Start
+    const startKey = getNodeKey(chain.startX, chain.startY);
+    if (!nodeMap.has(startKey)) nodeMap.set(startKey, []);
+    nodeMap.get(startKey)!.push({ x: chain.startX, y: chain.startY, chainId: chain.id, isStart: true, degree: 0 });
+    
+    // End
+    const endKey = getNodeKey(chain.endX, chain.endY);
+    if (!nodeMap.has(endKey)) nodeMap.set(endKey, []);
+    nodeMap.get(endKey)!.push({ x: chain.endX, y: chain.endY, chainId: chain.id, isStart: false, degree: 0 });
+  });
+  
+  const freeEnds: EndpointInfo[] = [];
+  
+  nodeMap.forEach((endpoints) => {
+    // Count unique chains at this node
+    const uniqueChainIds = new Set(endpoints.map(e => e.chainId));
+    const degree = uniqueChainIds.size;
+    
+    // Free end = only 1 chain connects here
+    if (degree === 1) {
+      endpoints.forEach(ep => {
+        freeEnds.push({ ...ep, degree: 1 });
+      });
+    }
+  });
+  
+  return freeEnds;
+}
+
+/**
+ * Get corner/junction info for a chain
+ */
+function getChainEndpointInfo(
   chain: WallChain,
   lJunctions: LJunctionInfo[],
-  tolerance: number = 20
+  tJunctions: TJunctionInfo[],
+  freeEnds: EndpointInfo[],
+  tolerance: number = 25
 ): { 
-  startsAtL: LJunctionInfo | null; 
-  endsAtL: LJunctionInfo | null;
+  startType: 'L' | 'T' | 'free' | 'none';
+  endType: 'L' | 'T' | 'free' | 'none';
+  startL: LJunctionInfo | null;
+  endL: LJunctionInfo | null;
+  startT: TJunctionInfo | null;
+  endT: TJunctionInfo | null;
   isPrimaryAtStart: boolean;
   isPrimaryAtEnd: boolean;
+  isBranchAtStart: boolean;
+  isBranchAtEnd: boolean;
+  hasFreeStart: boolean;
+  hasFreeEnd: boolean;
 } {
-  let startsAtL: LJunctionInfo | null = null;
-  let endsAtL: LJunctionInfo | null = null;
+  let startType: 'L' | 'T' | 'free' | 'none' = 'none';
+  let endType: 'L' | 'T' | 'free' | 'none' = 'none';
+  let startL: LJunctionInfo | null = null;
+  let endL: LJunctionInfo | null = null;
+  let startT: TJunctionInfo | null = null;
+  let endT: TJunctionInfo | null = null;
   let isPrimaryAtStart = false;
   let isPrimaryAtEnd = false;
+  let isBranchAtStart = false;
+  let isBranchAtEnd = false;
+  let hasFreeStart = false;
+  let hasFreeEnd = false;
   
+  // Check L-junctions
   for (const lj of lJunctions) {
     const distToStart = Math.sqrt((chain.startX - lj.x) ** 2 + (chain.startY - lj.y) ** 2);
     const distToEnd = Math.sqrt((chain.endX - lj.x) ** 2 + (chain.endY - lj.y) ** 2);
     
     if (distToStart < tolerance) {
-      startsAtL = lj;
+      startType = 'L';
+      startL = lj;
       isPrimaryAtStart = lj.primaryChainId === chain.id;
     }
     if (distToEnd < tolerance) {
-      endsAtL = lj;
+      endType = 'L';
+      endL = lj;
       isPrimaryAtEnd = lj.primaryChainId === chain.id;
     }
   }
   
-  return { startsAtL, endsAtL, isPrimaryAtStart, isPrimaryAtEnd };
-}
-
-/**
- * Get T-junction info for a chain
- */
-function getTJunctionInfoForChain(
-  chain: WallChain,
-  tJunctions: TJunctionInfo[],
-  tolerance: number = 20
-): {
-  startsAtT: TJunctionInfo | null;
-  endsAtT: TJunctionInfo | null;
-  isBranchAtStart: boolean;
-  isBranchAtEnd: boolean;
-} {
-  let startsAtT: TJunctionInfo | null = null;
-  let endsAtT: TJunctionInfo | null = null;
-  let isBranchAtStart = false;
-  let isBranchAtEnd = false;
-  
+  // Check T-junctions
   for (const tj of tJunctions) {
     const distToStart = Math.sqrt((chain.startX - tj.x) ** 2 + (chain.startY - tj.y) ** 2);
     const distToEnd = Math.sqrt((chain.endX - tj.x) ** 2 + (chain.endY - tj.y) ** 2);
     
     if (distToStart < tolerance) {
-      startsAtT = tj;
+      startType = 'T';
+      startT = tj;
       isBranchAtStart = tj.branchChainId === chain.id;
     }
     if (distToEnd < tolerance) {
-      endsAtT = tj;
+      endType = 'T';
+      endT = tj;
       isBranchAtEnd = tj.branchChainId === chain.id;
     }
   }
   
-  return { startsAtT, endsAtT, isBranchAtStart, isBranchAtEnd };
+  // Check free ends
+  for (const fe of freeEnds) {
+    if (fe.chainId !== chain.id) continue;
+    
+    if (fe.isStart) {
+      if (startType === 'none') startType = 'free';
+      hasFreeStart = true;
+    } else {
+      if (endType === 'none') endType = 'free';
+      hasFreeEnd = true;
+    }
+  }
+  
+  return {
+    startType, endType,
+    startL, endL, startT, endT,
+    isPrimaryAtStart, isPrimaryAtEnd,
+    isBranchAtStart, isBranchAtEnd,
+    hasFreeStart, hasFreeEnd
+  };
 }
 
 /**
- * Layout panels for a chain interval with L-corner and T-junction awareness
+ * Round a length to nearest TOOTH multiple
+ */
+function roundToTooth(mm: number): number {
+  return Math.round(mm / TOOTH) * TOOTH;
+}
+
+/**
+ * Layout panels for a chain interval with proper L/T/free-end rules
  * 
- * RULES:
- * - L-corners: Even rows → primary=FULL, secondary=600mm CORNER_CUT; Odd rows → swap
- * - T-junctions: Branch starts with 600mm CORNER_CUT (even) or FULL (odd)
- * - Fill from BOTH ends with full panels
- * - Remaining cut goes in the MIDDLE
+ * FILL STRATEGY:
+ * 1. Determine reservation at START (left) based on junction type
+ * 2. Determine reservation at END (right) based on junction type
+ * 3. Fill from BOTH ends with full panels toward middle
+ * 4. Put any adjustment cut (CUT_DOUBLE/ORANGE) in the MIDDLE
  */
 export function layoutPanelsForChainWithJunctions(
   chain: WallChain,
@@ -303,7 +412,8 @@ export function layoutPanelsForChainWithJunctions(
   intervalEnd: number,
   row: number,
   lJunctions: LJunctionInfo[],
-  tJunctions: TJunctionInfo[]
+  tJunctions: TJunctionInfo[],
+  freeEnds: EndpointInfo[]
 ): { panels: ClassifiedPanel[]; topos: TopoPlacement[] } {
   const panels: ClassifiedPanel[] = [];
   const topos: TopoPlacement[] = [];
@@ -311,15 +421,15 @@ export function layoutPanelsForChainWithJunctions(
   
   if (intervalLength < MIN_CUT_MM) return { panels, topos };
   
-  const isOddRow = row % 2 === 1;
+  const isOddRow = row % 2 === 1; // Row 1 = index 0 = even, Row 2 = index 1 = odd
   const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
   const dirX = (chain.endX - chain.startX) / chain.lengthMm;
   const dirY = (chain.endY - chain.startY) / chain.lengthMm;
   
-  const lCornerInfo = getCornerInfoForChain(chain, lJunctions);
-  const tJunctionInfo = getTJunctionInfoForChain(chain, tJunctions);
+  const endpointInfo = getChainEndpointInfo(chain, lJunctions, tJunctions, freeEnds);
   
-  const createPanel = (centerPos: number, width: number, type: PanelType, isCorner: boolean = false): ClassifiedPanel => {
+  // Helper to create panel
+  const createPanel = (centerPos: number, width: number, type: PanelType, isCorner: boolean = false, isEnd: boolean = false): ClassifiedPanel => {
     const posX = chain.startX + dirX * centerPos;
     const posZ = chain.startY + dirY * centerPos;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
@@ -331,12 +441,13 @@ export function layoutPanelsForChainWithJunctions(
       new THREE.Vector3(width / PANEL_WIDTH, 1, 1)
     );
 
-    return { matrix, type, widthMm: width, rowIndex: row, chainId: chain.id, isCornerPiece: isCorner };
+    return { matrix, type, widthMm: width, rowIndex: row, chainId: chain.id, isCornerPiece: isCorner, isEndPiece: isEnd };
   };
   
-  const createTopo = (centerPos: number, tj: TJunctionInfo): TopoPlacement => {
-    const posX = chain.startX + dirX * centerPos;
-    const posZ = chain.startY + dirY * centerPos;
+  // Helper to create TOPO
+  const createTopo = (posAlongChain: number, reason: 'T_junction' | 'free_end', junctionId: string): TopoPlacement => {
+    const posX = chain.startX + dirX * posAlongChain;
+    const posZ = chain.startY + dirY * posAlongChain;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
     
     const matrix = new THREE.Matrix4();
@@ -346,112 +457,199 @@ export function layoutPanelsForChainWithJunctions(
       new THREE.Vector3(1, 1, 1)
     );
     
-    return { matrix, rowIndex: row, chainId: chain.id, junctionId: tj.nodeId };
+    return { matrix, rowIndex: row, chainId: chain.id, junctionId, reason };
   };
   
   // ============= DETERMINE LEFT (START) RESERVATION =============
   let leftReservation = 0;
-  let leftIsCornerCut = false;
-  let createLeftTopo = false;
-  let leftTJunction: TJunctionInfo | null = null;
+  let leftType: PanelType = 'FULL';
+  let addLeftTopo = false;
+  let leftTopoId = '';
   
-  // L-junction at chain start
-  if (lCornerInfo.startsAtL && intervalStart === 0) {
-    const isPrimary = lCornerInfo.isPrimaryAtStart;
-    if (!isOddRow) {
-      // EVEN ROW: primary=FULL, secondary=600mm
-      leftReservation = isPrimary ? PANEL_WIDTH : STAGGER_OFFSET;
-      leftIsCornerCut = !isPrimary;
-    } else {
-      // ODD ROW: primary=600mm, secondary=FULL
-      leftReservation = isPrimary ? STAGGER_OFFSET : PANEL_WIDTH;
-      leftIsCornerCut = isPrimary;
+  // Only apply junction rules if this interval starts at the chain start
+  if (intervalStart === 0) {
+    switch (endpointInfo.startType) {
+      case 'L':
+        // L-CORNER RULES
+        // Row 1 (even): primary=FULL, secondary=CORNER_CUT (TOOTH)
+        // Row 2 (odd): both=CORNER_CUT
+        if (!isOddRow) {
+          // Even row (Row 1)
+          if (endpointInfo.isPrimaryAtStart) {
+            leftReservation = PANEL_WIDTH;
+            leftType = 'FULL';
+          } else {
+            leftReservation = STAGGER_OFFSET; // 600mm (or use TOOTH for tighter cut)
+            leftType = 'CORNER_CUT';
+          }
+        } else {
+          // Odd row (Row 2) - both sides get corner cut
+          leftReservation = STAGGER_OFFSET;
+          leftType = 'CORNER_CUT';
+        }
+        break;
+        
+      case 'T':
+        // T-JUNCTION RULES
+        if (endpointInfo.isBranchAtStart) {
+          // This chain is the BRANCH (perna)
+          if (!isOddRow) {
+            // Even row: branch starts with corner cut
+            leftReservation = STAGGER_OFFSET;
+            leftType = 'CORNER_CUT';
+          } else {
+            // Odd row: branch starts with full panel, add TOPO on main
+            leftReservation = PANEL_WIDTH;
+            leftType = 'FULL';
+            addLeftTopo = true;
+            leftTopoId = endpointInfo.startT?.nodeId || 'T-start';
+          }
+        } else {
+          // This chain is MAIN (costas) - continues through
+          // Even row: no special treatment
+          // Odd row: TOPO at junction point
+          leftReservation = PANEL_WIDTH;
+          leftType = 'FULL';
+          if (isOddRow) {
+            addLeftTopo = true;
+            leftTopoId = endpointInfo.startT?.nodeId || 'T-start';
+          }
+        }
+        break;
+        
+      case 'free':
+        // FREE END - apply stagger and create TOPO
+        if (isOddRow) {
+          leftReservation = STAGGER_OFFSET;
+          leftType = 'CORNER_CUT'; // Stagger cut
+        } else {
+          leftReservation = PANEL_WIDTH;
+          leftType = 'FULL';
+        }
+        addLeftTopo = true;
+        leftTopoId = `free-start-${chain.id}`;
+        break;
+        
+      default:
+        // No junction - just apply stagger for odd rows
+        if (isOddRow) {
+          leftReservation = STAGGER_OFFSET;
+          leftType = 'CORNER_CUT';
+        } else {
+          leftReservation = PANEL_WIDTH;
+          leftType = 'FULL';
+        }
     }
-  }
-  // T-junction at chain start (branch)
-  else if (tJunctionInfo.startsAtT && intervalStart === 0 && tJunctionInfo.isBranchAtStart) {
-    leftTJunction = tJunctionInfo.startsAtT;
-    if (!isOddRow) {
-      // EVEN ROW: branch starts with 600mm CORNER_CUT
-      leftReservation = STAGGER_OFFSET;
-      leftIsCornerCut = true;
-      createLeftTopo = true; // TOPO at T-junction
-    } else {
-      // ODD ROW: branch starts with FULL
-      leftReservation = PANEL_WIDTH;
-      leftIsCornerCut = false;
-      createLeftTopo = true; // TOPO at T-junction (metade das fiadas - all odd rows)
-    }
-  }
-  // Standard stagger for odd rows (no junction)
-  else if (isOddRow && intervalStart === 0) {
-    leftReservation = STAGGER_OFFSET;
-    leftIsCornerCut = true;
+  } else {
+    // Interval doesn't start at chain start - just fill normally
+    leftReservation = PANEL_WIDTH;
+    leftType = 'FULL';
   }
   
   // ============= DETERMINE RIGHT (END) RESERVATION =============
   let rightReservation = 0;
-  let rightIsCornerCut = false;
-  let createRightTopo = false;
-  let rightTJunction: TJunctionInfo | null = null;
+  let rightType: PanelType = 'FULL';
+  let addRightTopo = false;
+  let rightTopoId = '';
   
-  // L-junction at chain end
-  if (lCornerInfo.endsAtL && intervalEnd === chain.lengthMm) {
-    const isPrimary = lCornerInfo.isPrimaryAtEnd;
-    if (!isOddRow) {
-      rightReservation = isPrimary ? PANEL_WIDTH : STAGGER_OFFSET;
-      rightIsCornerCut = !isPrimary;
-    } else {
-      rightReservation = isPrimary ? STAGGER_OFFSET : PANEL_WIDTH;
-      rightIsCornerCut = isPrimary;
+  // Only apply junction rules if this interval ends at the chain end
+  if (intervalEnd === chain.lengthMm) {
+    switch (endpointInfo.endType) {
+      case 'L':
+        // L-CORNER RULES (same as start but for end)
+        if (!isOddRow) {
+          if (endpointInfo.isPrimaryAtEnd) {
+            rightReservation = PANEL_WIDTH;
+            rightType = 'FULL';
+          } else {
+            rightReservation = STAGGER_OFFSET;
+            rightType = 'CORNER_CUT';
+          }
+        } else {
+          rightReservation = STAGGER_OFFSET;
+          rightType = 'CORNER_CUT';
+        }
+        break;
+        
+      case 'T':
+        if (endpointInfo.isBranchAtEnd) {
+          if (!isOddRow) {
+            rightReservation = STAGGER_OFFSET;
+            rightType = 'CORNER_CUT';
+          } else {
+            rightReservation = PANEL_WIDTH;
+            rightType = 'FULL';
+            addRightTopo = true;
+            rightTopoId = endpointInfo.endT?.nodeId || 'T-end';
+          }
+        } else {
+          rightReservation = PANEL_WIDTH;
+          rightType = 'FULL';
+          if (isOddRow) {
+            addRightTopo = true;
+            rightTopoId = endpointInfo.endT?.nodeId || 'T-end';
+          }
+        }
+        break;
+        
+      case 'free':
+        // FREE END - TOPO required to close
+        rightReservation = PANEL_WIDTH;
+        rightType = 'FULL';
+        addRightTopo = true;
+        rightTopoId = `free-end-${chain.id}`;
+        break;
+        
+      default:
+        rightReservation = PANEL_WIDTH;
+        rightType = 'FULL';
     }
+  } else {
+    rightReservation = PANEL_WIDTH;
+    rightType = 'FULL';
   }
-  // T-junction at chain end (branch)
-  else if (tJunctionInfo.endsAtT && intervalEnd === chain.lengthMm && tJunctionInfo.isBranchAtEnd) {
-    rightTJunction = tJunctionInfo.endsAtT;
-    if (!isOddRow) {
-      rightReservation = STAGGER_OFFSET;
-      rightIsCornerCut = true;
-      createRightTopo = true;
-    } else {
-      rightReservation = PANEL_WIDTH;
-      rightIsCornerCut = false;
-      createRightTopo = true;
-    }
+  
+  // ============= CALCULATE USABLE MIDDLE SECTION =============
+  // Clamp reservations to available length
+  const totalReservations = leftReservation + rightReservation;
+  
+  if (totalReservations >= intervalLength) {
+    // Not enough room for both reservations - just place one panel
+    const centerPos = intervalStart + intervalLength / 2;
+    const type: PanelType = intervalLength < PANEL_WIDTH ? 'CUT_DOUBLE' : leftType;
+    panels.push(createPanel(centerPos, intervalLength, type, true));
+    
+    // Add TOPOs if needed
+    if (addLeftTopo) topos.push(createTopo(intervalStart, endpointInfo.startType === 'free' ? 'free_end' : 'T_junction', leftTopoId));
+    if (addRightTopo) topos.push(createTopo(intervalEnd, endpointInfo.endType === 'free' ? 'free_end' : 'T_junction', rightTopoId));
+    
+    return { panels, topos };
   }
+  
+  const middleStart = intervalStart + leftReservation;
+  const middleEnd = intervalEnd - rightReservation;
+  const middleLength = middleEnd - middleStart;
   
   // ============= PLACE LEFT RESERVATION =============
-  let cursor = intervalStart;
-  if (leftReservation > 0) {
-    const reserveWidth = Math.min(leftReservation, intervalLength);
-    if (reserveWidth >= MIN_CUT_MM) {
-      const centerPos = cursor + reserveWidth / 2;
-      const type: PanelType = leftIsCornerCut ? 'CORNER_CUT' : 'FULL';
-      panels.push(createPanel(centerPos, reserveWidth, type, true));
-      
-      // Create TOPO for T-junction
-      if (createLeftTopo && leftTJunction) {
-        topos.push(createTopo(cursor, leftTJunction));
-      }
+  if (leftReservation >= MIN_CUT_MM) {
+    const centerPos = intervalStart + leftReservation / 2;
+    panels.push(createPanel(centerPos, leftReservation, leftType, leftType === 'CORNER_CUT'));
+    
+    if (addLeftTopo) {
+      topos.push(createTopo(intervalStart, endpointInfo.startType === 'free' ? 'free_end' : 'T_junction', leftTopoId));
     }
-    cursor += leftReservation;
   }
   
-  // ============= CALCULATE MIDDLE SECTION =============
-  const rightEdge = intervalEnd;
-  const rightStart = rightReservation > 0 ? rightEdge - rightReservation : rightEdge;
-  const middleStart = cursor;
-  const middleEnd = rightStart;
-  const middleLength = Math.max(0, middleEnd - middleStart);
-  
+  // ============= FILL MIDDLE FROM BOTH ENDS =============
   if (middleLength >= MIN_CUT_MM) {
     const fullPanelCount = Math.floor(middleLength / PANEL_WIDTH);
     const remainder = middleLength - (fullPanelCount * PANEL_WIDTH);
     
-    // ============= FILL FROM BOTH ENDS, CUT IN MIDDLE =============
-    // Distribute full panels evenly from left and right
+    // Split full panels between left and right
     const leftCount = Math.floor(fullPanelCount / 2);
     const rightCount = fullPanelCount - leftCount;
+    
+    let cursor = middleStart;
     
     // Place LEFT side full panels
     for (let i = 0; i < leftCount; i++) {
@@ -460,10 +658,9 @@ export function layoutPanelsForChainWithJunctions(
       cursor += PANEL_WIDTH;
     }
     
-    // Place MIDDLE cut piece (if any) - this is the "corte de acerto"
+    // Place MIDDLE cut piece (if any) - CUT_DOUBLE (ORANGE)
     if (remainder >= MIN_CUT_MM) {
       const centerPos = cursor + remainder / 2;
-      // This is a cut piece in the middle - mark as CUT_DOUBLE (orange)
       panels.push(createPanel(centerPos, remainder, 'CUT_DOUBLE', false));
       cursor += remainder;
     }
@@ -477,17 +674,12 @@ export function layoutPanelsForChainWithJunctions(
   }
   
   // ============= PLACE RIGHT RESERVATION =============
-  if (rightReservation > 0 && rightStart < rightEdge) {
-    const reserveWidth = Math.min(rightReservation, rightEdge - rightStart);
-    if (reserveWidth >= MIN_CUT_MM) {
-      const centerPos = rightStart + reserveWidth / 2;
-      const type: PanelType = rightIsCornerCut ? 'CORNER_CUT' : 'FULL';
-      panels.push(createPanel(centerPos, reserveWidth, type, true));
-      
-      // Create TOPO for T-junction
-      if (createRightTopo && rightTJunction) {
-        topos.push(createTopo(rightStart + reserveWidth, rightTJunction));
-      }
+  if (rightReservation >= MIN_CUT_MM) {
+    const centerPos = middleEnd + rightReservation / 2;
+    panels.push(createPanel(centerPos, rightReservation, rightType, rightType === 'CORNER_CUT'));
+    
+    if (addRightTopo) {
+      topos.push(createTopo(intervalEnd, endpointInfo.endType === 'free' ? 'free_end' : 'T_junction', rightTopoId));
     }
   }
   
@@ -509,12 +701,21 @@ export function generatePanelLayout(
   stats: {
     lJunctions: number;
     tJunctions: number;
+    freeEnds: number;
     cornerTemplatesApplied: number;
     toposPlaced: number;
+    effectiveOffset: number;
   };
 } {
   const lJunctions = detectLJunctions(chains);
   const tJunctions = detectTJunctions(chains);
+  const freeEnds = detectFreeEnds(chains);
+  
+  console.log('[generatePanelLayout] Detected:', {
+    lJunctions: lJunctions.length,
+    tJunctions: tJunctions.length,
+    freeEnds: freeEnds.length,
+  });
   
   const panelsByType: Record<PanelType, ClassifiedPanel[]> = {
     FULL: [],
@@ -522,6 +723,7 @@ export function generatePanelLayout(
     CUT_DOUBLE: [],
     CORNER_CUT: [],
     TOPO: [],
+    END_CUT: [],
   };
   const allPanels: ClassifiedPanel[] = [];
   const allTopos: TopoPlacement[] = [];
@@ -540,7 +742,8 @@ export function generatePanelLayout(
           interval.end,
           row,
           lJunctions,
-          tJunctions
+          tJunctions,
+          freeEnds
         );
         
         panels.forEach(panel => {
@@ -561,8 +764,10 @@ export function generatePanelLayout(
     stats: {
       lJunctions: lJunctions.length,
       tJunctions: tJunctions.length,
+      freeEnds: freeEnds.length,
       cornerTemplatesApplied,
       toposPlaced: allTopos.length,
+      effectiveOffset: STAGGER_OFFSET,
     },
   };
 }
