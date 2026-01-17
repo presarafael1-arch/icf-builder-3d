@@ -205,7 +205,8 @@ function BatchedPanelInstances({
   showOutlines = true,
   highFidelity = false,
   onInstanceCountChange,
-  onCountsChange 
+  onCountsChange,
+  onGeometrySourceChange
 }: { 
   chains: WallChain[];
   settings: ViewerSettings; 
@@ -214,6 +215,7 @@ function BatchedPanelInstances({
   highFidelity?: boolean;
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
+  onGeometrySourceChange?: (source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple') => void;
 }) {
   // Refs for each panel type mesh
   const fullMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -224,12 +226,17 @@ function BatchedPanelInstances({
   const outlineMeshRef = useRef<THREE.InstancedMesh>(null);
 
   // Get panel geometry from hook (simple box or detailed/GLB)
-  const { geometry: panelGeometry, outlineGeometry, isHighFidelity, isLoading } = usePanelGeometry(highFidelity);
+  const { geometry: panelGeometry, outlineGeometry, isHighFidelity, isLoading, source } = usePanelGeometry(highFidelity);
+
+  // Report geometry source to parent
+  useEffect(() => {
+    onGeometrySourceChange?.(source);
+  }, [source, onGeometrySourceChange]);
 
   // Log geometry mode
   useEffect(() => {
-    console.log('[BatchedPanelInstances] Geometry mode:', { highFidelity, isHighFidelity, isLoading });
-  }, [highFidelity, isHighFidelity, isLoading]);
+    console.log('[BatchedPanelInstances] Geometry mode:', { highFidelity, isHighFidelity, isLoading, source });
+  }, [highFidelity, isHighFidelity, isLoading, source]);
 
   // Generate classified panel placements grouped by type
   const { panelsByType, allPanels } = useMemo(() => {
@@ -989,9 +996,10 @@ interface SceneProps {
   candidates?: OpeningCandidate[];
   onPanelCountChange?: (count: number) => void;
   onPanelCountsChange?: (counts: PanelCounts) => void;
+  onGeometrySourceChange?: (source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple') => void;
 }
 
-function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange }: SceneProps) {
+function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Build chains once for the scene
@@ -1078,6 +1086,7 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
           highFidelity={settings.highFidelityPanels}
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
+          onGeometrySourceChange={onGeometrySourceChange}
         />
       )}
 
@@ -1112,6 +1121,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
     FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
   });
+  const [geometrySource, setGeometrySource] = useState<'glb' | 'step' | 'cache' | 'procedural' | 'simple'>('simple');
   const [showLegend, setShowLegend] = useState(true);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
@@ -1136,6 +1146,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
           candidates={candidates}
           onPanelCountChange={setPanelInstancesCount}
           onPanelCountsChange={setPanelCounts}
+          onGeometrySourceChange={setGeometrySource}
         />
       </Canvas>
 
@@ -1155,6 +1166,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
         openings={openings}
         candidates={candidates}
         panelInstancesCount={panelInstancesCount}
+        geometrySource={geometrySource}
       />
 
       {bboxInfo && settings.showHelpers && (

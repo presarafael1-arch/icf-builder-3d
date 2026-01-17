@@ -10,9 +10,10 @@ interface DiagnosticsHUDProps {
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
   panelInstancesCount: number;
+  geometrySource?: 'glb' | 'step' | 'cache' | 'procedural' | 'simple';
 }
 
-export function DiagnosticsHUD({ walls, settings, openings = [], candidates = [], panelInstancesCount }: DiagnosticsHUDProps) {
+export function DiagnosticsHUD({ walls, settings, openings = [], candidates = [], panelInstancesCount, geometrySource = 'simple' }: DiagnosticsHUDProps) {
   const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
   const { chains, stats, candidates: detectedCandidates } = chainsResult;
   
@@ -118,6 +119,16 @@ export function DiagnosticsHUD({ walls, settings, openings = [], candidates = []
       )}
       
       <div className="border-t border-border my-1 pt-1" />
+      
+      <div className="flex justify-between gap-4">
+        <span className="text-muted-foreground">geometry:</span>
+        <span className={geometrySource === 'glb' || geometrySource === 'step' || geometrySource === 'cache' ? 'text-green-400' : 'text-muted-foreground'}>
+          {geometrySource === 'glb' ? '✓ GLB' : 
+           geometrySource === 'step' ? '✓ STEP' : 
+           geometrySource === 'cache' ? '✓ Cache' :
+           geometrySource === 'procedural' ? 'Procedural' : 'Simple'}
+        </span>
+      </div>
       
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">scale:</span>
