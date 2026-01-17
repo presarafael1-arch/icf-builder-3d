@@ -44,10 +44,19 @@ interface Wall {
 }
 
 // Wall List Panel with Chains/Segments toggle
-function WallListPanel({ walls, onDeleteWall }: { walls: WallSegment[]; onDeleteWall: (id: string) => void }) {
+function WallListPanel({ walls, onDeleteWall, onRecalculate }: { 
+  walls: WallSegment[]; 
+  onDeleteWall: (id: string) => void;
+  onRecalculate?: () => void;
+}) {
   const [showChains, setShowChains] = useState(true);
+  const [recalcKey, setRecalcKey] = useState(0);
   
-  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
+  const chainsResult = useMemo(() => {
+    // recalcKey forces recompute when button is clicked
+    console.log('[WallListPanel] Computing chains, recalcKey:', recalcKey);
+    return buildWallChainsAutoTuned(walls);
+  }, [walls, recalcKey]);
   const { chains, stats, junctionCounts } = chainsResult;
   
   const totalMM = walls.reduce((sum, w) => sum + w.length, 0);
@@ -55,6 +64,12 @@ function WallListPanel({ walls, onDeleteWall }: { walls: WallSegment[]; onDelete
   
   // Warn if merge is weak (chains close to segments count)
   const isWeakMerge = stats.chainsCount > stats.originalSegments * 0.85;
+  
+  const handleRecalculate = () => {
+    console.log('[WallListPanel] Recalculating chains...');
+    setRecalcKey(k => k + 1);
+    onRecalculate?.();
+  };
   
   return (
     <div className="flex-1 overflow-auto p-4">
@@ -93,12 +108,25 @@ function WallListPanel({ walls, onDeleteWall }: { walls: WallSegment[]; onDelete
             <span className="text-muted-foreground">Nós:</span>
             <span className="font-mono">{junctionCounts.L}L {junctionCounts.T}T {junctionCounts.X}X</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Preset:</span>
+            <span className="font-mono text-cyan-400">{stats.preset || 'normal'}</span>
+          </div>
           {isWeakMerge && (
             <div className="flex items-center gap-1 text-yellow-500 mt-1">
               <AlertTriangle className="h-3 w-3" />
               <span>Merge fraco</span>
             </div>
           )}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="w-full mt-2 h-7 text-xs"
+            onClick={handleRecalculate}
+          >
+            <Crosshair className="h-3 w-3 mr-1" />
+            Recalcular cadeias
+          </Button>
         </div>
       )}
       

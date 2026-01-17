@@ -1008,11 +1008,25 @@ export function buildWallChainsAutoTuned(walls: WallSegment[]): ChainsResult & {
   results.sort((a, b) => a.score - b.score);
   
   const best = results[0];
-  console.log('[WallChains] Auto-tune selected:', best.preset, 'with score:', best.score.toFixed(3));
+  
+  // Enhanced logging with junction counts
+  console.log('[WallChains] Auto-tune selected:', best.preset, {
+    score: best.score.toFixed(3),
+    chains: best.result.stats.chainsCount,
+    originalSegments: best.result.stats.originalSegments,
+    reductionPct: `${best.result.stats.reductionPercent}%`,
+    wastePct: `${(best.result.stats.wastePct * 100).toFixed(1)}%`,
+    junctions: best.result.junctionCounts,
+  });
   
   // If still bad (wastePct > 15%), log warning
   if (best.result.stats.wastePct > 0.15) {
     console.warn('[WallChains] Warning: Best preset still has high waste. Consider manual geometry cleanup.');
+  }
+  
+  // Warn if no consolidation happened
+  if (best.result.stats.reductionPercent === 0) {
+    console.warn('[WallChains] Warning: No chain consolidation occurred. Segments may not share endpoints within tolerance.');
   }
   
   return {
