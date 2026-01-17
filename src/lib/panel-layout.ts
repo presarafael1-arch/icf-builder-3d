@@ -141,7 +141,9 @@ interface EndpointInfo {
 
 /**
  * Detect L-junctions (exactly 2 chains meeting at ~90°)
- * Uses deterministic ordering: lower chainId = primary (exterior role in row 1)
+ * Uses geometric winding to determine primary (exterior) vs secondary (interior):
+ * - Primary arm is the one where counter-clockwise rotation reaches the secondary arm
+ * - This corresponds to the "exterior" face of an L-corner in typical floor plans
  */
 export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
   const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[]; isStarts: boolean[] }>();
@@ -194,12 +196,39 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
     
     if (!isLShape) return;
     
-    // DETERMINISTIC: Lower chainId = primary arm
-    const [id1, id2] = node.chainIds;
-    const primaryChainId = id1 < id2 ? id1 : id2;
-    const secondaryChainId = id1 < id2 ? id2 : id1;
-    const primaryIdx = node.chainIds.indexOf(primaryChainId);
-    const secondaryIdx = 1 - primaryIdx;
+    // GEOMETRIC WINDING: Determine primary based on cross product (winding direction)
+    // Cross product of direction vectors: if chain1 × chain2 > 0, chain1 is on the "exterior" (left) side
+    // We use the angles pointing OUTWARD from the junction to compute winding
+    const angle0 = node.angles[0];
+    const angle1 = node.angles[1];
+    
+    // Direction vectors pointing outward from junction
+    const dir0 = { x: Math.cos(angle0), y: Math.sin(angle0) };
+    const dir1 = { x: Math.cos(angle1), y: Math.sin(angle1) };
+    
+    // 2D cross product: dir0 × dir1 = dir0.x * dir1.y - dir0.y * dir1.x
+    const cross = dir0.x * dir1.y - dir0.y * dir1.x;
+    
+    // If cross > 0: turning counter-clockwise from dir0 to dir1 → dir0 is "exterior" (primary)
+    // If cross < 0: turning clockwise → dir1 is "exterior" (primary)
+    // If cross ≈ 0: fallback to alphabetical
+    let primaryIdx: number;
+    let secondaryIdx: number;
+    
+    if (Math.abs(cross) < 0.1) {
+      // Nearly parallel (shouldn't happen for L-junctions but fallback)
+      primaryIdx = node.chainIds[0] < node.chainIds[1] ? 0 : 1;
+    } else if (cross > 0) {
+      // Counter-clockwise: chain at index 0 is exterior (primary)
+      primaryIdx = 0;
+    } else {
+      // Clockwise: chain at index 1 is exterior (primary)
+      primaryIdx = 1;
+    }
+    secondaryIdx = 1 - primaryIdx;
+    
+    const primaryChainId = node.chainIds[primaryIdx];
+    const secondaryChainId = node.chainIds[secondaryIdx];
     
     lJunctions.push({
       nodeId: key,
