@@ -15,11 +15,6 @@ const PANEL_THICKNESS_MM = 70.59;
 // Scale factor: mm to meters (3D units)
 const SCALE = 0.001;
 
-// Rib configuration for procedural geometry
-const RIB_COUNT = 5;
-const RIB_WIDTH_MM = 20;
-const RIB_DEPTH_MM = 15;
-
 export interface PanelGeometryResult {
   geometry: THREE.BufferGeometry;
   outlineGeometry: THREE.BufferGeometry;
@@ -32,153 +27,33 @@ export interface PanelGeometryResult {
   geometryValid: boolean;
 }
 
+// Target dimensions in METERS
+const TARGET_WIDTH_M = PANEL_WIDTH_MM * SCALE;  // 1.2m
+const TARGET_HEIGHT_M = PANEL_HEIGHT_MM * SCALE; // 0.4m
+const TARGET_THICKNESS_M = PANEL_THICKNESS_MM * SCALE; // ~0.07m
+
 /**
- * Creates a detailed procedural geometry representing an ICF panel
- * with ribs, web slots, and surface detail
+ * Create simple BoxGeometry - THE DEFAULT and most reliable
+ * All dimensions in meters, centered pivot
  */
-function createDetailedPanelGeometry(): THREE.BufferGeometry {
-  const width = PANEL_WIDTH_MM * SCALE;
-  const height = PANEL_HEIGHT_MM * SCALE;
-  const thickness = PANEL_THICKNESS_MM * SCALE;
-  
-  const ribWidth = RIB_WIDTH_MM * SCALE;
-  const ribDepth = RIB_DEPTH_MM * SCALE;
-  
-  const group = new THREE.Group();
-  
-  // Main body (slightly thinner to accommodate ribs)
-  const bodyThickness = thickness - ribDepth * 2;
-  const bodyGeo = new THREE.BoxGeometry(width, height, bodyThickness);
-  const bodyMesh = new THREE.Mesh(bodyGeo);
-  group.add(bodyMesh);
-  
-  // Vertical ribs
-  const ribSpacing = width / (RIB_COUNT + 1);
-  for (let i = 1; i <= RIB_COUNT; i++) {
-    const ribGeo = new THREE.BoxGeometry(ribWidth, height, ribDepth);
-    const xPos = -width / 2 + ribSpacing * i;
-    
-    // Front rib
-    const ribMesh = new THREE.Mesh(ribGeo);
-    ribMesh.position.set(xPos, 0, thickness / 2 - ribDepth / 2);
-    group.add(ribMesh);
-    
-    // Back rib
-    const ribMeshBack = new THREE.Mesh(ribGeo);
-    ribMeshBack.position.set(xPos, 0, -thickness / 2 + ribDepth / 2);
-    group.add(ribMeshBack);
-  }
-  
-  // Horizontal edge ribs
-  const hRibGeo = new THREE.BoxGeometry(width, ribWidth * 0.5, ribDepth);
-  
-  const positions = [
-    { y: height / 2 - ribWidth * 0.25, z: thickness / 2 - ribDepth / 2 },
-    { y: -height / 2 + ribWidth * 0.25, z: thickness / 2 - ribDepth / 2 },
-    { y: height / 2 - ribWidth * 0.25, z: -thickness / 2 + ribDepth / 2 },
-    { y: -height / 2 + ribWidth * 0.25, z: -thickness / 2 + ribDepth / 2 },
-  ];
-  
-  for (const pos of positions) {
-    const rib = new THREE.Mesh(hRibGeo);
-    rib.position.set(0, pos.y, pos.z);
-    group.add(rib);
-  }
-  
-  // Merge geometries
-  const geometries: THREE.BufferGeometry[] = [];
-  group.traverse((child) => {
-    if (child instanceof THREE.Mesh && child.geometry) {
-      const cloned = child.geometry.clone();
-      child.updateWorldMatrix(true, false);
-      cloned.applyMatrix4(child.matrixWorld);
-      geometries.push(cloned);
-    }
-  });
-  
-  const merged = mergeBufferGeometries(geometries);
-  merged.computeBoundingBox();
-  
-  if (merged.boundingBox) {
-    merged.translate(
-      -(merged.boundingBox.min.x + merged.boundingBox.max.x) / 2,
-      -(merged.boundingBox.min.y + merged.boundingBox.max.y) / 2,
-      -(merged.boundingBox.min.z + merged.boundingBox.max.z) / 2
-    );
-  }
-  
-  merged.computeVertexNormals();
-  merged.computeBoundingSphere();
-  
-  return merged;
-}
-
-function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
-  const positions: number[] = [];
-  const normals: number[] = [];
-  
-  geometries.forEach((geo) => {
-    const posAttr = geo.getAttribute('position');
-    const normAttr = geo.getAttribute('normal');
-    
-    if (posAttr) {
-      for (let i = 0; i < posAttr.count; i++) {
-        positions.push(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-      }
-    }
-    
-    if (normAttr) {
-      for (let i = 0; i < normAttr.count; i++) {
-        normals.push(normAttr.getX(i), normAttr.getY(i), normAttr.getZ(i));
-      }
-    }
-  });
-  
-  const merged = new THREE.BufferGeometry();
-  merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  if (normals.length > 0) {
-    merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  }
-  
-  return merged;
-}
-
 function createSimplePanelGeometry(): THREE.BufferGeometry {
-  return new THREE.BoxGeometry(
-    PANEL_WIDTH_MM * SCALE,
-    PANEL_HEIGHT_MM * SCALE,
-    PANEL_THICKNESS_MM * SCALE
-  );
+  const geo = new THREE.BoxGeometry(TARGET_WIDTH_M, TARGET_HEIGHT_M, TARGET_THICKNESS_M);
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
 }
 
+/**
+ * Create edges geometry for outlines - slightly larger for visibility
+ */
 function createOutlineGeometry(): THREE.BufferGeometry {
+  const OUTLINE_OFFSET = 0.002; // 2mm offset for visibility
   const boxGeo = new THREE.BoxGeometry(
-    PANEL_WIDTH_MM * SCALE,
-    PANEL_HEIGHT_MM * SCALE,
-    PANEL_THICKNESS_MM * SCALE
+    TARGET_WIDTH_M + OUTLINE_OFFSET,
+    TARGET_HEIGHT_M + OUTLINE_OFFSET,
+    TARGET_THICKNESS_M + OUTLINE_OFFSET
   );
   return new THREE.EdgesGeometry(boxGeo);
-}
-
-async function loadGLBGeometry(url: string): Promise<THREE.BufferGeometry | null> {
-  return new Promise((resolve) => {
-    const loader = new GLTFLoader();
-    loader.load(
-      url,
-      (gltf) => {
-        // Find the first mesh in the scene
-        let geometry: THREE.BufferGeometry | null = null;
-        gltf.scene.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.geometry && !geometry) {
-            geometry = child.geometry.clone();
-          }
-        });
-        resolve(geometry);
-      },
-      undefined,
-      () => resolve(null)
-    );
-  });
 }
 
 function getBBoxSizeM(geometry: THREE.BufferGeometry): { x: number; y: number; z: number } {
@@ -190,12 +65,14 @@ function getBBoxSizeM(geometry: THREE.BufferGeometry): { x: number; y: number; z
 }
 
 /**
- * Normalize units + pivot + scale to the real panel size.
- *
- * Rule: instances are in meters, geometry must be in meters too.
- * This function ensures geometry bbox matches ~1.2m x 0.4m within tolerance.
+ * Normalize geometry to target panel size (1.2m x 0.4m x ~0.07m)
+ * Centers pivot and applies scale correction
  */
-function normalizeGeometryToPanel(geometry: THREE.BufferGeometry): { geometry: THREE.BufferGeometry; bboxSizeM: { x: number; y: number; z: number }; scaleApplied: number } {
+function normalizeGeometryToPanel(geometry: THREE.BufferGeometry): { 
+  geometry: THREE.BufferGeometry; 
+  bboxSizeM: { x: number; y: number; z: number }; 
+  scaleApplied: number 
+} {
   const g = geometry.clone();
 
   // Center pivot
@@ -206,40 +83,31 @@ function normalizeGeometryToPanel(geometry: THREE.BufferGeometry): { geometry: T
     g.translate(-center.x, -center.y, -center.z);
   }
 
-  // Fail-safe scale normalization
-  const targetW = PANEL_WIDTH_MM * SCALE;  // 1.2m
-  const targetH = PANEL_HEIGHT_MM * SCALE; // 0.4m
-
+  // Get current size
   const sizeBefore = getBBoxSizeM(g);
-  const dimMax = Math.max(sizeBefore.x, sizeBefore.y, sizeBefore.z);
+  const maxDim = Math.max(sizeBefore.x, sizeBefore.y, sizeBefore.z);
 
   let scaleApplied = 1;
 
-  // Heuristic (user requirement)
-  // too small (m treated as mm) -> scale up
-  // too large (mm treated as m) -> scale down
-  const widthLike = dimMax; // robust even if axes differ
-
-  if (widthLike > 0) {
-    if (widthLike < 0.2 || widthLike > 5) {
-      // Bring biggest dimension to target width
-      scaleApplied = targetW / widthLike;
+  // Auto-scale if way off target (fail-safe)
+  if (maxDim > 0) {
+    // If geometry seems to be in mm (very large) or in wrong units
+    if (maxDim > 5) {
+      // Probably in mm, scale down
+      scaleApplied = TARGET_WIDTH_M / maxDim;
+      g.scale(scaleApplied, scaleApplied, scaleApplied);
+    } else if (maxDim < 0.2) {
+      // Too small, scale up to target
+      scaleApplied = TARGET_WIDTH_M / maxDim;
       g.scale(scaleApplied, scaleApplied, scaleApplied);
     } else {
-      // Within sane range, but still normalize to expected panel size (±5%)
-      const ratioToTarget = targetW / widthLike;
-      if (Math.abs(1 - ratioToTarget) > 0.05) {
-        scaleApplied = ratioToTarget;
+      // Within reasonable range, normalize to exact target
+      const ratio = TARGET_WIDTH_M / maxDim;
+      if (Math.abs(1 - ratio) > 0.05) {
+        scaleApplied = ratio;
         g.scale(scaleApplied, scaleApplied, scaleApplied);
       }
     }
-  }
-
-  // Optional: ensure height roughly matches too (secondary correction)
-  const sizeAfter = getBBoxSizeM(g);
-  const heightLike = Math.min(Math.max(sizeAfter.x, sizeAfter.y), Math.max(sizeAfter.y, sizeAfter.z));
-  if (heightLike > 0 && Math.abs(1 - (targetH / heightLike)) > 0.25) {
-    // keep uniform scale only; just log mismatch via HUD
   }
 
   g.computeVertexNormals();
@@ -254,8 +122,36 @@ function isGeometryValid(geometry: THREE.BufferGeometry | null | undefined): boo
   return !!pos && pos.count > 0;
 }
 
+async function loadGLBGeometry(url: string): Promise<THREE.BufferGeometry | null> {
+  return new Promise((resolve) => {
+    const loader = new GLTFLoader();
+    loader.load(
+      url,
+      (gltf) => {
+        let geometry: THREE.BufferGeometry | null = null;
+        gltf.scene.traverse((child) => {
+          if (child instanceof THREE.Mesh && child.geometry && !geometry) {
+            geometry = child.geometry.clone();
+          }
+        });
+        resolve(geometry);
+      },
+      undefined,
+      () => resolve(null)
+    );
+  });
+}
+
 /**
- * Hook that provides panel geometry with real STEP/GLB loading
+ * Hook that provides panel geometry with robust fallback
+ * 
+ * PRIORITY ORDER:
+ * 1. simple (BoxGeometry) - DEFAULT, always works
+ * 2. glb (pre-converted) - if highFidelity ON and file exists
+ * 3. step (runtime WASM) - if highFidelity ON and GLB unavailable
+ * 4. procedural fallback - never used now, kept for compatibility
+ * 
+ * CRITICAL: Never return invalid/null geometry. Always fallback to simple.
  */
 export function usePanelGeometry(highFidelity: boolean = false): PanelGeometryResult {
   const [realGeometry, setRealGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -263,16 +159,20 @@ export function usePanelGeometry(highFidelity: boolean = false): PanelGeometryRe
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<PanelGeometryResult['source']>('simple');
   const [meta, setMeta] = useState<{ bboxSizeM: { x: number; y: number; z: number }; scaleApplied: number }>({
-    bboxSizeM: { x: 0, y: 0, z: 0 },
+    bboxSizeM: { x: TARGET_WIDTH_M, y: TARGET_HEIGHT_M, z: TARGET_THICKNESS_M },
     scaleApplied: 1,
   });
-  
+
+  // Always have simple geometry ready as fallback
+  const simpleGeometry = useMemo(() => createSimplePanelGeometry(), []);
+  const outlineGeometry = useMemo(() => createOutlineGeometry(), []);
+
   const loadRealGeometry = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // 1) cache
+      // 1) Check cache first
       const cached = loadCachedGeometry();
       if (cached && isGeometryValid(cached)) {
         const normalized = normalizeGeometryToPanel(cached);
@@ -280,10 +180,11 @@ export function usePanelGeometry(highFidelity: boolean = false): PanelGeometryRe
         setMeta({ bboxSizeM: normalized.bboxSizeM, scaleApplied: normalized.scaleApplied });
         setSource('cache');
         setIsLoading(false);
+        console.log('[usePanelGeometry] Loaded from cache');
         return;
       }
 
-      // 2) prebuilt GLB
+      // 2) Try pre-built GLB
       const glbRaw = await loadGLBGeometry('/assets/panels/1200_b26.glb');
       if (glbRaw && isGeometryValid(glbRaw)) {
         const normalized = normalizeGeometryToPanel(glbRaw);
@@ -292,10 +193,11 @@ export function usePanelGeometry(highFidelity: boolean = false): PanelGeometryRe
         setSource('glb');
         cacheGeometry(normalized.geometry);
         setIsLoading(false);
+        console.log('[usePanelGeometry] Loaded GLB successfully');
         return;
       }
 
-      // 3) STEP→geometry (WASM)
+      // 3) Try STEP conversion (may fail on some browsers)
       try {
         const stepRaw = await loadSTEPFromURL('/assets/panels/1200_b26.step');
         if (isGeometryValid(stepRaw)) {
@@ -305,112 +207,93 @@ export function usePanelGeometry(highFidelity: boolean = false): PanelGeometryRe
           setSource('step');
           cacheGeometry(normalized.geometry);
           setIsLoading(false);
+          console.log('[usePanelGeometry] Loaded STEP via WASM');
           return;
         }
       } catch (stepError) {
         console.warn('[usePanelGeometry] STEP conversion failed:', stepError);
       }
 
-      // 4) procedural fallback (always valid)
-      const procedural = createDetailedPanelGeometry();
-      const normalized = normalizeGeometryToPanel(procedural);
-      setRealGeometry(normalized.geometry);
-      setMeta({ bboxSizeM: normalized.bboxSizeM, scaleApplied: normalized.scaleApplied });
-      setSource('procedural');
-      setError('Real geometry unavailable, using procedural');
+      // 4) Fallback: high fidelity requested but unavailable
+      setRealGeometry(null);
+      setSource('simple');
+      setError('High fidelity geometry unavailable - using simple boxes');
+      console.warn('[usePanelGeometry] High fidelity unavailable, using simple');
     } catch (err) {
       console.error('[usePanelGeometry] Error loading geometry:', err);
-      const procedural = createDetailedPanelGeometry();
-      const normalized = normalizeGeometryToPanel(procedural);
-      setRealGeometry(normalized.geometry);
-      setMeta({ bboxSizeM: normalized.bboxSizeM, scaleApplied: normalized.scaleApplied });
-      setSource('procedural');
+      setRealGeometry(null);
+      setSource('simple');
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoading(false);
     }
   }, []);
-  
+
   useEffect(() => {
     if (highFidelity) {
       loadRealGeometry();
     } else {
+      // Reset to simple mode
       setRealGeometry(null);
-      setMeta({ bboxSizeM: { x: 0, y: 0, z: 0 }, scaleApplied: 1 });
+      setMeta({ bboxSizeM: { x: TARGET_WIDTH_M, y: TARGET_HEIGHT_M, z: TARGET_THICKNESS_M }, scaleApplied: 1 });
       setSource('simple');
       setError(null);
+      setIsLoading(false);
     }
   }, [highFidelity, loadRealGeometry]);
-  
+
+  // Compute final result - ALWAYS return valid geometry
   const result = useMemo((): PanelGeometryResult => {
-    const outlineGeometry = createOutlineGeometry();
-
-    // Always have a valid fallback geometry (procedural) to avoid blank panels during async loading
-    const proceduralFallback = normalizeGeometryToPanel(createDetailedPanelGeometry());
-
-    if (highFidelity) {
-      // While loading, never hide panels: use procedural fallback
-      if (isLoading) {
-        return {
-          geometry: proceduralFallback.geometry,
-          outlineGeometry,
-          isHighFidelity: false,
-          isLoading: true,
-          error: null,
-          source: 'procedural',
-          bboxSizeM: proceduralFallback.bboxSizeM,
-          scaleApplied: proceduralFallback.scaleApplied,
-          geometryValid: true,
-        };
-      }
-
-      if (realGeometry && isGeometryValid(realGeometry)) {
-        const bboxSizeM = meta.bboxSizeM;
-        const scaleApplied = meta.scaleApplied;
-        return {
-          geometry: realGeometry,
-          outlineGeometry,
-          isHighFidelity: true,
-          isLoading: false,
-          error,
-          source,
-          bboxSizeM,
-          scaleApplied,
-          geometryValid: true,
-        };
-      }
-
-      // If real geometry failed, still show procedural
-      return {
-        geometry: proceduralFallback.geometry,
-        outlineGeometry,
-        isHighFidelity: false,
-        isLoading: false,
-        error: error || 'Real geometry unavailable',
-        source: 'procedural',
-        bboxSizeM: proceduralFallback.bboxSizeM,
-        scaleApplied: proceduralFallback.scaleApplied,
-        geometryValid: true,
-      };
-    }
-
-    // Low fidelity: simple box (already meters)
-    const simple = createSimplePanelGeometry();
-    const normalizedSimple = normalizeGeometryToPanel(simple);
-
-    return {
-      geometry: normalizedSimple.geometry,
+    // Default: simple geometry (ALWAYS WORKS)
+    const defaultResult: PanelGeometryResult = {
+      geometry: simpleGeometry,
       outlineGeometry,
       isHighFidelity: false,
       isLoading: false,
       error: null,
       source: 'simple',
-      bboxSizeM: normalizedSimple.bboxSizeM,
-      scaleApplied: normalizedSimple.scaleApplied,
+      bboxSizeM: { x: TARGET_WIDTH_M, y: TARGET_HEIGHT_M, z: TARGET_THICKNESS_M },
+      scaleApplied: 1,
       geometryValid: true,
     };
-  }, [highFidelity, realGeometry, isLoading, error, source, meta]);
-  
+
+    // If not high fidelity mode, return simple
+    if (!highFidelity) {
+      return defaultResult;
+    }
+
+    // If loading, still show simple geometry (don't hide panels!)
+    if (isLoading) {
+      return {
+        ...defaultResult,
+        isLoading: true,
+        source: 'simple',
+      };
+    }
+
+    // If high fidelity loaded successfully
+    if (realGeometry && isGeometryValid(realGeometry)) {
+      return {
+        geometry: realGeometry,
+        outlineGeometry,
+        isHighFidelity: true,
+        isLoading: false,
+        error,
+        source,
+        bboxSizeM: meta.bboxSizeM,
+        scaleApplied: meta.scaleApplied,
+        geometryValid: true,
+      };
+    }
+
+    // High fidelity failed - fallback to simple with error message
+    return {
+      ...defaultResult,
+      error: error || 'High fidelity unavailable',
+      source: 'simple',
+    };
+  }, [highFidelity, realGeometry, isLoading, error, source, meta, simpleGeometry, outlineGeometry]);
+
   return result;
 }
 

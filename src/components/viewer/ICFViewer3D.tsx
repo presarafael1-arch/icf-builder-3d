@@ -195,6 +195,113 @@ interface ClassifiedPanel {
 }
 
 // =============================================
+// PANEL LAYOUT ALGORITHM: Cuts in the MIDDLE
+// Rule: Start from BOTH ends of the chain with full panels,
+// push any cuts/remainders to the CENTER
+// =============================================
+function layoutPanelsForInterval(
+  chain: WallChain,
+  intervalStart: number,
+  intervalEnd: number,
+  row: number,
+  isOddRow: boolean,
+  isCornerChain: boolean
+): ClassifiedPanel[] {
+  const panels: ClassifiedPanel[] = [];
+  const intervalLength = intervalEnd - intervalStart;
+  
+  if (intervalLength < MIN_CUT_MM) return panels;
+  
+  const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+  const dirX = (chain.endX - chain.startX) / chain.lengthMm;
+  const dirY = (chain.endY - chain.startY) / chain.lengthMm;
+  
+  // Handle stagger for odd rows
+  let effectiveStart = intervalStart;
+  let effectiveEnd = intervalEnd;
+  
+  // For odd rows at chain start, handle stagger cut
+  if (isOddRow && intervalStart === 0 && STAGGER_OFFSET > 0) {
+    const staggerCut = Math.min(STAGGER_OFFSET, intervalLength);
+    if (staggerCut >= MIN_CUT_MM) {
+      const posX = chain.startX + dirX * (staggerCut / 2);
+      const posZ = chain.startY + dirY * (staggerCut / 2);
+      const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+
+      const matrix = new THREE.Matrix4();
+      matrix.compose(
+        new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+        new THREE.Vector3(staggerCut / PANEL_WIDTH, 1, 1)
+      );
+
+      panels.push({ matrix, type: 'CORNER_CUT', widthMm: staggerCut, rowIndex: row });
+    }
+    effectiveStart = STAGGER_OFFSET;
+  }
+  
+  const remainingLength = effectiveEnd - effectiveStart;
+  if (remainingLength < MIN_CUT_MM) return panels;
+  
+  // Calculate how many full panels fit and the remainder
+  const fullPanelCount = Math.floor(remainingLength / PANEL_WIDTH);
+  const remainder = remainingLength - (fullPanelCount * PANEL_WIDTH);
+  
+  // LAYOUT STRATEGY: Place panels from BOTH ends, cut piece in MIDDLE
+  // Left side: floor(fullPanelCount / 2) panels
+  // Right side: ceil(fullPanelCount / 2) panels
+  // Middle: remainder (if any)
+  
+  const leftCount = Math.floor(fullPanelCount / 2);
+  const rightCount = Math.ceil(fullPanelCount / 2);
+  
+  const createPanel = (centerPos: number, width: number, type: PanelType) => {
+    const posX = chain.startX + dirX * centerPos;
+    const posZ = chain.startY + dirY * centerPos;
+    const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
+
+    const matrix = new THREE.Matrix4();
+    matrix.compose(
+      new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
+      new THREE.Vector3(width / PANEL_WIDTH, 1, 1)
+    );
+
+    return { matrix, type, widthMm: width, rowIndex: row };
+  };
+  
+  // Place LEFT side panels (from start)
+  let cursor = effectiveStart;
+  for (let i = 0; i < leftCount; i++) {
+    const centerPos = cursor + PANEL_WIDTH / 2;
+    panels.push(createPanel(centerPos, PANEL_WIDTH, 'FULL'));
+    cursor += PANEL_WIDTH;
+  }
+  
+  // Place MIDDLE cut piece (if any)
+  if (remainder >= MIN_CUT_MM) {
+    const centerPos = cursor + remainder / 2;
+    // Determine cut type based on context
+    let cutType: PanelType = 'CUT_DOUBLE'; // Middle cuts are always "double cut" (orange)
+    if (fullPanelCount === 0) {
+      // Only a cut piece in the entire interval
+      cutType = isCornerChain && isOddRow ? 'CORNER_CUT' : 'CUT_SINGLE';
+    }
+    panels.push(createPanel(centerPos, remainder, cutType));
+    cursor += remainder;
+  }
+  
+  // Place RIGHT side panels (from middle to end)
+  for (let i = 0; i < rightCount; i++) {
+    const centerPos = cursor + PANEL_WIDTH / 2;
+    panels.push(createPanel(centerPos, PANEL_WIDTH, 'FULL'));
+    cursor += PANEL_WIDTH;
+  }
+  
+  return panels;
+}
+
+// =============================================
 // BATCH RENDER: One InstancedMesh per panel type + OUTLINE mesh
 // This ensures colors are ALWAYS visible (no instanceColor issues)
 // =============================================
@@ -233,9 +340,9 @@ function BatchedPanelInstances({
   // Outline mesh ref
   const outlineMeshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Get panel geometry from hook (always returns a valid geometry)
+  // Get panel geometry from hook (ALWAYS returns valid geometry)
   const {
-    geometry: panelGeometryRaw,
+    geometry: panelGeometry,
     outlineGeometry,
     isHighFidelity,
     isLoading,
@@ -245,27 +352,19 @@ function BatchedPanelInstances({
     geometryValid,
   } = usePanelGeometry(highFidelity);
 
-  // Last-resort safety net: never let an invalid geometry kill rendering
-  const panelGeometry = useMemo(() => {
-    if (geometryValid) return panelGeometryRaw;
-    return new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
-  }, [panelGeometryRaw, geometryValid]);
-
   // Report geometry meta to parent
   useEffect(() => {
     onGeometrySourceChange?.(source);
   }, [source, onGeometrySourceChange]);
 
+  // Log geometry mode for debugging
   useEffect(() => {
-    (settings as any).__geometryMeta = { bboxSizeM, scaleApplied, source, isLoading, isHighFidelity };
-  }, [bboxSizeM, scaleApplied, source, isLoading, isHighFidelity]);
+    console.log('[BatchedPanelInstances] Geometry mode:', { 
+      highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied, geometryValid 
+    });
+  }, [highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied, geometryValid]);
 
-  // Log geometry mode
-  useEffect(() => {
-    console.log('[BatchedPanelInstances] Geometry mode:', { highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied });
-  }, [highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied]);
-
-  // Generate classified panel placements grouped by type
+  // Generate classified panel placements using new layout algorithm
   const { panelsByType, allPanels } = useMemo(() => {
     const byType: Record<PanelType, ClassifiedPanel[]> = {
       FULL: [],
@@ -285,95 +384,27 @@ function BatchedPanelInstances({
       const chainLength = chain.lengthMm;
       if (chainLength < 50) return;
       
-      const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
-      const dirX = (chain.endX - chain.startX) / chainLength;
-      const dirY = (chain.endY - chain.startY) / chainLength;
-      
       const isCornerChain = chainIndex === 0 || chainIndex === chains.length - 1;
-
       const visibleRows = Math.min(settings.currentRow, settings.maxRows);
       
       for (let row = 0; row < visibleRows; row++) {
         const isOddRow = row % 2 === 1;
-        const staggerOffset = isOddRow ? STAGGER_OFFSET : 0;
-        
         const intervals = getRemainingIntervalsForRow(chain, openings, row);
 
         intervals.forEach((interval) => {
-          const intervalStart = interval.start;
-          const intervalEnd = interval.end;
-          const intervalLength = intervalEnd - intervalStart;
+          const rowPanels = layoutPanelsForInterval(
+            chain, 
+            interval.start, 
+            interval.end, 
+            row, 
+            isOddRow, 
+            isCornerChain
+          );
           
-          if (intervalLength < MIN_CUT_MM) return;
-          
-          let cursor = intervalStart;
-          
-          // Handle stagger cut piece at the start of chain for odd rows
-          if (isOddRow && intervalStart === 0 && staggerOffset > 0) {
-            const cutWidth = Math.min(staggerOffset, intervalEnd);
-            if (cutWidth >= MIN_CUT_MM) {
-              const posX = chain.startX + dirX * (cutWidth / 2);
-              const posZ = chain.startY + dirY * (cutWidth / 2);
-              const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
-
-              const matrix = new THREE.Matrix4();
-              matrix.compose(
-                new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
-                new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-                new THREE.Vector3(cutWidth / PANEL_WIDTH, 1, 1)
-              );
-
-              // Stagger panels at chain ends are CORNER_CUT
-              const panelType: PanelType = 'CORNER_CUT';
-              const panel = { matrix, type: panelType, widthMm: cutWidth, rowIndex: row };
-              byType[panelType].push(panel);
-              all.push(panel);
-            }
-            cursor = staggerOffset;
-          }
-          
-          // Place panels from cursor to interval end
-          while (cursor < intervalEnd) {
-            const remainingLength = intervalEnd - cursor;
-            const panelWidth = Math.min(PANEL_WIDTH, remainingLength);
-            
-            if (panelWidth < MIN_CUT_MM) break;
-            
-            const panelCenter = cursor + panelWidth / 2;
-            const posX = chain.startX + dirX * panelCenter;
-            const posZ = chain.startY + dirY * panelCenter;
-            const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
-
-            const matrix = new THREE.Matrix4();
-            matrix.compose(
-              new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
-              new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-              new THREE.Vector3(panelWidth / PANEL_WIDTH, 1, 1)
-            );
-
-            // Determine panel type based on width and position
-            let panelType: PanelType = 'FULL';
-            const isCut = panelWidth < PANEL_WIDTH - 10;
-            
-            if (isCut) {
-              const isAtChainStart = cursor < 50;
-              const isAtChainEnd = chainLength - (cursor + panelWidth) < 50;
-              
-              if (isCornerChain && (isAtChainStart || isAtChainEnd) && isOddRow) {
-                panelType = 'CORNER_CUT'; // Red - corner adjustment
-              } else if (isAtChainStart || isAtChainEnd) {
-                panelType = 'CUT_SINGLE'; // Light green - cut on one side
-              } else {
-                panelType = 'CUT_DOUBLE'; // Orange - cut on both sides (middle piece)
-              }
-            }
-
-            const panel = { matrix, type: panelType, widthMm: panelWidth, rowIndex: row };
-            byType[panelType].push(panel);
+          rowPanels.forEach(panel => {
+            byType[panel.type].push(panel);
             all.push(panel);
-            
-            cursor += PANEL_WIDTH;
-          }
+          });
         });
       }
     });
@@ -392,7 +423,7 @@ function BatchedPanelInstances({
   // Total count and counts by type
   const totalCount = allPanels.length;
 
-  // Report debug meta to HUD/parent (keeps viewer from going "blind")
+  // Report debug meta to HUD/parent
   useEffect(() => {
     const panelMeshVisible = totalCount > 0;
 
@@ -449,7 +480,7 @@ function BatchedPanelInstances({
       fullMeshRef.current!.setMatrixAt(i, panel.matrix);
     });
     fullMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [panelsByType.FULL]);
+  }, [panelsByType.FULL, panelGeometry]);
 
   // Update CUT_SINGLE panels mesh
   useEffect(() => {
@@ -458,7 +489,7 @@ function BatchedPanelInstances({
       cutSingleMeshRef.current!.setMatrixAt(i, panel.matrix);
     });
     cutSingleMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [panelsByType.CUT_SINGLE]);
+  }, [panelsByType.CUT_SINGLE, panelGeometry]);
 
   // Update CUT_DOUBLE panels mesh
   useEffect(() => {
@@ -467,7 +498,7 @@ function BatchedPanelInstances({
       cutDoubleMeshRef.current!.setMatrixAt(i, panel.matrix);
     });
     cutDoubleMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [panelsByType.CUT_DOUBLE]);
+  }, [panelsByType.CUT_DOUBLE, panelGeometry]);
 
   // Update CORNER_CUT panels mesh
   useEffect(() => {
@@ -476,7 +507,7 @@ function BatchedPanelInstances({
       cornerMeshRef.current!.setMatrixAt(i, panel.matrix);
     });
     cornerMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [panelsByType.CORNER_CUT]);
+  }, [panelsByType.CORNER_CUT, panelGeometry]);
 
   // Update OUTLINE mesh (all panels get outlines)
   useEffect(() => {
@@ -485,9 +516,12 @@ function BatchedPanelInstances({
       outlineMeshRef.current!.setMatrixAt(i, panel.matrix);
     });
     outlineMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [allPanels]);
+  }, [allPanels, outlineGeometry]);
 
   const wireframe = settings.wireframe;
+
+  // Don't render if no panels
+  if (totalCount === 0) return null;
 
   return (
     <>
@@ -563,7 +597,7 @@ function BatchedPanelInstances({
         </instancedMesh>
       )}
 
-      {/* OUTLINE mesh - dark edges for all panels (permanent, not hover) */}
+      {/* OUTLINE mesh - dark edges for all panels (permanent, visible by default) */}
       {showOutlines && allPanels.length > 0 && !wireframe && (
         <instancedMesh 
           ref={outlineMeshRef} 
@@ -572,8 +606,8 @@ function BatchedPanelInstances({
         >
           <lineBasicMaterial 
             color="#1a1a1a" 
-            linewidth={1}
-            opacity={0.6}
+            linewidth={2}
+            opacity={0.8}
             transparent
           />
         </instancedMesh>
@@ -981,13 +1015,17 @@ function CameraController({ walls, settings }: { walls: WallSegment[]; settings:
 }
 
 // Opening CANDIDATES visualization (red translucent boxes at detected gap locations)
+// ALWAYS visible when candidates exist and showOpenings is true
 function CandidatesVisualization({ chains, settings, candidates = [] }: { chains: WallChain[]; settings: ViewerSettings; candidates: OpeningCandidate[] }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   
   const { volumes, count } = useMemo(() => {
     const volumes: THREE.Matrix4[] = [];
     
-    candidates.forEach(candidate => {
+    // Filter only detected (not yet converted) candidates
+    const activeCandidates = candidates.filter(c => c.status === 'detected');
+    
+    activeCandidates.forEach(candidate => {
       const chain = chains.find(c => c.id === candidate.chainId);
       if (!chain) return;
       
@@ -999,6 +1037,7 @@ function CandidatesVisualization({ chains, settings, candidates = [] }: { chains
       const centerX = chain.startX + dirX * centerOffset;
       const centerZ = chain.startY + dirY * centerOffset;
       
+      // Full wall height for candidate volume
       const heightMm = settings.maxRows * PANEL_HEIGHT;
       const centerY = heightMm / 2;
       
@@ -1026,6 +1065,7 @@ function CandidatesVisualization({ chains, settings, candidates = [] }: { chains
     meshRef.current.instanceMatrix.needsUpdate = true;
   }, [volumes, count]);
   
+  // ALWAYS show candidates if they exist
   if (count === 0) return null;
   
   const candidateGeometry = useMemo(() => 
@@ -1040,12 +1080,12 @@ function CandidatesVisualization({ chains, settings, candidates = [] }: { chains
     >
       <meshStandardMaterial 
         color={PANEL_COLORS.OPENING_VOID}
-        opacity={0.3} 
+        opacity={0.35} 
         transparent 
         side={THREE.DoubleSide}
         depthWrite={false}
         emissive={PANEL_COLORS.OPENING_VOID}
-        emissiveIntensity={0.3}
+        emissiveIntensity={0.4}
       />
     </instancedMesh>
   );
@@ -1071,12 +1111,30 @@ interface SceneProps {
 function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange, onGeometryMetaChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
-  // Build chains once for the scene
+  // Build chains once for the scene with candidate detection enabled
   const chainsResult = useMemo(
-    () => buildWallChains(walls, { snapTolMm: 5, gapTolMm: 10, angleTolDeg: 2, noiseMinMm: 100, detectCandidates: true }),
+    () => buildWallChains(walls, { 
+      snapTolMm: 5, 
+      gapTolMm: 10, 
+      angleTolDeg: 2, 
+      noiseMinMm: 100, 
+      detectCandidates: true 
+    }),
     [walls]
   );
   const chains = chainsResult.chains;
+  
+  // Merge external candidates with auto-detected ones
+  const allCandidates = useMemo(() => {
+    const detected = chainsResult.candidates || [];
+    // Filter out any candidates that have already been converted to openings
+    const externalActive = candidates.filter(c => c.status === 'detected');
+    // Combine, preferring external candidates if IDs match
+    const combinedMap = new Map<string, OpeningCandidate>();
+    detected.forEach(c => combinedMap.set(c.id, c));
+    externalActive.forEach(c => combinedMap.set(c.id, c));
+    return Array.from(combinedMap.values());
+  }, [chainsResult.candidates, candidates]);
 
   const center = useMemo(() => {
     if (walls.length === 0) return new THREE.Vector3(0, 1, 0);
@@ -1119,11 +1177,11 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
       <CameraController walls={walls} settings={settings} />
 
       {/* LIGHTING - Strong enough for colors to be ALWAYS visible */}
-      <ambientLight intensity={1.0} />
+      <ambientLight intensity={1.2} />
       <directionalLight position={[10, 20, 10]} intensity={1.5} castShadow shadow-mapSize={[2048, 2048]} />
-      <directionalLight position={[-10, 10, -10]} intensity={0.7} />
-      <directionalLight position={[0, 15, -15]} intensity={0.4} />
-      <hemisphereLight intensity={0.5} />
+      <directionalLight position={[-10, 10, -10]} intensity={0.8} />
+      <directionalLight position={[0, 15, -15]} intensity={0.5} />
+      <hemisphereLight intensity={0.6} />
 
       {showSegmentsLayer && <DXFDebugLines walls={walls} />}
       {showLinesLayer && <ChainOverlay walls={walls} />}
@@ -1166,8 +1224,9 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
       )}
       
       {/* Opening CANDIDATES visualization (detected gaps - red translucent) */}
-      {candidates.length > 0 && settings.showOpenings && (
-        <CandidatesVisualization chains={chains} settings={settings} candidates={candidates} />
+      {/* ALWAYS show if candidates exist - critical for user visibility */}
+      {allCandidates.length > 0 && (
+        <CandidatesVisualization chains={chains} settings={settings} candidates={allCandidates} />
       )}
 
       {settings.showWebs && <WebsInstances walls={walls} settings={settings} />}

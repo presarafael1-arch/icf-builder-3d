@@ -205,8 +205,8 @@ export interface ViewerSettings {
   concreteThickness: ConcreteThickness;
   
   // Panel geometry mode
-  highFidelityPanels: boolean; // Use detailed/GLB geometry instead of simple boxes
-  showOutlines: boolean; // Show panel outlines
+  highFidelityPanels: boolean; // Use detailed/GLB geometry instead of simple boxes (default OFF)
+  showOutlines: boolean; // Show panel outlines (default ON)
 }
 
 // DXF parsing result
