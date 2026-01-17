@@ -933,12 +933,13 @@ export function layoutPanelsForChainWithJunctions(
   // ============= HANDLE VERY SHORT INTERVALS =============
   const totalReservations = (isAtChainStart ? leftCap.reservationMm : 0) + (isAtChainEnd ? rightCap.reservationMm : 0);
   
-  if (intervalLength <= PANEL_WIDTH || totalReservations >= intervalLength) {
-    // Just place one panel covering the interval
-    // NOTE: createPanel expects the START position along the chain (not center)
-    const type: PanelType = intervalLength < PANEL_WIDTH ? 'CUT_DOUBLE' : (isAtChainStart ? leftCap.type : 'FULL');
+  // CRITICAL: Panel width MUST NEVER exceed PANEL_WIDTH (1200mm)
+  if (intervalLength <= PANEL_WIDTH) {
+    // Interval fits in one panel (possibly cut)
+    const panelWidth = Math.min(intervalLength, PANEL_WIDTH);
+    const type: PanelType = panelWidth < PANEL_WIDTH ? 'CUT_DOUBLE' : (isAtChainStart ? leftCap.type : 'FULL');
     const isCorner = isAtChainStart && leftCap.type === 'CORNER_CUT';
-    panels.push(createPanel(intervalStart, intervalLength, type, isCorner));
+    panels.push(createPanel(intervalStart, panelWidth, type, isCorner));
     
     // Add TOPOs if needed
     if (isAtChainStart && leftCap.addTopo) {
@@ -955,7 +956,8 @@ export function layoutPanelsForChainWithJunctions(
   let leftEdge = intervalStart;
   
   if (isAtChainStart && leftCap.reservationMm >= MIN_CUT_MM) {
-    const capWidth = Math.min(leftCap.reservationMm, intervalLength);
+    // CRITICAL: Cap width MUST NEVER exceed PANEL_WIDTH (1200mm)
+    const capWidth = Math.min(leftCap.reservationMm, intervalLength, PANEL_WIDTH);
     panels.push(createPanel(leftEdge, capWidth, leftCap.type, leftCap.type === 'CORNER_CUT'));
     leftEdge += capWidth;
     
@@ -968,7 +970,8 @@ export function layoutPanelsForChainWithJunctions(
   let rightEdge = intervalEnd;
   
   if (isAtChainEnd && rightCap.reservationMm >= MIN_CUT_MM) {
-    const capWidth = Math.min(rightCap.reservationMm, intervalEnd - leftEdge);
+    // CRITICAL: Cap width MUST NEVER exceed PANEL_WIDTH (1200mm)
+    const capWidth = Math.min(rightCap.reservationMm, intervalEnd - leftEdge, PANEL_WIDTH);
     rightEdge = intervalEnd - capWidth;
     panels.push(createPanel(rightEdge, capWidth, rightCap.type, rightCap.type === 'CORNER_CUT'));
     
