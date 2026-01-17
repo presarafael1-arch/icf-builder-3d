@@ -206,7 +206,8 @@ function BatchedPanelInstances({
   highFidelity = false,
   onInstanceCountChange,
   onCountsChange,
-  onGeometrySourceChange
+  onGeometrySourceChange,
+  onGeometryMetaChange
 }: { 
   chains: WallChain[];
   settings: ViewerSettings; 
@@ -216,6 +217,13 @@ function BatchedPanelInstances({
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
   onGeometrySourceChange?: (source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple') => void;
+  onGeometryMetaChange?: (meta: {
+    geometryBBoxM: { x: number; y: number; z: number };
+    geometryScaleApplied: number;
+    panelMeshVisible: boolean;
+    panelMeshBBoxSizeM: { x: number; y: number; z: number };
+    instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
+  }) => void;
 }) {
   // Refs for each panel type mesh
   const fullMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -225,18 +233,37 @@ function BatchedPanelInstances({
   // Outline mesh ref
   const outlineMeshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Get panel geometry from hook (simple box or detailed/GLB)
-  const { geometry: panelGeometry, outlineGeometry, isHighFidelity, isLoading, source } = usePanelGeometry(highFidelity);
+  // Get panel geometry from hook (always returns a valid geometry)
+  const {
+    geometry: panelGeometryRaw,
+    outlineGeometry,
+    isHighFidelity,
+    isLoading,
+    source,
+    bboxSizeM,
+    scaleApplied,
+    geometryValid,
+  } = usePanelGeometry(highFidelity);
 
-  // Report geometry source to parent
+  // Last-resort safety net: never let an invalid geometry kill rendering
+  const panelGeometry = useMemo(() => {
+    if (geometryValid) return panelGeometryRaw;
+    return new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
+  }, [panelGeometryRaw, geometryValid]);
+
+  // Report geometry meta to parent
   useEffect(() => {
     onGeometrySourceChange?.(source);
   }, [source, onGeometrySourceChange]);
 
+  useEffect(() => {
+    (settings as any).__geometryMeta = { bboxSizeM, scaleApplied, source, isLoading, isHighFidelity };
+  }, [bboxSizeM, scaleApplied, source, isLoading, isHighFidelity]);
+
   // Log geometry mode
   useEffect(() => {
-    console.log('[BatchedPanelInstances] Geometry mode:', { highFidelity, isHighFidelity, isLoading, source });
-  }, [highFidelity, isHighFidelity, isLoading, source]);
+    console.log('[BatchedPanelInstances] Geometry mode:', { highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied });
+  }, [highFidelity, isHighFidelity, isLoading, source, bboxSizeM, scaleApplied]);
 
   // Generate classified panel placements grouped by type
   const { panelsByType, allPanels } = useMemo(() => {
@@ -360,10 +387,45 @@ function BatchedPanelInstances({
     });
     
     return { panelsByType: byType, allPanels: all };
-  }, [chains, openings, settings.currentRow, settings.maxRows]);
+   }, [chains, openings, settings.currentRow, settings.maxRows]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;
+
+  // Report debug meta to HUD/parent (keeps viewer from going "blind")
+  useEffect(() => {
+    const panelMeshVisible = totalCount > 0;
+
+    // instance position range in meters
+    const instanceRange = (() => {
+      if (allPanels.length === 0) return undefined;
+      const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+      const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+      allPanels.forEach((p) => {
+        const pos = new THREE.Vector3();
+        pos.setFromMatrixPosition(p.matrix);
+        min.min(pos);
+        max.max(pos);
+      });
+      return { min: { x: min.x, y: min.y, z: min.z }, max: { x: max.x, y: max.y, z: max.z } };
+    })();
+
+    const panelMeshBBoxSizeM = instanceRange
+      ? {
+          x: Math.max(0, instanceRange.max.x - instanceRange.min.x),
+          y: Math.max(0, instanceRange.max.y - instanceRange.min.y),
+          z: Math.max(0, instanceRange.max.z - instanceRange.min.z),
+        }
+      : { x: 0, y: 0, z: 0 };
+
+    onGeometryMetaChange?.({
+      geometryBBoxM: bboxSizeM,
+      geometryScaleApplied: scaleApplied,
+      panelMeshVisible,
+      panelMeshBBoxSizeM,
+      instancePosRangeM: instanceRange,
+    });
+  }, [onGeometryMetaChange, bboxSizeM, scaleApplied, totalCount, allPanels]);
   
   const counts: PanelCounts = {
     FULL: panelsByType.FULL.length,
@@ -997,9 +1059,16 @@ interface SceneProps {
   onPanelCountChange?: (count: number) => void;
   onPanelCountsChange?: (counts: PanelCounts) => void;
   onGeometrySourceChange?: (source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple') => void;
+  onGeometryMetaChange?: (meta: {
+    geometryBBoxM: { x: number; y: number; z: number };
+    geometryScaleApplied: number;
+    panelMeshVisible: boolean;
+    panelMeshBBoxSizeM: { x: number; y: number; z: number };
+    instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
+  }) => void;
 }
 
-function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange }: SceneProps) {
+function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange, onGeometryMetaChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Build chains once for the scene
@@ -1087,6 +1156,7 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
           onGeometrySourceChange={onGeometrySourceChange}
+          onGeometryMetaChange={onGeometryMetaChange}
         />
       )}
 
@@ -1122,6 +1192,11 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
     FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
   });
   const [geometrySource, setGeometrySource] = useState<'glb' | 'step' | 'cache' | 'procedural' | 'simple'>('simple');
+  const [geometryBBoxM, setGeometryBBoxM] = useState<{ x: number; y: number; z: number } | undefined>(undefined);
+  const [geometryScaleApplied, setGeometryScaleApplied] = useState<number | undefined>(undefined);
+  const [panelMeshVisible, setPanelMeshVisible] = useState<boolean | undefined>(undefined);
+  const [panelMeshBBoxSizeM, setPanelMeshBBoxSizeM] = useState<{ x: number; y: number; z: number } | undefined>(undefined);
+  const [instancePosRangeM, setInstancePosRangeM] = useState<{ min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | undefined>(undefined);
   const [showLegend, setShowLegend] = useState(true);
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
@@ -1147,6 +1222,13 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
           onPanelCountChange={setPanelInstancesCount}
           onPanelCountsChange={setPanelCounts}
           onGeometrySourceChange={setGeometrySource}
+          onGeometryMetaChange={({ geometryBBoxM, geometryScaleApplied, panelMeshVisible, panelMeshBBoxSizeM, instancePosRangeM }) => {
+            setGeometryBBoxM(geometryBBoxM);
+            setGeometryScaleApplied(geometryScaleApplied);
+            setPanelMeshVisible(panelMeshVisible);
+            setPanelMeshBBoxSizeM(panelMeshBBoxSizeM);
+            setInstancePosRangeM(instancePosRangeM);
+          }}
         />
       </Canvas>
 
@@ -1167,6 +1249,11 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
         candidates={candidates}
         panelInstancesCount={panelInstancesCount}
         geometrySource={geometrySource}
+        geometryBBoxM={geometryBBoxM}
+        geometryScaleApplied={geometryScaleApplied}
+        panelMeshVisible={panelMeshVisible}
+        panelMeshBBoxSizeM={panelMeshBBoxSizeM}
+        instancePosRangeM={instancePosRangeM}
       />
 
       {bboxInfo && settings.showHelpers && (
