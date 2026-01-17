@@ -46,9 +46,10 @@ const SCALE = 0.001;
 export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
   FULL: '#E6D44A',        // YELLOW - full panel (1200mm)
   CUT_SINGLE: '#6FD36F',  // LIGHT GREEN - cut on ONE side only (meio-corte)
-  CUT_DOUBLE: '#F2992E',  // ORANGE - cut on BOTH sides (corte)
-  CORNER_CUT: '#C83A3A',  // RED - corner/stagger adjustment panels
+  CUT_DOUBLE: '#F2992E',  // ORANGE - cut on BOTH sides (corte de acerto no meio)
+  CORNER_CUT: '#C83A3A',  // RED - corner/stagger adjustment panels (arranque canto)
   TOPO: '#0F6B3E',        // DARK GREEN - topos
+  END_CUT: '#F2992E',     // ORANGE - end termination cuts (same as CUT_DOUBLE)
   OPENING_VOID: '#FF4444', // RED translucent - opening voids and candidates
 };
 
@@ -217,7 +218,7 @@ function BatchedPanelInstances({
     panelMeshBBoxSizeM: { x: number; y: number; z: number };
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
-  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number }) => void;
+  onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
 }) {
   // Refs for each panel type mesh
   const fullMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -263,10 +264,10 @@ function BatchedPanelInstances({
     if (chains.length === 0) {
       console.log('[BatchedPanelInstances] No chains, skipping panel generation');
       return { 
-        panelsByType: { FULL: [], CUT_SINGLE: [], CUT_DOUBLE: [], CORNER_CUT: [], TOPO: [] },
+        panelsByType: { FULL: [], CUT_SINGLE: [], CUT_DOUBLE: [], CORNER_CUT: [], TOPO: [], END_CUT: [] },
         allPanels: [] as ClassifiedPanel[],
         allTopos: [] as TopoPlacement[],
-        layoutStats: { lJunctions: 0, tJunctions: 0, cornerTemplatesApplied: 0, toposPlaced: 0 }
+        layoutStats: { lJunctions: 0, tJunctions: 0, freeEnds: 0, cornerTemplatesApplied: 0, toposPlaced: 0, effectiveOffset: 600 }
       };
     }
 
@@ -351,8 +352,10 @@ function BatchedPanelInstances({
     onLayoutStatsChange?.({
       lJunctions: layoutStats.lJunctions,
       tJunctions: layoutStats.tJunctions,
+      freeEnds: 'freeEnds' in layoutStats ? layoutStats.freeEnds : 0,
       templatesApplied: layoutStats.cornerTemplatesApplied,
       toposPlaced: layoutStats.toposPlaced,
+      effectiveOffset: 'effectiveOffset' in layoutStats ? layoutStats.effectiveOffset : 600,
     });
   }, [totalCount, counts.FULL, counts.CUT_SINGLE, counts.CUT_DOUBLE, counts.CORNER_CUT, counts.TOPO, layoutStats]);
 
