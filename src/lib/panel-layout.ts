@@ -871,10 +871,10 @@ export function layoutPanelsForChainWithJunctions(
   
   if (intervalLength <= PANEL_WIDTH || totalReservations >= intervalLength) {
     // Just place one panel covering the interval
-    const centerPos = intervalStart + intervalLength / 2;
+    // NOTE: createPanel expects the START position along the chain (not center)
     const type: PanelType = intervalLength < PANEL_WIDTH ? 'CUT_DOUBLE' : (isAtChainStart ? leftCap.type : 'FULL');
     const isCorner = isAtChainStart && leftCap.type === 'CORNER_CUT';
-    panels.push(createPanel(centerPos, intervalLength, type, isCorner));
+    panels.push(createPanel(intervalStart, intervalLength, type, isCorner));
     
     // Add TOPOs if needed
     if (isAtChainStart && leftCap.addTopo) {
@@ -892,8 +892,7 @@ export function layoutPanelsForChainWithJunctions(
   
   if (isAtChainStart && leftCap.reservationMm >= MIN_CUT_MM) {
     const capWidth = Math.min(leftCap.reservationMm, intervalLength);
-    const centerPos = leftEdge + capWidth / 2;
-    panels.push(createPanel(centerPos, capWidth, leftCap.type, leftCap.type === 'CORNER_CUT'));
+    panels.push(createPanel(leftEdge, capWidth, leftCap.type, leftCap.type === 'CORNER_CUT'));
     leftEdge += capWidth;
     
     if (leftCap.addTopo) {
@@ -907,8 +906,7 @@ export function layoutPanelsForChainWithJunctions(
   if (isAtChainEnd && rightCap.reservationMm >= MIN_CUT_MM) {
     const capWidth = Math.min(rightCap.reservationMm, intervalEnd - leftEdge);
     rightEdge = intervalEnd - capWidth;
-    const centerPos = rightEdge + capWidth / 2;
-    panels.push(createPanel(centerPos, capWidth, rightCap.type, rightCap.type === 'CORNER_CUT'));
+    panels.push(createPanel(rightEdge, capWidth, rightCap.type, rightCap.type === 'CORNER_CUT'));
     
     if (rightCap.addTopo) {
       topos.push(createTopo(intervalEnd, endpointInfo.endType === 'free' ? 'free_end' : 'T_junction', rightCap.topoId));
@@ -925,8 +923,7 @@ export function layoutPanelsForChainWithJunctions(
     if (fullPanelCount === 0 && remainder > 0) {
       // Only a cut piece in the middle
       if (remainder >= MIN_CUT_MM) {
-        const centerPos = leftEdge + remainder / 2;
-        panels.push(createPanel(centerPos, remainder, 'CUT_DOUBLE', false));
+        panels.push(createPanel(leftEdge, remainder, 'CUT_DOUBLE', false));
       }
     } else {
       // Fill from BOTH ends toward middle
@@ -938,23 +935,20 @@ export function layoutPanelsForChainWithJunctions(
       
       // Place LEFT side full panels
       for (let i = 0; i < leftCount; i++) {
-        const centerPos = cursor + PANEL_WIDTH / 2;
-        panels.push(createPanel(centerPos, PANEL_WIDTH, 'FULL', false));
+        panels.push(createPanel(cursor, PANEL_WIDTH, 'FULL', false));
         cursor += PANEL_WIDTH;
       }
       
       // Place MIDDLE cut piece (if any) - CUT_DOUBLE (ORANGE)
       // This is the ONLY place where ORANGE cuts go!
       if (remainder >= MIN_CUT_MM) {
-        const centerPos = cursor + remainder / 2;
-        panels.push(createPanel(centerPos, remainder, 'CUT_DOUBLE', false));
+        panels.push(createPanel(cursor, remainder, 'CUT_DOUBLE', false));
         cursor += remainder;
       }
       
       // Place RIGHT side full panels
       for (let i = 0; i < rightCount; i++) {
-        const centerPos = cursor + PANEL_WIDTH / 2;
-        panels.push(createPanel(centerPos, PANEL_WIDTH, 'FULL', false));
+        panels.push(createPanel(cursor, PANEL_WIDTH, 'FULL', false));
         cursor += PANEL_WIDTH;
       }
     }
