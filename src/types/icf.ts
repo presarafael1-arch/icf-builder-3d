@@ -203,6 +203,10 @@ export interface ViewerSettings {
   wireframe: boolean;
   rebarSpacing: RebarSpacing;
   concreteThickness: ConcreteThickness;
+  
+  // Panel geometry mode
+  highFidelityPanels: boolean; // Use detailed/GLB geometry instead of simple boxes
+  showOutlines: boolean; // Show panel outlines
 }
 
 // DXF parsing result
