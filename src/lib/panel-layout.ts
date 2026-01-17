@@ -4,22 +4,33 @@
  * RULES:
  * - TOOTH = 1200/17 ≈ 70.588mm (minimum step for cuts/offsets)
  * - Standard panel = 1200mm x 400mm
+ * - Wall block = 2 panels (ext + int) + concrete between
  * 
  * COLORS:
- * - YELLOW (FULL): full panel
+ * - YELLOW (FULL): full panel 1200mm
  * - RED (CORNER_CUT): corner/node start cut (only at L/T nodes)
  * - ORANGE (CUT_DOUBLE): adjustment cut in the MIDDLE of run
  * - GREEN (TOPO): topo product (at T-junctions and free ends)
  * 
- * L-CORNER RULES:
- *   - Row 1 (index 0): EXTERIOR = FULL, INTERIOR = CORNER_CUT (1*TOOTH cut)
- *   - Row 2 (index 1): BOTH EXTERIOR and INTERIOR = CORNER_CUT (1*TOOTH cut)
+ * CRITICAL CORNER CLOSURE RULES:
+ * ==============================
+ * Corners MUST always start at the physical corner vertex.
+ * 
+ * L-CORNER (90° junction between 2 chains):
+ *   Row 1 (index 0, odd rows):
+ *     - EXTERIOR: FULL panel starts exactly at corner
+ *     - INTERIOR: CORNER_CUT (1*TOOTH shorter) to align with exterior
+ *   Row 2 (index 1, even rows):
+ *     - BOTH sides: CORNER_CUT (1*TOOTH shorter) for interlocking
+ *   
+ * The cut on interior allows the panels to interlock properly and
+ * ensures concrete can fill the corner without gaps.
  *   
  * T-JUNCTION RULES:
  *   - "Costas" = continuous wall (main)
  *   - "Perna" = perpendicular branch
- *   - Row 1 (index 0): COSTAS = TOPO at T + full panels; PERNA = full panels from T
- *   - Row 2 (index 1): COSTAS = full panels; PERNA = CORNER_CUT + full panels
+ *   - Row 1: COSTAS = TOPO at T + full panels; PERNA = full panels from T
+ *   - Row 2: COSTAS = full panels; PERNA = CORNER_CUT + full panels
  *   
  * FREE ENDS (ponta livre):
  *   - Must have TOPO to close for concrete fill (ALWAYS)
@@ -40,6 +51,7 @@ import { PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
 const SCALE = 0.001;
 
 // TOOTH = 1200/17 - minimum cut/offset step (~70.588mm)
+// This is the alignment step that ensures exterior and interior panels interlock
 export const TOOTH = PANEL_WIDTH / 17;
 
 // Minimum cut length to place a panel
@@ -47,6 +59,9 @@ const MIN_CUT_MM = TOOTH;
 
 // Panel types
 export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT';
+
+// Side of the wall (for dual-panel layout)
+export type WallSide = 'exterior' | 'interior';
 
 // Classified panel placement (with stable ID support)
 export interface ClassifiedPanel {
@@ -58,6 +73,7 @@ export interface ClassifiedPanel {
   isCornerPiece: boolean;
   isTopoPiece?: boolean;
   isEndPiece?: boolean;
+  side?: WallSide; // Which side of the wall this panel is on
   
   // Stable ID components (for panel selection)
   panelId?: string;
@@ -439,13 +455,25 @@ interface CapResult {
   topoId: string;
 }
 
+/**
+ * Get start cap for a chain endpoint
+ * 
+ * CRITICAL: At L-corners, panels must start AT the corner vertex.
+ * - Row 1: Exterior = FULL from corner, Interior = CORNER_CUT (1*TOOTH cut)
+ * - Row 2+: Both = CORNER_CUT for interlocking
+ * 
+ * The interior cut creates the offset needed for proper exterior/interior alignment.
+ * After the first panel, both sides continue with FULL panels.
+ */
 function getStartCap(
   chain: WallChain,
   endpointInfo: ReturnType<typeof getChainEndpointInfo>,
-  row: number
+  row: number,
+  side: WallSide = 'exterior'
 ): CapResult {
   const isRow1 = row === 0;  // Index 0 = Row 1
   const isRow2 = row === 1;  // Index 1 = Row 2
+  const isOddRow = row % 2 === 0; // 0, 2, 4... (visual rows 1, 3, 5...)
   
   let reservationMm = PANEL_WIDTH;
   let type: PanelType = 'FULL';
@@ -455,41 +483,33 @@ function getStartCap(
   switch (endpointInfo.startType) {
     case 'L':
       // =============================================
-      // L-CORNER RULES (at chain START):
-      // - Row 1 (index 0): EXTERIOR (primary) = FULL, INTERIOR (secondary) = CORNER_CUT
-      // - Row 2 (index 1): BOTH = CORNER_CUT (all 4 panels)
+      // L-CORNER CLOSURE RULES (at chain START):
+      // Corner must be physically closed. Both exterior and interior
+      // panels start at the corner vertex.
+      // 
+      // Row 1 (odd visual rows):
+      //   - PRIMARY (exterior chain): FULL panel from corner
+      //   - SECONDARY (interior chain): CORNER_CUT (1*TOOTH shorter)
+      //     This shorter panel allows interlocking with perpendicular wall.
+      //
+      // Row 2 (even visual rows):
+      //   - ALL panels: CORNER_CUT for alternating pattern
       // =============================================
-      if (isRow1) {
-        // ROW 1: exterior = FULL, interior = CORNER_CUT (RED)
+      if (isOddRow) {
+        // ODD ROWS (1, 3, 5...): exterior FULL, interior CORNER_CUT
         if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY chain = exterior arm → FULL panel
+          // PRIMARY chain = exterior → starts with FULL at corner
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         } else {
-          // SECONDARY chain = interior arm → CORNER_CUT (1*TOOTH cut)
+          // SECONDARY chain = interior → CORNER_CUT for alignment
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
         }
-      } else if (isRow2) {
-        // ROW 2: ALL 4 panels get CORNER_CUT (both exterior and interior)
+      } else {
+        // EVEN ROWS (2, 4, 6...): both sides CORNER_CUT
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
-      } else {
-        // Other rows: alternate pattern like row 1 / row 2
-        if (row % 2 === 0) {
-          // Even rows (0, 2, 4...) behave like Row 1
-          if (endpointInfo.isPrimaryAtStart) {
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-          } else {
-            reservationMm = PANEL_WIDTH - TOOTH;
-            type = 'CORNER_CUT';
-          }
-        } else {
-          // Odd rows (1, 3, 5...) behave like Row 2
-          reservationMm = PANEL_WIDTH - TOOTH;
-          type = 'CORNER_CUT';
-        }
       }
       break;
       
@@ -497,23 +517,14 @@ function getStartCap(
       // T-JUNCTION
       if (endpointInfo.isBranchAtStart) {
         // This chain is the BRANCH (perna)
-        if (isRow1) {
-          // Row 1: perna starts with FULL
+        if (isOddRow) {
+          // Odd rows: branch starts with FULL from T
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-        } else if (isRow2) {
-          // Row 2: perna gets corner cut
+        } else {
+          // Even rows: branch gets corner cut for interlock
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-        } else {
-          // Alternate
-          if (row % 2 === 0) {
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-          } else {
-            reservationMm = PANEL_WIDTH - TOOTH;
-            type = 'CORNER_CUT';
-          }
         }
       } else {
         // This chain is MAIN (costas)
@@ -524,7 +535,7 @@ function getStartCap(
           addTopo = true;
           topoId = endpointInfo.startT?.nodeId || `T-start-${chain.id}`;
         } else {
-          // Row 2: costas just continues with FULL
+          // Other rows: costas continues with FULL
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         }
@@ -532,7 +543,7 @@ function getStartCap(
       break;
       
     case 'free':
-      // FREE END - always TOPO to close
+      // FREE END - always TOPO to close for concrete
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
       addTopo = true;
@@ -551,10 +562,11 @@ function getStartCap(
 function getEndCap(
   chain: WallChain,
   endpointInfo: ReturnType<typeof getChainEndpointInfo>,
-  row: number
+  row: number,
+  side: WallSide = 'exterior'
 ): CapResult {
   const isRow1 = row === 0;
-  const isRow2 = row === 1;
+  const isOddRow = row % 2 === 0; // 0, 2, 4...
   
   let reservationMm = PANEL_WIDTH;
   let type: PanelType = 'FULL';
@@ -564,58 +576,33 @@ function getEndCap(
   switch (endpointInfo.endType) {
     case 'L':
       // =============================================
-      // L-CORNER RULES (at chain END):
-      // - Row 1 (index 0): EXTERIOR (primary) = FULL, INTERIOR (secondary) = CORNER_CUT
-      // - Row 2 (index 1): BOTH = CORNER_CUT (all 4 panels)
+      // L-CORNER CLOSURE RULES (at chain END):
+      // Same logic as start - panels must reach the corner vertex.
       // =============================================
-      if (isRow1) {
-        // ROW 1: exterior = FULL, interior = CORNER_CUT (RED)
+      if (isOddRow) {
+        // ODD ROWS: exterior FULL, interior CORNER_CUT
         if (endpointInfo.isPrimaryAtEnd) {
-          // PRIMARY chain = exterior arm → FULL panel
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         } else {
-          // SECONDARY chain = interior arm → CORNER_CUT (1*TOOTH cut)
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
         }
-      } else if (isRow2) {
-        // ROW 2: ALL 4 panels get CORNER_CUT (both exterior and interior)
+      } else {
+        // EVEN ROWS: both CORNER_CUT
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
-      } else {
-        // Other rows: alternate pattern
-        if (row % 2 === 0) {
-          if (endpointInfo.isPrimaryAtEnd) {
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-          } else {
-            reservationMm = PANEL_WIDTH - TOOTH;
-            type = 'CORNER_CUT';
-          }
-        } else {
-          reservationMm = PANEL_WIDTH - TOOTH;
-          type = 'CORNER_CUT';
-        }
       }
       break;
       
     case 'T':
       if (endpointInfo.isBranchAtEnd) {
-        if (isRow1) {
+        if (isOddRow) {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-        } else if (isRow2) {
+        } else {
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-        } else {
-          if (row % 2 === 0) {
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-          } else {
-            reservationMm = PANEL_WIDTH - TOOTH;
-            type = 'CORNER_CUT';
-          }
         }
       } else {
         // MAIN (costas)
@@ -712,6 +699,8 @@ export function layoutPanelsForChainWithJunctions(
   };
   
   // Helper to create panel with stable ID
+  // NOTE: startPos is the position along the chain where the panel STARTS (edge closest to chain start)
+  // The panel's center is at startPos + width/2
   const createPanel = (
     startPos: number, 
     width: number, 
@@ -720,8 +709,8 @@ export function layoutPanelsForChainWithJunctions(
     isEnd: boolean = false,
     ruleApplied: string = 'auto'
   ): ClassifiedPanel => {
-    const centerPos = startPos + width / 2;
     const endPos = startPos + width;
+    const centerPos = startPos + width / 2;
     const posX = chain.startX + dirX * centerPos;
     const posZ = chain.startY + dirY * centerPos;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
