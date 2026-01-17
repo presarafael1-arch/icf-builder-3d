@@ -48,7 +48,7 @@ const MIN_CUT_MM = TOOTH;
 // Panel types
 export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT';
 
-// Classified panel placement
+// Classified panel placement (with stable ID support)
 export interface ClassifiedPanel {
   matrix: THREE.Matrix4;
   type: PanelType;
@@ -58,6 +58,20 @@ export interface ClassifiedPanel {
   isCornerPiece: boolean;
   isTopoPiece?: boolean;
   isEndPiece?: boolean;
+  
+  // Stable ID components (for panel selection)
+  panelId?: string;
+  slotIndex?: number;
+  startMm?: number;
+  endMm?: number;
+  cutLeftMm?: number;
+  cutRightMm?: number;
+  seedOrigin?: 'L_junction' | 'T_junction' | 'X_junction' | 'free_end' | 'middle' | 'none';
+  nearestNodeId?: string;
+  nearestNodeType?: 'L' | 'T' | 'X' | 'end' | null;
+  distanceToNodeMm?: number;
+  position?: 'first_from_node' | 'last_before_node' | 'middle' | 'single';
+  ruleApplied?: string;
 }
 
 // Topo placement for T-junctions and free ends
@@ -662,8 +676,52 @@ export function layoutPanelsForChainWithJunctions(
   
   const endpointInfo = getChainEndpointInfo(chain, lJunctions, tJunctions, freeEnds);
   
-  // Helper to create panel
-  const createPanel = (centerPos: number, width: number, type: PanelType, isCorner: boolean = false, isEnd: boolean = false): ClassifiedPanel => {
+  // Slot counter for stable IDs
+  let slotCounter = 0;
+  
+  // Helper to determine seed origin
+  const getSeedOrigin = (isStart: boolean, isEnd: boolean): ClassifiedPanel['seedOrigin'] => {
+    if (isStart) {
+      if (endpointInfo.startType === 'L') return 'L_junction';
+      if (endpointInfo.startType === 'T') return 'T_junction';
+      if (endpointInfo.startType === 'free') return 'free_end';
+    }
+    if (isEnd) {
+      if (endpointInfo.endType === 'L') return 'L_junction';
+      if (endpointInfo.endType === 'T') return 'T_junction';
+      if (endpointInfo.endType === 'free') return 'free_end';
+    }
+    return 'middle';
+  };
+  
+  // Helper to get nearest node info
+  const getNearestNode = (posAlongChain: number): { id: string | null; type: 'L' | 'T' | 'end' | null; distance: number } => {
+    const distToStart = posAlongChain;
+    const distToEnd = chain.lengthMm - posAlongChain;
+    
+    if (distToStart <= distToEnd) {
+      if (endpointInfo.startL) return { id: endpointInfo.startL.nodeId, type: 'L', distance: distToStart };
+      if (endpointInfo.startT) return { id: endpointInfo.startT.nodeId, type: 'T', distance: distToStart };
+      if (endpointInfo.hasFreeStart) return { id: `free-start-${chain.id}`, type: 'end', distance: distToStart };
+    } else {
+      if (endpointInfo.endL) return { id: endpointInfo.endL.nodeId, type: 'L', distance: distToEnd };
+      if (endpointInfo.endT) return { id: endpointInfo.endT.nodeId, type: 'T', distance: distToEnd };
+      if (endpointInfo.hasFreeEnd) return { id: `free-end-${chain.id}`, type: 'end', distance: distToEnd };
+    }
+    return { id: null, type: null, distance: Math.min(distToStart, distToEnd) };
+  };
+  
+  // Helper to create panel with stable ID
+  const createPanel = (
+    startPos: number, 
+    width: number, 
+    type: PanelType, 
+    isCorner: boolean = false, 
+    isEnd: boolean = false,
+    ruleApplied: string = 'auto'
+  ): ClassifiedPanel => {
+    const centerPos = startPos + width / 2;
+    const endPos = startPos + width;
     const posX = chain.startX + dirX * centerPos;
     const posZ = chain.startY + dirY * centerPos;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
@@ -674,8 +732,49 @@ export function layoutPanelsForChainWithJunctions(
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
       new THREE.Vector3(width / PANEL_WIDTH, 1, 1)
     );
+    
+    // Stable ID components
+    const slotIndex = slotCounter++;
+    const seedKey = `${endpointInfo.startType}-${endpointInfo.endType}`.slice(0, 8);
+    const panelId = `${chain.id.slice(0, 8)}:${row}:ext:${slotIndex}:${seedKey}`;
+    
+    // Node context
+    const nearestNode = getNearestNode(centerPos);
+    const isAtStart = startPos <= TOOTH;
+    const isAtEnd = endPos >= chain.lengthMm - TOOTH;
+    
+    // Position classification
+    let position: ClassifiedPanel['position'] = 'middle';
+    if (isAtStart && isAtEnd) position = 'single';
+    else if (isAtStart) position = 'first_from_node';
+    else if (isAtEnd) position = 'last_before_node';
+    
+    // Calculate cuts (how much was removed from full panel width)
+    const cutLeftMm = type === 'CORNER_CUT' || type === 'CUT_DOUBLE' ? PANEL_WIDTH - width : 0;
+    const cutRightMm = type === 'CUT_DOUBLE' ? PANEL_WIDTH - width : 0;
 
-    return { matrix, type, widthMm: width, rowIndex: row, chainId: chain.id, isCornerPiece: isCorner, isEndPiece: isEnd };
+    return { 
+      matrix, 
+      type, 
+      widthMm: width, 
+      rowIndex: row, 
+      chainId: chain.id, 
+      isCornerPiece: isCorner, 
+      isEndPiece: isEnd,
+      // Stable ID data
+      panelId,
+      slotIndex,
+      startMm: startPos,
+      endMm: endPos,
+      cutLeftMm,
+      cutRightMm,
+      seedOrigin: getSeedOrigin(isAtStart, isAtEnd),
+      nearestNodeId: nearestNode.id,
+      nearestNodeType: nearestNode.type,
+      distanceToNodeMm: nearestNode.distance,
+      position,
+      ruleApplied,
+    };
   };
   
   // Helper to create TOPO
