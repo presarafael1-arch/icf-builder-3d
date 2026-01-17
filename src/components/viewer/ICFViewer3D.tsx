@@ -31,6 +31,26 @@ interface ICFPanelInstancesProps {
 // Scale factor: convert mm to 3D units (1 unit = 1 meter)
 const SCALE = 0.001;
 
+// =============================================
+// PANEL COLORS - FIXED HEX VALUES (ALWAYS VISIBLE)
+// =============================================
+export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO';
+
+export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
+  FULL: '#E6D44A',        // YELLOW - full panel (1200mm)
+  CUT_SINGLE: '#6FD36F',  // LIGHT GREEN - cut on ONE side only (meio-corte)
+  CUT_DOUBLE: '#F2992E',  // ORANGE - cut on BOTH sides (corte)
+  CORNER_CUT: '#C83A3A',  // RED - corner/stagger adjustment panels
+  TOPO: '#0F6B3E',        // DARK GREEN - topos
+  OPENING_VOID: '#FF4444', // RED translucent - opening voids and candidates
+};
+
+// Stagger offset for odd rows (for interlocking pattern)
+const STAGGER_OFFSET = 600; // mm
+
+// Minimum cut length (anything less is waste)
+const MIN_CUT_MM = 100;
+
 // Calculate bounding box of WALL SEGMENTS in 3D space
 function calculateWallsBoundingBox(walls: WallSegment[], maxRows: number) {
   if (walls.length === 0) return null;
@@ -165,25 +185,6 @@ function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: Vie
   );
 }
 
-// Panel type for coloring - PERMANENT colors by classification
-export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO';
-
-// Color palette for panel types (FIXED HEX as specified)
-export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
-  FULL: '#E6D44A',        // YELLOW - full panel (1200mm)
-  CUT_SINGLE: '#6FD36F',  // LIGHT GREEN - cut on ONE side only (meio-corte)
-  CUT_DOUBLE: '#F2992E',  // ORANGE - cut on BOTH sides (corte)
-  CORNER_CUT: '#C83A3A',  // RED - corner/stagger adjustment panels
-  TOPO: '#0F6B3E',        // DARK GREEN - topos
-  OPENING_VOID: '#C83A3A', // RED translucent - opening voids
-};
-
-// Stagger offset for odd rows (for interlocking pattern)
-const STAGGER_OFFSET = 600; // mm
-
-// Minimum cut length (anything less is waste)
-const MIN_CUT_MM = 100;
-
 // Panel instance with classification
 interface ClassifiedPanel {
   matrix: THREE.Matrix4;
@@ -193,19 +194,21 @@ interface ClassifiedPanel {
 }
 
 // =============================================
-// BATCH RENDER: One InstancedMesh per panel type
+// BATCH RENDER: One InstancedMesh per panel type + OUTLINE mesh
 // This ensures colors are ALWAYS visible (no instanceColor issues)
 // =============================================
 function BatchedPanelInstances({ 
   chains, 
   settings, 
   openings = [],
+  showOutlines = true,
   onInstanceCountChange,
   onCountsChange 
 }: { 
   chains: WallChain[];
   settings: ViewerSettings; 
   openings: OpeningData[];
+  showOutlines?: boolean;
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
 }) {
@@ -214,14 +217,22 @@ function BatchedPanelInstances({
   const cutSingleMeshRef = useRef<THREE.InstancedMesh>(null);
   const cutDoubleMeshRef = useRef<THREE.InstancedMesh>(null);
   const cornerMeshRef = useRef<THREE.InstancedMesh>(null);
+  // Outline mesh ref
+  const outlineMeshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Stable geometry
+  // Stable geometry for panels
   const panelGeometry = useMemo(() => {
     return new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
   }, []);
 
+  // Outline geometry (slightly larger for visibility, using EdgesGeometry)
+  const outlineGeometry = useMemo(() => {
+    const boxGeo = new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE);
+    return new THREE.EdgesGeometry(boxGeo);
+  }, []);
+
   // Generate classified panel placements grouped by type
-  const panelsByType = useMemo(() => {
+  const { panelsByType, allPanels } = useMemo(() => {
     const byType: Record<PanelType, ClassifiedPanel[]> = {
       FULL: [],
       CUT_SINGLE: [],
@@ -229,10 +240,11 @@ function BatchedPanelInstances({
       CORNER_CUT: [],
       TOPO: [],
     };
+    const all: ClassifiedPanel[] = [];
 
     if (chains.length === 0) {
       console.log('[BatchedPanelInstances] No chains, skipping panel generation');
-      return byType;
+      return { panelsByType: byType, allPanels: all };
     }
 
     chains.forEach((chain, chainIndex) => {
@@ -279,7 +291,9 @@ function BatchedPanelInstances({
 
               // Stagger panels at chain ends are CORNER_CUT
               const panelType: PanelType = 'CORNER_CUT';
-              byType[panelType].push({ matrix, type: panelType, widthMm: cutWidth, rowIndex: row });
+              const panel = { matrix, type: panelType, widthMm: cutWidth, rowIndex: row };
+              byType[panelType].push(panel);
+              all.push(panel);
             }
             cursor = staggerOffset;
           }
@@ -320,7 +334,9 @@ function BatchedPanelInstances({
               }
             }
 
-            byType[panelType].push({ matrix, type: panelType, widthMm: panelWidth, rowIndex: row });
+            const panel = { matrix, type: panelType, widthMm: panelWidth, rowIndex: row };
+            byType[panelType].push(panel);
+            all.push(panel);
             
             cursor += PANEL_WIDTH;
           }
@@ -333,14 +349,14 @@ function BatchedPanelInstances({
       CUT_SINGLE: byType.CUT_SINGLE.length,
       CUT_DOUBLE: byType.CUT_DOUBLE.length,
       CORNER_CUT: byType.CORNER_CUT.length,
+      total: all.length,
     });
     
-    return byType;
+    return { panelsByType: byType, allPanels: all };
   }, [chains, openings, settings.currentRow, settings.maxRows]);
 
   // Total count and counts by type
-  const totalCount = panelsByType.FULL.length + panelsByType.CUT_SINGLE.length + 
-                     panelsByType.CUT_DOUBLE.length + panelsByType.CORNER_CUT.length;
+  const totalCount = allPanels.length;
   
   const counts: PanelCounts = {
     FULL: panelsByType.FULL.length,
@@ -393,6 +409,15 @@ function BatchedPanelInstances({
     cornerMeshRef.current.instanceMatrix.needsUpdate = true;
   }, [panelsByType.CORNER_CUT]);
 
+  // Update OUTLINE mesh (all panels get outlines)
+  useEffect(() => {
+    if (!outlineMeshRef.current || allPanels.length === 0) return;
+    allPanels.forEach((panel, i) => {
+      outlineMeshRef.current!.setMatrixAt(i, panel.matrix);
+    });
+    outlineMeshRef.current.instanceMatrix.needsUpdate = true;
+  }, [allPanels]);
+
   const wireframe = settings.wireframe;
 
   return (
@@ -406,11 +431,11 @@ function BatchedPanelInstances({
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.FULL}
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.1}
             wireframe={wireframe}
             emissive={PANEL_COLORS.FULL}
-            emissiveIntensity={0.1}
+            emissiveIntensity={0.15}
           />
         </instancedMesh>
       )}
@@ -424,11 +449,11 @@ function BatchedPanelInstances({
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.CUT_SINGLE}
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.1}
             wireframe={wireframe}
             emissive={PANEL_COLORS.CUT_SINGLE}
-            emissiveIntensity={0.1}
+            emissiveIntensity={0.15}
           />
         </instancedMesh>
       )}
@@ -442,11 +467,11 @@ function BatchedPanelInstances({
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.CUT_DOUBLE}
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.1}
             wireframe={wireframe}
             emissive={PANEL_COLORS.CUT_DOUBLE}
-            emissiveIntensity={0.1}
+            emissiveIntensity={0.15}
           />
         </instancedMesh>
       )}
@@ -460,11 +485,27 @@ function BatchedPanelInstances({
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.CORNER_CUT}
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.1}
             wireframe={wireframe}
             emissive={PANEL_COLORS.CORNER_CUT}
-            emissiveIntensity={0.1}
+            emissiveIntensity={0.15}
+          />
+        </instancedMesh>
+      )}
+
+      {/* OUTLINE mesh - dark edges for all panels (permanent, not hover) */}
+      {showOutlines && allPanels.length > 0 && !wireframe && (
+        <instancedMesh 
+          ref={outlineMeshRef} 
+          args={[outlineGeometry, undefined, allPanels.length]} 
+          frustumCulled={false}
+        >
+          <lineBasicMaterial 
+            color="#1a1a1a" 
+            linewidth={1}
+            opacity={0.6}
+            transparent
           />
         </instancedMesh>
       )}
@@ -493,8 +534,8 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
     const lintelTopos: THREE.Matrix4[] = [];
     const sillTopos: THREE.Matrix4[] = [];
 
-    openings.forEach(opening => {
-      const chain = chains.find(c => c.id === opening.chainId);
+    openings.forEach((opening) => {
+      const chain = chains.find((c) => c.id === opening.chainId);
       if (!chain) return;
 
       const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
@@ -634,7 +675,7 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.OPENING_VOID} 
-            opacity={0.35} 
+            opacity={0.4} 
             transparent 
             side={THREE.DoubleSide}
           />
@@ -649,10 +690,10 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.TOPO} 
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
-            emissiveIntensity={0.15}
+            emissiveIntensity={0.2}
           />
         </instancedMesh>
       )}
@@ -665,10 +706,10 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.TOPO} 
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
-            emissiveIntensity={0.15}
+            emissiveIntensity={0.2}
           />
         </instancedMesh>
       )}
@@ -681,10 +722,10 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.TOPO} 
-            roughness={0.5} 
+            roughness={0.4} 
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
-            emissiveIntensity={0.15}
+            emissiveIntensity={0.2}
           />
         </instancedMesh>
       )}
@@ -929,13 +970,13 @@ function CandidatesVisualization({ chains, settings, candidates = [] }: { chains
       frustumCulled={false}
     >
       <meshStandardMaterial 
-        color="#ff4444" 
-        opacity={0.25} 
+        color={PANEL_COLORS.OPENING_VOID}
+        opacity={0.3} 
         transparent 
         side={THREE.DoubleSide}
         depthWrite={false}
-        emissive="#ff4444"
-        emissiveIntensity={0.2}
+        emissive={PANEL_COLORS.OPENING_VOID}
+        emissiveIntensity={0.3}
       />
     </instancedMesh>
   );
@@ -946,11 +987,12 @@ interface SceneProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
+  showOutlines?: boolean;
   onPanelCountChange?: (count: number) => void;
   onPanelCountsChange?: (counts: PanelCounts) => void;
 }
 
-function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange }: SceneProps) {
+function Scene({ walls, settings, openings = [], candidates = [], showOutlines = true, onPanelCountChange, onPanelCountsChange }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Build chains once for the scene
@@ -1000,11 +1042,12 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
       />
       <CameraController walls={walls} settings={settings} />
 
-      {/* LIGHTING - Strong enough for colors to be visible */}
-      <ambientLight intensity={0.8} />
-      <directionalLight position={[10, 20, 10]} intensity={1.2} castShadow shadow-mapSize={[2048, 2048]} />
-      <directionalLight position={[-10, 10, -10]} intensity={0.5} />
-      <directionalLight position={[0, 15, -15]} intensity={0.3} />
+      {/* LIGHTING - Strong enough for colors to be ALWAYS visible */}
+      <ambientLight intensity={1.0} />
+      <directionalLight position={[10, 20, 10]} intensity={1.5} castShadow shadow-mapSize={[2048, 2048]} />
+      <directionalLight position={[-10, 10, -10]} intensity={0.7} />
+      <directionalLight position={[0, 15, -15]} intensity={0.4} />
+      <hemisphereLight intensity={0.5} />
 
       {showSegmentsLayer && <DXFDebugLines walls={walls} />}
       {showLinesLayer && <ChainOverlay walls={walls} />}
@@ -1026,12 +1069,13 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
         />
       )}
 
-      {/* ICF Panels - BATCH RENDER by type for permanent colors */}
+      {/* ICF Panels - BATCH RENDER by type for permanent colors + OUTLINES */}
       {showPanelsLayer && (
         <BatchedPanelInstances 
           chains={chains}
           settings={settings} 
-          openings={openings} 
+          openings={openings}
+          showOutlines={showOutlines}
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
         />
@@ -1060,10 +1104,11 @@ interface ICFViewer3DProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
+  showOutlines?: boolean;
   className?: string;
 }
 
-export function ICFViewer3D({ walls, settings, openings = [], candidates = [], className = '' }: ICFViewer3DProps) {
+export function ICFViewer3D({ walls, settings, openings = [], candidates = [], showOutlines = true, className = '' }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
     FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
@@ -1082,7 +1127,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
     <div className={`viewer-container ${className} relative`}>
       <Canvas
         shadows
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3 }}
         style={{ background: 'transparent' }}
       >
         <Scene 
@@ -1090,6 +1135,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
           settings={settings} 
           openings={openings}
           candidates={candidates}
+          showOutlines={showOutlines}
           onPanelCountChange={setPanelInstancesCount}
           onPanelCountsChange={setPanelCounts}
         />
@@ -1099,7 +1145,7 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
         <PanelLegend 
           visible={showLegend}
           onToggle={() => setShowLegend(!showLegend)}
-          showOpenings={settings.showOpenings && openings.length > 0}
+          showOpenings={settings.showOpenings && (openings.length > 0 || candidates.length > 0)}
           showTopos={settings.showTopos && openings.length > 0}
           counts={panelCounts}
         />
