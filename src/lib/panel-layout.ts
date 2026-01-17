@@ -171,6 +171,8 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
       primaryAngle: node.angles[primaryIdx],
       secondaryAngle: node.angles[secondaryIdx],
     });
+    
+    console.log(`[detectLJunctions] Found L at (${node.x.toFixed(0)}, ${node.y.toFixed(0)}): primary=${primaryChainId}, secondary=${secondaryChainId}`);
   });
   
   return lJunctions;
@@ -440,26 +442,33 @@ function getStartCap(
   
   switch (endpointInfo.startType) {
     case 'L':
-      // L-CORNER
+      // =============================================
+      // L-CORNER RULES (at chain START):
+      // - Row 1 (index 0): EXTERIOR (primary) = FULL, INTERIOR (secondary) = CORNER_CUT
+      // - Row 2 (index 1): BOTH = CORNER_CUT (all 4 panels)
+      // =============================================
       if (isRow1) {
-        // Row 1: exterior (primary) = FULL, interior (secondary) = RED
+        // ROW 1: exterior = FULL, interior = CORNER_CUT (RED)
         if (endpointInfo.isPrimaryAtStart) {
-          // This is the PRIMARY chain (exterior) - starts with FULL
+          // PRIMARY chain = exterior arm → FULL panel
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
+          console.log(`[L-CORNER START] Row 1, chain ${chain.id}: PRIMARY (exterior) → FULL`);
         } else {
-          // This is the SECONDARY chain (interior) - starts with corner cut
-          reservationMm = PANEL_WIDTH - TOOTH; // Cut 1*TOOTH from edge
+          // SECONDARY chain = interior arm → CORNER_CUT (1*TOOTH cut)
+          reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
+          console.log(`[L-CORNER START] Row 1, chain ${chain.id}: SECONDARY (interior) → CORNER_CUT`);
         }
       } else if (isRow2) {
-        // Row 2: BOTH sides get corner cut
+        // ROW 2: ALL 4 panels get CORNER_CUT (both exterior and interior)
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
+        console.log(`[L-CORNER START] Row 2, chain ${chain.id}: CORNER_CUT (always)`);
       } else {
-        // Other rows: alternate pattern
+        // Other rows: alternate pattern like row 1 / row 2
         if (row % 2 === 0) {
-          // Even rows (like row 1)
+          // Even rows (0, 2, 4...) behave like Row 1
           if (endpointInfo.isPrimaryAtStart) {
             reservationMm = PANEL_WIDTH;
             type = 'FULL';
@@ -468,7 +477,7 @@ function getStartCap(
             type = 'CORNER_CUT';
           }
         } else {
-          // Odd rows (like row 2)
+          // Odd rows (1, 3, 5...) behave like Row 2
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
         }
@@ -545,18 +554,31 @@ function getEndCap(
   
   switch (endpointInfo.endType) {
     case 'L':
+      // =============================================
+      // L-CORNER RULES (at chain END):
+      // - Row 1 (index 0): EXTERIOR (primary) = FULL, INTERIOR (secondary) = CORNER_CUT
+      // - Row 2 (index 1): BOTH = CORNER_CUT (all 4 panels)
+      // =============================================
       if (isRow1) {
+        // ROW 1: exterior = FULL, interior = CORNER_CUT (RED)
         if (endpointInfo.isPrimaryAtEnd) {
+          // PRIMARY chain = exterior arm → FULL panel
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
+          console.log(`[L-CORNER END] Row 1, chain ${chain.id}: PRIMARY (exterior) → FULL`);
         } else {
+          // SECONDARY chain = interior arm → CORNER_CUT (1*TOOTH cut)
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
+          console.log(`[L-CORNER END] Row 1, chain ${chain.id}: SECONDARY (interior) → CORNER_CUT`);
         }
       } else if (isRow2) {
+        // ROW 2: ALL 4 panels get CORNER_CUT (both exterior and interior)
         reservationMm = PANEL_WIDTH - TOOTH;
         type = 'CORNER_CUT';
+        console.log(`[L-CORNER END] Row 2, chain ${chain.id}: CORNER_CUT (always)`);
       } else {
+        // Other rows: alternate pattern
         if (row % 2 === 0) {
           if (endpointInfo.isPrimaryAtEnd) {
             reservationMm = PANEL_WIDTH;
