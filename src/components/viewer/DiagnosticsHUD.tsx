@@ -11,9 +11,26 @@ interface DiagnosticsHUDProps {
   candidates?: OpeningCandidate[];
   panelInstancesCount: number;
   geometrySource?: 'glb' | 'step' | 'cache' | 'procedural' | 'simple';
+  geometryBBoxM?: { x: number; y: number; z: number };
+  geometryScaleApplied?: number;
+  panelMeshVisible?: boolean;
+  panelMeshBBoxSizeM?: { x: number; y: number; z: number };
+  instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
 }
 
-export function DiagnosticsHUD({ walls, settings, openings = [], candidates = [], panelInstancesCount, geometrySource = 'simple' }: DiagnosticsHUDProps) {
+export function DiagnosticsHUD({
+  walls,
+  settings,
+  openings = [],
+  candidates = [],
+  panelInstancesCount,
+  geometrySource = 'simple',
+  geometryBBoxM,
+  geometryScaleApplied,
+  panelMeshVisible,
+  panelMeshBBoxSizeM,
+  instancePosRangeM,
+}: DiagnosticsHUDProps) {
   const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
   const { chains, stats, candidates: detectedCandidates } = chainsResult;
   
@@ -129,6 +146,45 @@ export function DiagnosticsHUD({ walls, settings, openings = [], candidates = []
            geometrySource === 'procedural' ? 'Procedural' : 'Simple'}
         </span>
       </div>
+
+      {geometryBBoxM && (
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">geoBBox:</span>
+          <span>{geometryBBoxM.x.toFixed(3)}×{geometryBBoxM.y.toFixed(3)}×{geometryBBoxM.z.toFixed(3)}m</span>
+        </div>
+      )}
+
+      {typeof geometryScaleApplied === 'number' && (
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">geoScale:</span>
+          <span>{geometryScaleApplied.toFixed(4)}x</span>
+        </div>
+      )}
+
+      {typeof panelMeshVisible === 'boolean' && (
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">panelVisible:</span>
+          <span className={panelMeshVisible ? 'text-green-400' : 'text-red-400'}>{String(panelMeshVisible)}</span>
+        </div>
+      )}
+
+      {panelMeshBBoxSizeM && (
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">panelBBox:</span>
+          <span>{panelMeshBBoxSizeM.x.toFixed(2)}×{panelMeshBBoxSizeM.y.toFixed(2)}×{panelMeshBBoxSizeM.z.toFixed(2)}m</span>
+        </div>
+      )}
+
+      {instancePosRangeM && (
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">instRange:</span>
+          <span>
+            {instancePosRangeM.min.x.toFixed(2)},{instancePosRangeM.min.y.toFixed(2)},{instancePosRangeM.min.z.toFixed(2)}
+            →
+            {instancePosRangeM.max.x.toFixed(2)},{instancePosRangeM.max.y.toFixed(2)},{instancePosRangeM.max.z.toFixed(2)}
+          </span>
+        </div>
+      )}
       
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">scale:</span>
