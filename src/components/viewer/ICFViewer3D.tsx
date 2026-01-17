@@ -227,6 +227,8 @@ function BatchedPanelInstances({
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
 }) {
+  // Selection mesh ref for highlight
+  const selectionMeshRef = useRef<THREE.InstancedMesh>(null);
   // Refs for each panel type mesh
   const fullMeshRef = useRef<THREE.InstancedMesh>(null);
   const cutSingleMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -352,6 +354,72 @@ function BatchedPanelInstances({
     OPENING_VOID: 0,
   };
 
+  // Build lookup table for instanceId -> panelId mapping
+  const lookupTables = useMemo(() => {
+    const fullLookup = new Map<number, string>();
+    const cutSingleLookup = new Map<number, string>();
+    const cutDoubleLookup = new Map<number, string>();
+    const cornerLookup = new Map<number, string>();
+    const allPanelLookup = new Map<number, string>();
+
+    panelsByType.FULL.forEach((panel, idx) => {
+      if (panel.panelId) {
+        fullLookup.set(idx, panel.panelId);
+      }
+    });
+    panelsByType.CUT_SINGLE.forEach((panel, idx) => {
+      if (panel.panelId) {
+        cutSingleLookup.set(idx, panel.panelId);
+      }
+    });
+    panelsByType.CUT_DOUBLE.forEach((panel, idx) => {
+      if (panel.panelId) {
+        cutDoubleLookup.set(idx, panel.panelId);
+      }
+    });
+    panelsByType.CORNER_CUT.forEach((panel, idx) => {
+      if (panel.panelId) {
+        cornerLookup.set(idx, panel.panelId);
+      }
+    });
+
+    // All panels lookup (for outline/selection mesh)
+    allPanels.forEach((panel, idx) => {
+      if (panel.panelId) {
+        allPanelLookup.set(idx, panel.panelId);
+      }
+    });
+
+    return { fullLookup, cutSingleLookup, cutDoubleLookup, cornerLookup, allPanelLookup };
+  }, [panelsByType, allPanels]);
+
+  // Handle click on panel mesh
+  const handlePanelClick = useCallback((meshType: string, e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    const instanceId = e.instanceId;
+    if (instanceId === undefined) return;
+
+    let panelId: string | undefined;
+    switch (meshType) {
+      case 'FULL':
+        panelId = lookupTables.fullLookup.get(instanceId);
+        break;
+      case 'CUT_SINGLE':
+        panelId = lookupTables.cutSingleLookup.get(instanceId);
+        break;
+      case 'CUT_DOUBLE':
+        panelId = lookupTables.cutDoubleLookup.get(instanceId);
+        break;
+      case 'CORNER_CUT':
+        panelId = lookupTables.cornerLookup.get(instanceId);
+        break;
+    }
+
+    if (panelId) {
+      onPanelClick?.(meshType, instanceId, panelId);
+    }
+  }, [lookupTables, onPanelClick]);
+
   // Report counts and layout stats to parent
   useEffect(() => {
     onInstanceCountChange?.(totalCount);
@@ -365,6 +433,35 @@ function BatchedPanelInstances({
       effectiveOffset: 'effectiveOffset' in layoutStats ? layoutStats.effectiveOffset : 600,
     });
   }, [totalCount, counts.FULL, counts.CUT_SINGLE, counts.CUT_DOUBLE, counts.CORNER_CUT, counts.TOPO, layoutStats]);
+
+  // Notify parent about panel data
+  useEffect(() => {
+    onPanelDataReady?.(panelsByType, allPanels, allTopos);
+  }, [panelsByType, allPanels, allTopos, onPanelDataReady]);
+
+  // Update selection highlight mesh
+  useEffect(() => {
+    if (!selectionMeshRef.current || !selectedPanelId) return;
+    
+    // Find the selected panel in allPanels
+    const selectedIdx = allPanels.findIndex(p => p.panelId === selectedPanelId);
+    if (selectedIdx >= 0) {
+      const panel = allPanels[selectedIdx];
+      // Scale up slightly for selection highlight
+      const selMatrix = panel.matrix.clone();
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      selMatrix.decompose(pos, quat, scale);
+      scale.multiplyScalar(1.05);
+      selMatrix.compose(pos, quat, scale);
+      selectionMeshRef.current.setMatrixAt(0, selMatrix);
+      selectionMeshRef.current.instanceMatrix.needsUpdate = true;
+      selectionMeshRef.current.visible = true;
+    } else {
+      selectionMeshRef.current.visible = false;
+    }
+  }, [selectedPanelId, allPanels]);
 
   // Update FULL panels mesh
   useEffect(() => {
@@ -447,6 +544,7 @@ function BatchedPanelInstances({
           ref={fullMeshRef} 
           args={[panelGeometry, undefined, panelsByType.FULL.length]} 
           frustumCulled={false}
+          onClick={(e) => handlePanelClick('FULL', e)}
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.FULL}
@@ -465,6 +563,7 @@ function BatchedPanelInstances({
           ref={cutSingleMeshRef} 
           args={[panelGeometry, undefined, panelsByType.CUT_SINGLE.length]} 
           frustumCulled={false}
+          onClick={(e) => handlePanelClick('CUT_SINGLE', e)}
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.CUT_SINGLE}
@@ -483,6 +582,7 @@ function BatchedPanelInstances({
           ref={cutDoubleMeshRef} 
           args={[panelGeometry, undefined, panelsByType.CUT_DOUBLE.length]} 
           frustumCulled={false}
+          onClick={(e) => handlePanelClick('CUT_DOUBLE', e)}
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.CUT_DOUBLE}
@@ -501,6 +601,7 @@ function BatchedPanelInstances({
           ref={cornerMeshRef} 
           args={[panelGeometry, undefined, panelsByType.CORNER_CUT.length]} 
           frustumCulled={false}
+          onClick={(e) => handlePanelClick('CORNER_CUT', e)}
         >
           <meshStandardMaterial 
             color={PANEL_COLORS.CORNER_CUT}
@@ -509,6 +610,28 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={PANEL_COLORS.CORNER_CUT}
             emissiveIntensity={0.15}
+          />
+        </instancedMesh>
+      )}
+
+      {/* SELECTION HIGHLIGHT mesh - shows selected panel with emissive glow */}
+      {selectedPanelId && (
+        <instancedMesh 
+          ref={selectionMeshRef} 
+          args={[panelGeometry, undefined, 1]} 
+          frustumCulled={false}
+          renderOrder={15}
+        >
+          <meshStandardMaterial 
+            color="#00FFFF"
+            roughness={0.2} 
+            metalness={0.5}
+            emissive="#00FFFF"
+            emissiveIntensity={0.8}
+            transparent
+            opacity={0.6}
+            depthTest={true}
+            depthWrite={false}
           />
         </instancedMesh>
       )}
@@ -1036,6 +1159,9 @@ interface SceneProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
+  selectedPanelId?: string | null;
+  onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
+  onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   onPanelCountChange?: (count: number) => void;
   onPanelCountsChange?: (counts: PanelCounts) => void;
   onGeometrySourceChange?: (source: 'glb' | 'step' | 'cache' | 'procedural' | 'simple') => void;
@@ -1049,7 +1175,20 @@ interface SceneProps {
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; templatesApplied: number; toposPlaced: number }) => void;
 }
 
-function Scene({ walls, settings, openings = [], candidates = [], onPanelCountChange, onPanelCountsChange, onGeometrySourceChange, onGeometryMetaChange, onLayoutStatsChange }: SceneProps) {
+function Scene({ 
+  walls, 
+  settings, 
+  openings = [], 
+  candidates = [], 
+  selectedPanelId,
+  onPanelClick,
+  onPanelDataReady,
+  onPanelCountChange, 
+  onPanelCountsChange, 
+  onGeometrySourceChange, 
+  onGeometryMetaChange, 
+  onLayoutStatsChange 
+}: SceneProps) {
   const controlsRef = useRef<any>(null);
 
   // Build chains once for the scene with candidate detection enabled
@@ -1152,11 +1291,14 @@ function Scene({ walls, settings, openings = [], candidates = [], onPanelCountCh
           openings={openings}
           showOutlines={settings.showOutlines}
           highFidelity={settings.highFidelityPanels}
+          selectedPanelId={selectedPanelId}
+          onPanelClick={onPanelClick}
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
           onGeometrySourceChange={onGeometrySourceChange}
           onGeometryMetaChange={onGeometryMetaChange}
           onLayoutStatsChange={onLayoutStatsChange}
+          onPanelDataReady={onPanelDataReady}
         />
       )}
 
@@ -1184,10 +1326,22 @@ interface ICFViewer3DProps {
   settings: ViewerSettings;
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
+  selectedPanelId?: string | null;
+  onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
+  onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   className?: string;
 }
 
-export function ICFViewer3D({ walls, settings, openings = [], candidates = [], className = '' }: ICFViewer3DProps) {
+export function ICFViewer3D({ 
+  walls, 
+  settings, 
+  openings = [], 
+  candidates = [], 
+  selectedPanelId,
+  onPanelClick,
+  onPanelDataReady,
+  className = '' 
+}: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
     FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
@@ -1221,6 +1375,9 @@ export function ICFViewer3D({ walls, settings, openings = [], candidates = [], c
           settings={settings} 
           openings={openings}
           candidates={candidates}
+          selectedPanelId={selectedPanelId}
+          onPanelClick={onPanelClick}
+          onPanelDataReady={onPanelDataReady}
           onPanelCountChange={setPanelInstancesCount}
           onPanelCountsChange={setPanelCounts}
           onGeometrySourceChange={setGeometrySource}

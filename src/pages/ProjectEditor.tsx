@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer, Link2, AlertTriangle, DoorOpen } from 'lucide-react';
+import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer, Link2, AlertTriangle, DoorOpen, Crosshair } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ICFViewer3D } from '@/components/viewer/ICFViewer3D';
 import { ViewerControls } from '@/components/viewer/ViewerControls';
 import { DXFImportDialog } from '@/components/dxf/DXFImportDialog';
 import { OpeningsPanel } from '@/components/openings/OpeningsPanel';
+import { PanelInspector } from '@/components/viewer/PanelInspector';
 import { Button } from '@/components/ui/button';
 // Card components imported but conditionally used
 import { Input } from '@/components/ui/input';
@@ -15,8 +16,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useOpenings } from '@/hooks/useOpenings';
+import { usePanelSelection } from '@/hooks/usePanelSelection';
+import { usePanelOverrides } from '@/hooks/usePanelOverrides';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
 import { OpeningData, OpeningCandidate } from '@/types/openings';
+import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType } from '@/types/panel-selection';
+import { ClassifiedPanel, PanelType, TopoPlacement, TOOTH } from '@/lib/panel-layout';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
 import { buildWallChains } from '@/lib/wall-chains';
 import { DXFSegment } from '@/lib/dxf-parser';
@@ -163,6 +168,29 @@ export default function ProjectEditor() {
   const [importingDXF, setImportingDXF] = useState(false);
   const [activeTab, setActiveTab] = useState('walls');
   
+  // Panel selection and inspection state
+  const { selection, selectPanel, clearSelection } = usePanelSelection();
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [allPanelsData, setAllPanelsData] = useState<ClassifiedPanel[]>([]);
+  const [selectedPanelData, setSelectedPanelData] = useState<ExtendedPanelData | null>(null);
+  
+  // Panel overrides management
+  const { 
+    overrides, 
+    conflicts, 
+    setOverride, 
+    removeOverride, 
+    lockPanel, 
+    unlockPanel, 
+    getOverride 
+  } = usePanelOverrides(id);
+  
+  // Core concrete thickness (from project settings)
+  const coreConcreteMm: CoreConcreteMm = useMemo(() => {
+    if (!project) return 150;
+    return parseInt(project.concrete_thickness) as CoreConcreteMm || 150;
+  }, [project]);
+  
   // Openings management
   const { 
     openings, 
@@ -245,6 +273,68 @@ export default function ProjectEditor() {
     setConvertedCandidateIds(updated);
     localStorage.setItem(`omni-icf-converted-candidates-${id}`, JSON.stringify(updated));
   };
+  
+  // Handler for panel data ready from 3D viewer
+  const handlePanelDataReady = useCallback((
+    panelsByType: Record<PanelType, ClassifiedPanel[]>, 
+    allPanels: ClassifiedPanel[], 
+    allTopos: TopoPlacement[]
+  ) => {
+    setAllPanelsData(allPanels);
+  }, []);
+  
+  // Handler for panel click in 3D viewer
+  const handlePanelClick = useCallback((meshType: string, instanceId: number, panelId: string) => {
+    console.log('[ProjectEditor] Panel clicked:', { meshType, instanceId, panelId });
+    selectPanel(panelId);
+    setInspectorOpen(true);
+    
+    // Find the panel data and build ExtendedPanelData
+    const panel = allPanelsData.find(p => p.panelId === panelId);
+    if (panel) {
+      const parsed = parsePanelId(panelId);
+      const wallThickness = coreThicknessToWallThickness(coreConcreteMm);
+      
+      const extended: ExtendedPanelData = {
+        panelId,
+        parsedId: parsed || { chainId: '', rowIndex: 0, side: 'exterior', slotIndex: 0, seedKey: '' },
+        startMm: panel.startMm || 0,
+        endMm: panel.endMm || 0,
+        lengthMm: panel.widthMm || 1200,
+        widthMm: panel.widthMm || 1200,
+        cutLeftMm: panel.cutLeftMm || 0,
+        cutRightMm: panel.cutRightMm || 0,
+        type: panel.type,
+        isCornerPiece: panel.type === 'CORNER_CUT',
+        isEndPiece: panel.type === 'END_CUT' || panel.type === 'CUT_SINGLE',
+        isTopoPiece: panel.type === 'TOPO',
+        chainId: panel.chainId || '',
+        rowIndex: panel.rowIndex || 0,
+        rowParity: ((panel.rowIndex || 0) % 2 === 0) ? 1 : 2,
+        side: parsed?.side || 'exterior',
+        seedOrigin: panel.seedOrigin || 'none',
+        nearestNodeId: panel.nearestNodeId || null,
+        nearestNodeType: panel.nearestNodeType || null,
+        distanceToNodeMm: panel.distanceToNodeMm || 0,
+        position: panel.position || 'middle',
+        ruleApplied: panel.ruleApplied || 'Padrão',
+        coreConcreteMm,
+        wallOuterThicknessMm: wallThickness,
+        topoType: panel.type === 'TOPO' ? getTopoType(coreConcreteMm) : null,
+        hasOverride: overrides.has(panelId),
+        isLocked: overrides.get(panelId)?.isLocked ?? false,
+      };
+      
+      setSelectedPanelData(extended);
+    }
+  }, [allPanelsData, coreConcreteMm, overrides, selectPanel]);
+  
+  // Close inspector handler
+  const handleCloseInspector = useCallback(() => {
+    setInspectorOpen(false);
+    clearSelection();
+    setSelectedPanelData(null);
+  }, [clearSelection]);
   
   useEffect(() => {
     if (id) {
@@ -652,6 +742,9 @@ export default function ProjectEditor() {
             settings={viewerSettings}
             openings={openings}
             candidates={activeCandidates}
+            selectedPanelId={selection.selectedPanelId}
+            onPanelClick={handlePanelClick}
+            onPanelDataReady={handlePanelDataReady}
             className="w-full h-full"
           />
           <ViewerControls 
@@ -659,6 +752,14 @@ export default function ProjectEditor() {
             onSettingsChange={setViewerSettings}
             onFitView={fitView}
           />
+          
+          {/* Selection Mode Indicator */}
+          {selection.selectedPanelId && (
+            <div className="absolute top-4 right-4 toolbar">
+              <Crosshair className="h-4 w-4 text-cyan-400" />
+              <span className="text-xs text-cyan-400">Painel selecionado</span>
+            </div>
+          )}
           
           {/* Project Info Overlay */}
           <div className="absolute top-4 left-4 toolbar">
@@ -682,6 +783,20 @@ export default function ProjectEditor() {
         open={dxfDialogOpen}
         onOpenChange={setDxfDialogOpen}
         onImport={handleDXFImport}
+      />
+      
+      {/* Panel Inspector */}
+      <PanelInspector
+        isOpen={inspectorOpen}
+        onClose={handleCloseInspector}
+        panelData={selectedPanelData}
+        override={selection.selectedPanelId ? getOverride(selection.selectedPanelId) : undefined}
+        conflicts={conflicts}
+        coreConcreteMm={coreConcreteMm}
+        onSetOverride={setOverride}
+        onRemoveOverride={removeOverride}
+        onLockPanel={lockPanel}
+        onUnlockPanel={unlockPanel}
       />
     </MainLayout>
   );
