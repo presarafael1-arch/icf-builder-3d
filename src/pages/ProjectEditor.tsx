@@ -20,11 +20,11 @@ import { usePanelSelection } from '@/hooks/usePanelSelection';
 import { usePanelOverrides } from '@/hooks/usePanelOverrides';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
 import { OpeningData, OpeningCandidate } from '@/types/openings';
-import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType } from '@/types/panel-selection';
+import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType, ThicknessDetectionResult } from '@/types/panel-selection';
 import { ClassifiedPanel, PanelType, TopoPlacement, TOOTH } from '@/lib/panel-layout';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
 import { buildWallChains } from '@/lib/wall-chains';
-import { DXFSegment } from '@/lib/dxf-parser';
+import { DXFSegment, NormalizedDXFResult } from '@/lib/dxf-parser';
 
 interface Project {
   id: string;
@@ -516,7 +516,8 @@ export default function ProjectEditor() {
   const handleDXFImport = async (
     segments: DXFSegment[], 
     selectedLayers: string[], 
-    stats: { originalSegments: number; afterLayerFilter: number; removedNoise: number; mergedSegments: number; finalWalls: number; totalLengthMM: number; junctionCounts: { L: number; T: number; X: number; end: number } }
+    stats: NormalizedDXFResult['stats'],
+    detectedThickness?: ThicknessDetectionResult
   ) => {
     if (!id || segments.length === 0) return;
     
@@ -567,6 +568,32 @@ export default function ProjectEditor() {
       
       // Source of truth: ONLY final walls (no concatenation)
       setWalls(newWalls);
+
+      // Update project concrete_thickness if detected from DXF
+      if (detectedThickness?.detected && detectedThickness.coreConcreteMm) {
+        const newThickness = detectedThickness.coreConcreteMm.toString() as ConcreteThickness;
+        
+        // Update in database
+        const { error: updateError } = await supabase
+          .from('projects')
+          .update({ concrete_thickness: newThickness })
+          .eq('id', id);
+        
+        if (updateError) {
+          console.error('Error updating project thickness:', updateError);
+        } else {
+          // Update local state
+          setProject(prev => prev ? { ...prev, concrete_thickness: newThickness } : prev);
+          
+          // Update viewer settings
+          setViewerSettings(prev => ({ ...prev, concreteThickness: newThickness }));
+          
+          toast({
+            title: 'Espessura detetada',
+            description: `Betão: ${detectedThickness.coreConcreteMm}mm | Parede: ${detectedThickness.wallOuterThicknessMm}mm (${detectedThickness.confidence === 'high' ? 'alta confiança' : detectedThickness.confidence === 'medium' ? 'média confiança' : 'baixa confiança'})`
+          });
+        }
+      }
 
       // Ensure viewer fits the imported plan
       fitView();
