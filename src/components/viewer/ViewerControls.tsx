@@ -298,6 +298,15 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                       onCheckedChange={() => toggleSetting('showLJunctionArrows')}
                     />
                   </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="highlight-corner-cuts" className="text-sm text-red-500 font-medium">✦ Destacar Cantos</Label>
+                    <Switch
+                      id="highlight-corner-cuts"
+                      checked={settings.highlightCornerCuts}
+                      onCheckedChange={() => toggleSetting('highlightCornerCuts')}
+                    />
+                  </div>
                 </div>
               </div>
               

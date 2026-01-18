@@ -256,6 +256,7 @@ export interface ViewerSettings {
   showMiddleZone: boolean; // Zone where orange cuts are allowed
   showThicknessDetection: boolean; // Show wall thickness detection info
   showLJunctionArrows: boolean; // Show primary/secondary arrows at L-junctions
+  highlightCornerCuts: boolean; // Highlight CORNER_CUT panels with pulsing glow
 }
 
 // DXF parsing result

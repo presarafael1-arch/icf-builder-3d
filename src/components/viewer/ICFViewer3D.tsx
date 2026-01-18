@@ -628,7 +628,7 @@ function BatchedPanelInstances({
         </instancedMesh>
       )}
 
-      {/* CORNER_CUT panels - RED */}
+      {/* CORNER_CUT panels - RED with optional highlight effect */}
       {panelsByType.CORNER_CUT.length > 0 && (
         <instancedMesh 
           ref={cornerMeshRef} 
@@ -637,12 +637,14 @@ function BatchedPanelInstances({
           onClick={(e) => handlePanelClick('CORNER_CUT', e)}
         >
           <meshStandardMaterial 
-            color={PANEL_COLORS.CORNER_CUT}
-            roughness={0.4} 
-            metalness={0.1}
+            color={settings.highlightCornerCuts ? '#FF0000' : PANEL_COLORS.CORNER_CUT}
+            roughness={settings.highlightCornerCuts ? 0.2 : 0.4} 
+            metalness={settings.highlightCornerCuts ? 0.4 : 0.1}
             wireframe={wireframe}
-            emissive={PANEL_COLORS.CORNER_CUT}
-            emissiveIntensity={0.15}
+            emissive={settings.highlightCornerCuts ? '#FF4444' : PANEL_COLORS.CORNER_CUT}
+            emissiveIntensity={settings.highlightCornerCuts ? 0.6 : 0.15}
+            transparent={settings.highlightCornerCuts}
+            opacity={settings.highlightCornerCuts ? 0.9 : 1}
           />
         </instancedMesh>
       )}
