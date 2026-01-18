@@ -968,8 +968,23 @@ export function layoutPanelsForChainWithJunctions(
     // - 220mm: 3×TOOTH (~211.76mm)
     const topoWidthMm = concreteThickness === '150' ? TOOTH * 2 : TOOTH * 3;
     
-    let posX = chain.startX + dirX * posAlongChain;
-    let posZ = chain.startY + dirY * posAlongChain;
+    // TOPO at free ends: offset 1 TOOTH inward (flush with end, facing inside)
+    // The TOPO sits at the very end of the wall, but shifted inward by 1 TOOTH
+    // so its outer face is flush with the wall end
+    let posAlongChainAdjusted = posAlongChain;
+    if (reason === 'free_end') {
+      // Determine direction: if at chain start (pos=0), offset forward; if at chain end, offset backward
+      if (posAlongChain < chain.lengthMm / 2) {
+        // At chain START - offset forward (into the wall) by half the topo width
+        posAlongChainAdjusted = posAlongChain + topoWidthMm / 2;
+      } else {
+        // At chain END - offset backward (into the wall) by half the topo width
+        posAlongChainAdjusted = posAlongChain - topoWidthMm / 2;
+      }
+    }
+    
+    let posX = chain.startX + dirX * posAlongChainAdjusted;
+    let posZ = chain.startY + dirY * posAlongChainAdjusted;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
     
     // Perpendicular direction (for offset)
