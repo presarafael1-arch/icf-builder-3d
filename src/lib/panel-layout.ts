@@ -630,7 +630,12 @@ function getStartCap(
       // - Odd rows (1,3,5): PRIMARY extends, SECONDARY is cut
       // - Even rows (2,4,6): roles swap for interlocking
       // =============================================
-      const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
+      // Offset = distance from wall centerline to panel center
+      // This is: halfConcreteOffset + FOAM_THICKNESS/2
+      // For 150mm: TOOTH + TOOTH/2 = 1.5×TOOTH ≈ 106mm
+      // For 220mm: 1.5×TOOTH + TOOTH/2 = 2×TOOTH ≈ 141mm
+      const halfConcreteOff = getHalfConcreteOffset(concreteThickness);
+      const panelCenterOffset = halfConcreteOff + FOAM_THICKNESS / 2;
       
       if (isOddRow) {
         // ODD ROWS: PRIMARY extends from corner, SECONDARY starts after PRIMARY's half-thickness
@@ -640,11 +645,11 @@ function getStartCap(
           type = 'FULL';
           startOffsetMm = 0;
         } else {
-          // SECONDARY arm - cut panel starts at half-wall-thickness offset
+          // SECONDARY arm - cut panel starts at panelCenterOffset
           // This makes exterior panels TOUCH exterior, interior TOUCH interior
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallHalfThickness;
+          startOffsetMm = panelCenterOffset;
         }
       } else {
         // EVEN ROWS: roles swap for interlocking
@@ -652,7 +657,7 @@ function getStartCap(
           // PRIMARY gets cut and offset on even rows
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallHalfThickness;
+          startOffsetMm = panelCenterOffset;
         } else {
           // SECONDARY extends on even rows
           reservationMm = PANEL_WIDTH;
@@ -724,10 +729,11 @@ function getEndCap(
       // =============================================
       // L-CORNER CLOSURE RULES (at chain END):
       // Same interlocking logic as start.
-      // PRIMARY = full panel, SECONDARY = cut panel with half-wall-thickness offset
+      // PRIMARY = full panel, SECONDARY = cut panel with panelCenterOffset
       // Roles swap on alternating rows for interlocking.
       // =============================================
-      const wallHalfThicknessEnd = getWallTotalThickness(concreteThickness) / 2;
+      const halfConcreteOffEnd = getHalfConcreteOffset(concreteThickness);
+      const panelCenterOffsetEnd = halfConcreteOffEnd + FOAM_THICKNESS / 2;
       
       if (isOddRow) {
         // ODD ROWS: PRIMARY extends, SECONDARY is cut and offset
@@ -738,14 +744,14 @@ function getEndCap(
         } else {
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallHalfThicknessEnd;
+          startOffsetMm = panelCenterOffsetEnd;
         }
       } else {
         // EVEN ROWS: roles swap
         if (endpointInfo.isPrimaryAtEnd) {
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallHalfThicknessEnd;
+          startOffsetMm = panelCenterOffsetEnd;
         } else {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
