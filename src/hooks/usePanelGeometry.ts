@@ -6,11 +6,12 @@ import {
   loadCachedGeometry, 
   cacheGeometry 
 } from '@/lib/step-to-glb-client';
+import { PANEL_WIDTH, PANEL_HEIGHT, TOOTH } from '@/types/icf';
 
-// Panel dimensions (mm)
-const PANEL_WIDTH_MM = 1200;
-const PANEL_HEIGHT_MM = 400;
-const PANEL_THICKNESS_MM = 70.59;
+// Panel dimensions (mm) - imported from icf.ts for consistency
+const PANEL_WIDTH_MM = PANEL_WIDTH; // 1200mm
+const PANEL_HEIGHT_MM = PANEL_HEIGHT; // 400mm
+const PANEL_THICKNESS_MM = TOOTH; // 1200/17 ≈ 70.59mm (exactly 1 TOOTH)
 
 // Scale factor: mm to meters (3D units)
 const SCALE = 0.001;
