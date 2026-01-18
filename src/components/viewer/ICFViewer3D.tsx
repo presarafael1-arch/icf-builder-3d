@@ -362,8 +362,25 @@ function BatchedPanelInstances({
       };
     };
     
-    // Apply overrides to all panels
-    const processedPanels = result.allPanels.map(applyOverrideToPanel);
+    // Apply overrides to all panels (including type override)
+    const applyOverrideWithType = (panel: ClassifiedPanel): ClassifiedPanel => {
+      const processed = applyOverrideToPanel(panel);
+      
+      // Check for type override
+      if (panelOverrides && panel.panelId) {
+        const override = panelOverrides.get(panel.panelId);
+        if (override?.overrideType) {
+          console.log(`[OVERRIDE-TYPE] Panel ${panel.panelId.slice(0, 16)}... type changed from ${panel.type} to ${override.overrideType}`);
+          return {
+            ...processed,
+            type: override.overrideType,
+          };
+        }
+      }
+      return processed;
+    };
+    
+    const processedPanels = result.allPanels.map(applyOverrideWithType);
     
     // Filter panels by exterior/interior visibility settings
     const filteredPanels = processedPanels.filter(panel => {
@@ -375,8 +392,8 @@ function BatchedPanelInstances({
       return true;
     });
     
-    // Helper function to filter by side visibility
-    const filterBySide = (panels: ClassifiedPanel[]) => panels.map(applyOverrideToPanel).filter(p => {
+    // Helper function to filter by side visibility and apply overrides with type
+    const filterBySide = (panels: ClassifiedPanel[]) => panels.map(applyOverrideWithType).filter(p => {
       const pid = p.panelId || '';
       const isExt = pid.includes(':ext:');
       const isInt = pid.includes(':int:');
@@ -385,15 +402,30 @@ function BatchedPanelInstances({
       return true;
     });
     
-    // Filter panelsByType for accurate counts
-    const filteredPanelsByType: Record<PanelType, ClassifiedPanel[]> = {
-      FULL: filterBySide(result.panelsByType.FULL),
-      CUT_SINGLE: filterBySide(result.panelsByType.CUT_SINGLE),
-      CUT_DOUBLE: filterBySide(result.panelsByType.CUT_DOUBLE),
-      CORNER_CUT: filterBySide(result.panelsByType.CORNER_CUT),
-      TOPO: filterBySide(result.panelsByType.TOPO),
-      END_CUT: filterBySide(result.panelsByType.END_CUT),
+    // Combine all panels and regroup by their EFFECTIVE type (after override)
+    const allProcessedPanels = filterBySide(result.allPanels);
+    
+    // Regroup panels by their effective type (respecting overrides)
+    const regroupedByType: Record<PanelType, ClassifiedPanel[]> = {
+      FULL: [],
+      CUT_SINGLE: [],
+      CUT_DOUBLE: [],
+      CORNER_CUT: [],
+      TOPO: [],
+      END_CUT: [],
     };
+    
+    allProcessedPanels.forEach(panel => {
+      const effectiveType = panel.type; // Already has overrideType applied
+      if (regroupedByType[effectiveType]) {
+        regroupedByType[effectiveType].push(panel);
+      } else {
+        // Fallback for unknown types
+        regroupedByType.FULL.push(panel);
+      }
+    });
+    
+    const filteredPanelsByType = regroupedByType;
     
     return {
       panelsByType: filteredPanelsByType,
