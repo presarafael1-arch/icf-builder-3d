@@ -12,19 +12,20 @@
  * - ORANGE (CUT_DOUBLE): adjustment cut in the MIDDLE of run
  * - GREEN (TOPO): topo product (at T-junctions and free ends)
  * 
- * CRITICAL CORNER CLOSURE RULES:
- * ==============================
- * Corners MUST always start at the physical corner vertex.
+ * CRITICAL CORNER CLOSURE RULES (LEARNED FROM USER CORRECTIONS):
+ * ===============================================================
+ * Corners MUST always close properly - panels unite both inside and outside.
  * 
  * L-CORNER (90° junction between 2 chains):
- *   Row 1 (index 0, odd rows):
- *     - EXTERIOR: FULL panel starts exactly at corner
- *     - INTERIOR: CORNER_CUT (1*TOOTH shorter) to align with exterior
- *   Row 2 (index 1, even rows):
- *     - BOTH sides: CORNER_CUT (1*TOOTH shorter) for interlocking
+ *   Row 1 (index 0):
+ *     - EXTERIOR: CORNER_CUT - recua halfThickness (2.5T p/ 220mm, 2T p/ 150mm)
+ *                 para não sobrepor com o painel perpendicular exterior
+ *     - INTERIOR: FULL - avança halfThickness em direção ao vértice
+ *                 para encontrar o painel perpendicular interior
+ *   Row 2+ (alternating):
+ *     - BOTH sides: FULL with alternating arm extension for interlocking
  *   
- * The cut on interior allows the panels to interlock properly and
- * ensures concrete can fill the corner without gaps.
+ * The exterior cut + interior advance creates proper closure at both faces.
  *   
  * T-JUNCTION RULES:
  *   - "Costas" = continuous wall (main)
@@ -758,20 +759,33 @@ function getStartCap(
       const isExtendingArm = endpointInfo.isPrimaryAtStart ? extendingArmIsPrimary : !extendingArmIsPrimary;
       const isPrimaryArm = endpointInfo.isPrimaryAtStart;
 
+      // ===========================================================================
+      // L-CORNER ROW 1 RULES (LEARNED FROM USER CORRECTIONS):
+      // 
+      // EXTERIOR: CORNER_CUT - recua 2.5T (220mm) ou 2T (150mm) para não sobrepor
+      //           com o painel perpendicular. Offset = +halfThickness (afasta do vértice)
+      // 
+      // INTERIOR: FULL - avança para encontrar o painel perpendicular no canto.
+      //           Offset = -halfThickness (avança para o vértice)
+      //
+      // Esta lógica garante que os painéis "se unem" tanto por fora como por dentro.
+      // ===========================================================================
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: iterate offset toward corner until collision
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.startL, isPrimaryArm);
-          console.log(`[L-EXT-START] isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm`);
-        } else {
-          // INTERIOR ROW 1: iterate offset away from corner, cut same amount
+          // EXTERIOR ROW 1: recua para não sobrepor com perpendicular
+          // Offset POSITIVO = afasta do vértice do canto
           const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.startL, isPrimaryArm);
           reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
           startOffsetMm = offset;
-          console.log(`[L-INT-START] isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm cut=${cut.toFixed(1)}mm`);
+          console.log(`[L-EXT-START] CORNER_CUT isPrimary=${isPrimaryArm} offset=+${offset.toFixed(1)}mm (+${(offset/TOOTH).toFixed(1)}T) cut=${cut.toFixed(1)}mm`);
+        } else {
+          // INTERIOR ROW 1: FULL avança para o vértice
+          // Offset NEGATIVO = avança em direção ao vértice do canto
+          reservationMm = PANEL_WIDTH;
+          type = 'FULL';
+          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.startL, isPrimaryArm);
+          console.log(`[L-INT-START] FULL isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm (${(startOffsetMm/TOOTH).toFixed(1)}T)`);
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
@@ -852,20 +866,24 @@ function getEndCap(
       const isExtendingArm = endpointInfo.isPrimaryAtEnd ? extendingArmIsPrimary : !extendingArmIsPrimary;
       const isPrimaryArm = endpointInfo.isPrimaryAtEnd;
 
+      // ===========================================================================
+      // L-CORNER ROW 1 RULES (LEARNED FROM USER CORRECTIONS):
+      // Same as START - exterior recua, interior avança
+      // ===========================================================================
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: iterate offset toward corner until collision
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.endL, isPrimaryArm);
-          console.log(`[L-EXT-END] isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm`);
-        } else {
-          // INTERIOR ROW 1: iterate offset away from corner, cut same amount
+          // EXTERIOR ROW 1: recua para não sobrepor com perpendicular
           const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.endL, isPrimaryArm);
           reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
           startOffsetMm = offset;
-          console.log(`[L-INT-END] isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm cut=${cut.toFixed(1)}mm`);
+          console.log(`[L-EXT-END] CORNER_CUT isPrimary=${isPrimaryArm} offset=+${offset.toFixed(1)}mm (+${(offset/TOOTH).toFixed(1)}T) cut=${cut.toFixed(1)}mm`);
+        } else {
+          // INTERIOR ROW 1: FULL avança para o vértice
+          reservationMm = PANEL_WIDTH;
+          type = 'FULL';
+          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.endL, isPrimaryArm);
+          console.log(`[L-INT-END] FULL isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm (${(startOffsetMm/TOOTH).toFixed(1)}T)`);
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
