@@ -611,39 +611,43 @@ function getStartCap(
     case 'L':
       // =============================================
       // L-CORNER CLOSURE RULES (at chain START):
-      // At intersections, panels are CUT until they meet.
-      // One panel is 1×TOOTH longer, the other meets it flush.
       // 
-      // PRIMARY arm: panel extends 1×TOOTH beyond corner vertex
-      // SECONDARY arm: panel is cut to meet flush with primary
+      // Panels must TOUCH at corners - exterior with exterior, interior with interior
+      // NO OVERLAP, NO GAP between them.
+      // 
+      // PRIMARY arm: Full panel (1200mm) from corner
+      // SECONDARY arm: Cut panel (1200-TOOTH) starting at TOOTH offset
+      // 
+      // This creates the interlocking pattern where:
+      // - Primary's panel starts at corner vertex (0mm)
+      // - Secondary's panel starts at TOOTH offset (~70.5mm) so they TOUCH
+      // - The cut makes secondary panel 1*TOOTH shorter to end at same point
       // 
       // Row alternation for interlocking:
-      // - Odd rows (1,3,5): PRIMARY gets +1×TOOTH, SECONDARY is flush
+      // - Odd rows (1,3,5): PRIMARY extends, SECONDARY is cut
       // - Even rows (2,4,6): roles swap for interlocking
       // =============================================
       if (isOddRow) {
-        // ODD ROWS: PRIMARY arm extends, SECONDARY arm is cut and offset
+        // ODD ROWS: PRIMARY extends from corner, SECONDARY is cut and offset by TOOTH
         if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY arm - panel starts at corner, extends full length
+          // PRIMARY arm - full panel starts at corner vertex
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
           startOffsetMm = 0;
         } else {
-          // SECONDARY arm - must start AFTER the primary wall thickness
-          // This prevents overlap - panel starts at wallThickness offset
-          const wallThickness = getWallTotalThickness(concreteThickness);
+          // SECONDARY arm - cut panel starts at TOOTH offset to TOUCH primary
+          // Panel is cut by 1*TOOTH so it ends flush with primary
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallThickness; // Start after clearing the primary wall
+          startOffsetMm = TOOTH; // Start at TOOTH to touch primary, not overlap
         }
       } else {
-        // EVEN ROWS: roles swap - SECONDARY extends, PRIMARY is cut and offset
+        // EVEN ROWS: roles swap for interlocking
         if (endpointInfo.isPrimaryAtStart) {
           // PRIMARY gets cut and offset on even rows
-          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallThickness;
+          startOffsetMm = TOOTH;
         } else {
           // SECONDARY extends on even rows
           reservationMm = PANEL_WIDTH;
@@ -715,8 +719,8 @@ function getEndCap(
       // =============================================
       // L-CORNER CLOSURE RULES (at chain END):
       // Same interlocking logic as start.
-      // PRIMARY extends 1×TOOTH, SECONDARY is cut flush.
-      // Roles swap on alternating rows.
+      // PRIMARY = full panel, SECONDARY = cut panel with TOOTH offset
+      // Roles swap on alternating rows for interlocking.
       // =============================================
       if (isOddRow) {
         // ODD ROWS: PRIMARY extends, SECONDARY is cut and offset
@@ -725,18 +729,16 @@ function getEndCap(
           type = 'FULL';
           startOffsetMm = 0;
         } else {
-          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallThickness; // End cap offset (from end of chain)
+          startOffsetMm = TOOTH; // End cap offset (from end of chain)
         }
       } else {
         // EVEN ROWS: roles swap
         if (endpointInfo.isPrimaryAtEnd) {
-          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = wallThickness;
+          startOffsetMm = TOOTH;
         } else {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
