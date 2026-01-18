@@ -49,18 +49,16 @@ import {
   PANEL_WIDTH, 
   PANEL_HEIGHT, 
   FOAM_THICKNESS,
+  TOOTH,
   getWallTotalThickness,
+  getHalfConcreteOffset,
   ConcreteThickness 
 } from '@/types/icf';
 
 // Scale factor: mm to meters
 const SCALE = 0.001;
 
-// TOOTH = 1200/17 - minimum cut/offset step (~70.588mm)
-// This is the alignment step that ensures exterior and interior panels interlock
-export const TOOTH = PANEL_WIDTH / 17;
-
-// Minimum cut length to place a panel
+// Minimum cut length to place a panel (1 tooth)
 const MIN_CUT_MM = TOOTH;
 
 // Panel types
@@ -860,27 +858,42 @@ export function layoutPanelsForChainWithJunctions(
     let posZ = chain.startY + dirY * centerPos;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
     
-    // For interior panels, offset perpendicular to the wall
-    // The perpendicular direction is (-dirY, dirX) for left side, (dirY, -dirX) for right side
-    // Interior panels are offset in the "inward" direction
-    // Wall total thickness: FOAM + concrete + FOAM (e.g., 66.5 + 150 + 66.5 = 283mm)
-    const wallTotalThicknessMm = getWallTotalThickness('150'); // TODO: pass from settings
-    const halfWallThickness = wallTotalThicknessMm / 2;
+    // Offset panels from DXF center line
+    // Structure: [exterior foam] [concrete core] [interior foam]
+    // DXF line is at the CENTER of the wall
+    // 
+    // For 150mm concrete (2 teeth core):
+    //   - Half concrete = 1 tooth from center
+    //   - Foam panel = 1 tooth thick
+    //   - Exterior panel inner face at: center - 1 tooth
+    //   - Interior panel inner face at: center + 1 tooth
+    //
+    // For 220mm concrete (3 teeth core):
+    //   - Half concrete = 1.5 teeth from center
+    //   - Foam panel = 1 tooth thick
+    //   - Exterior panel inner face at: center - 1.5 teeth
+    //   - Interior panel inner face at: center + 1.5 teeth
+    
+    const concreteThickness: ConcreteThickness = '150'; // TODO: pass from settings
+    const halfConcreteOffset = getHalfConcreteOffset(concreteThickness);
     
     // Perpendicular unit vector (90° CW from wall direction)
+    // Positive perpendicular = "right" side when looking along wall direction
     const perpX = -dirY;
     const perpZ = dirX;
     
     if (side === 'interior') {
-      // Offset interior panels perpendicular to wall (on the "inside" of the building)
-      // We offset by the full wall thickness minus one foam panel to place interior panel on opposite face
-      const offsetMm = wallTotalThicknessMm - FOAM_THICKNESS; // Offset from center to interior face
+      // Interior panel: offset to the positive perpendicular side (inside of building)
+      // Position at center + halfConcreteOffset (inner face of foam touches concrete)
+      const offsetMm = halfConcreteOffset + FOAM_THICKNESS / 2; // Center of foam panel
       posX += perpX * offsetMm;
       posZ += perpZ * offsetMm;
     } else {
-      // Exterior panels offset to the exterior face
-      const offsetMm = -FOAM_THICKNESS; // Slight offset for exterior positioning
-      // For now, keep exterior at the centerline position (no offset for visual simplicity)
+      // Exterior panel: offset to the negative perpendicular side (outside of building)
+      // Position at center - halfConcreteOffset (inner face of foam touches concrete)
+      const offsetMm = -(halfConcreteOffset + FOAM_THICKNESS / 2); // Center of foam panel
+      posX += perpX * offsetMm;
+      posZ += perpZ * offsetMm;
     }
 
     const matrix = new THREE.Matrix4();
