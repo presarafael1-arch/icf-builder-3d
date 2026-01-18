@@ -286,6 +286,9 @@ export default function ProjectEditor() {
     showLCornerBoundingBoxes: false, // Show bounding boxes of corner panels
   });
   
+  // Preview color for classification hover
+  const [previewColor, setPreviewColor] = useState<string | null>(null);
+  
   // Build chains from walls (with candidate detection enabled)
   const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
   const chains = chainsResult.chains;
@@ -809,6 +812,7 @@ export default function ProjectEditor() {
             candidates={activeCandidates}
             selectedPanelId={selection.selectedPanelId}
             panelOverrides={overrides}
+            previewColor={previewColor}
             onPanelClick={handlePanelClick}
             onPanelDataReady={handlePanelDataReady}
             className="w-full h-full"
@@ -863,6 +867,7 @@ export default function ProjectEditor() {
         onRemoveOverride={removeOverride}
         onLockPanel={lockPanel}
         onUnlockPanel={unlockPanel}
+        onPreviewColor={setPreviewColor}
       />
     </MainLayout>
   );

@@ -43,6 +43,7 @@ interface PanelInspectorProps {
   onRemoveOverride: (panelId: string) => void;
   onLockPanel: (panelId: string) => void;
   onUnlockPanel: (panelId: string) => void;
+  onPreviewColor?: (color: string | null) => void;
 }
 
 // Panel classification options with colors
@@ -72,6 +73,7 @@ export function PanelInspector({
   onRemoveOverride,
   onLockPanel,
   onUnlockPanel,
+  onPreviewColor,
 }: PanelInspectorProps) {
   const [editType, setEditType] = useState<PanelType | 'auto'>('auto');
   const [editCut, setEditCut] = useState<string>('');
@@ -454,6 +456,8 @@ export function PanelInspector({
                         color: isSelected ? '#000' : opt.color,
                       }}
                       onClick={() => setClassification(opt.value as PanelType)}
+                      onMouseEnter={() => onPreviewColor?.(opt.color)}
+                      onMouseLeave={() => onPreviewColor?.(null)}
                     >
                       <div 
                         className="w-2 h-2 rounded-full" 
@@ -464,8 +468,11 @@ export function PanelInspector({
                   );
                 })}
               </div>
+              <p className="text-xs text-muted-foreground text-center mt-1">
+                Hover para pré-visualizar cor
+              </p>
               {editType !== 'auto' && editType !== panelData?.type && (
-                <p className="text-xs text-muted-foreground text-center mt-1">
+                <p className="text-xs text-primary text-center mt-1">
                   Override: {PANEL_TYPE_LABELS[editType as PanelType]}
                 </p>
               )}

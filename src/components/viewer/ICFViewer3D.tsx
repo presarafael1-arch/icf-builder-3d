@@ -201,6 +201,7 @@ function BatchedPanelInstances({
   highFidelity = false,
   selectedPanelId,
   panelOverrides,
+  previewColor,
   onPanelClick,
   onInstanceCountChange,
   onCountsChange,
@@ -216,6 +217,7 @@ function BatchedPanelInstances({
   highFidelity?: boolean;
   selectedPanelId?: string | null;
   panelOverrides?: Map<string, PanelOverride>;
+  previewColor?: string | null;
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
@@ -713,6 +715,7 @@ function BatchedPanelInstances({
       )}
 
       {/* SELECTION HIGHLIGHT mesh - shows selected panel with emissive glow */}
+      {/* Uses previewColor when hovering over classification buttons, otherwise default cyan */}
       {selectedPanelId && (
         <instancedMesh 
           ref={selectionMeshRef} 
@@ -721,13 +724,13 @@ function BatchedPanelInstances({
           renderOrder={15}
         >
           <meshStandardMaterial 
-            color="#00FFFF"
+            color={previewColor || "#00FFFF"}
             roughness={0.2} 
             metalness={0.5}
-            emissive="#00FFFF"
-            emissiveIntensity={0.8}
+            emissive={previewColor || "#00FFFF"}
+            emissiveIntensity={previewColor ? 1.0 : 0.8}
             transparent
-            opacity={0.6}
+            opacity={previewColor ? 0.85 : 0.6}
             depthTest={true}
             depthWrite={false}
           />
@@ -1259,6 +1262,7 @@ interface SceneProps {
   candidates?: OpeningCandidate[];
   selectedPanelId?: string | null;
   panelOverrides?: Map<string, PanelOverride>;
+  previewColor?: string | null; // Color to preview on selected panel (hex)
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   onPanelCountChange?: (count: number) => void;
@@ -1281,6 +1285,7 @@ function Scene({
   candidates = [], 
   selectedPanelId,
   panelOverrides,
+  previewColor,
   onPanelClick,
   onPanelDataReady,
   onPanelCountChange, 
@@ -1384,6 +1389,7 @@ function Scene({
           highFidelity={settings.highFidelityPanels}
           selectedPanelId={selectedPanelId}
           panelOverrides={panelOverrides}
+          previewColor={previewColor}
           onPanelClick={onPanelClick}
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
@@ -1423,6 +1429,7 @@ interface ICFViewer3DProps {
   candidates?: OpeningCandidate[];
   selectedPanelId?: string | null;
   panelOverrides?: Map<string, PanelOverride>;
+  previewColor?: string | null; // Color to preview on selected panel (hex)
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   className?: string;
@@ -1435,6 +1442,7 @@ export function ICFViewer3D({
   candidates = [], 
   selectedPanelId,
   panelOverrides,
+  previewColor,
   onPanelClick,
   onPanelDataReady,
   className = '' 
@@ -1474,6 +1482,7 @@ export function ICFViewer3D({
           candidates={candidates}
           selectedPanelId={selectedPanelId}
           panelOverrides={panelOverrides}
+          previewColor={previewColor}
           onPanelClick={onPanelClick}
           onPanelDataReady={onPanelDataReady}
           onPanelCountChange={setPanelInstancesCount}
