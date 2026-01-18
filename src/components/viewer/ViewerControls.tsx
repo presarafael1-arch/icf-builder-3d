@@ -139,6 +139,26 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   />
                 </div>
                 
+                <div className="flex items-center justify-between pl-4">
+                  <Label htmlFor="show-exterior-panels" className="text-sm text-blue-400">↳ Exteriores</Label>
+                  <Switch
+                    id="show-exterior-panels"
+                    checked={settings.showExteriorPanels}
+                    onCheckedChange={() => toggleSetting('showExteriorPanels')}
+                    disabled={!settings.showPanels}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between pl-4">
+                  <Label htmlFor="show-interior-panels" className="text-sm text-purple-400">↳ Interiores</Label>
+                  <Switch
+                    id="show-interior-panels"
+                    checked={settings.showInteriorPanels}
+                    onCheckedChange={() => toggleSetting('showInteriorPanels')}
+                    disabled={!settings.showPanels}
+                  />
+                </div>
+                
                 <div className="flex items-center justify-between">
                   <Label htmlFor="show-topos" className="text-sm">Topos</Label>
                   <Switch

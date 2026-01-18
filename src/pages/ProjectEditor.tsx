@@ -252,6 +252,8 @@ export default function ProjectEditor() {
 
     // Layers
     showPanels: true,
+    showExteriorPanels: true,
+    showInteriorPanels: true,
     showTopos: true,
     showWebs: false,
     showTarugos: false,

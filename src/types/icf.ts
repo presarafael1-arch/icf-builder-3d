@@ -227,6 +227,8 @@ export interface ViewerSettings {
 
   // Render layers
   showPanels: boolean;
+  showExteriorPanels: boolean; // Show exterior face panels
+  showInteriorPanels: boolean; // Show interior face panels
   showTopos: boolean;
   showWebs: boolean;
   showTarugos: boolean;

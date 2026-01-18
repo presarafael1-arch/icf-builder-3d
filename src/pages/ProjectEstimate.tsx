@@ -60,6 +60,8 @@ export default function ProjectEstimate() {
 
     // Layers
     showPanels: true,
+    showExteriorPanels: true,
+    showInteriorPanels: true,
     showTopos: true,
     showWebs: true,
     showTarugos: false,
