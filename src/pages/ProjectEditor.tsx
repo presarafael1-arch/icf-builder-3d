@@ -284,6 +284,7 @@ export default function ProjectEditor() {
     highlightCornerCuts: true, // Highlight CORNER_CUT panels by default for debugging
     showLCornerOffsets: true, // Show offset labels on L-corner panels for calibration
     showLCornerBoundingBoxes: false, // Show bounding boxes of corner panels
+    showWallDimensions: false, // Show wall dimensions in TOOTH units
   });
   
   // Preview color for classification hover

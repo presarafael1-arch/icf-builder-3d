@@ -92,6 +92,7 @@ export default function ProjectEstimate() {
     highlightCornerCuts: false,
     showLCornerOffsets: false,
     showLCornerBoundingBoxes: false,
+    showWallDimensions: false,
   });
   
   useEffect(() => {
