@@ -608,69 +608,64 @@ function getStartCap(
     case 'L':
       // =============================================
       // L-CORNER CLOSURE RULES (at chain START):
-      // Corner must be physically closed. Both exterior and interior
-      // panels start at the corner vertex.
+      // At intersections, panels are CUT until they meet.
+      // One panel is 1×TOOTH longer, the other meets it flush.
       // 
-      // Row 1 (odd visual rows):
-      //   - PRIMARY (exterior chain): FULL panel from corner
-      //   - SECONDARY (interior chain): CORNER_CUT (1*TOOTH shorter)
-      //     This shorter panel allows interlocking with perpendicular wall.
-      //
-      // Row 2 (even visual rows):
-      //   - ALL panels: CORNER_CUT for alternating pattern
+      // PRIMARY arm: panel extends 1×TOOTH beyond corner vertex
+      // SECONDARY arm: panel is cut to meet flush with primary
+      // 
+      // Row alternation for interlocking:
+      // - Odd rows (1,3,5): PRIMARY gets +1×TOOTH, SECONDARY is flush
+      // - Even rows (2,4,6): roles swap for interlocking
       // =============================================
       if (isOddRow) {
-        // ODD ROWS (1, 3, 5...):
-        // - EXTERIOR side: ALWAYS FULL on BOTH arms (user rule: "por fora" é inteiro em ambos os lados do canto)
-        // - INTERIOR side: only one arm is shortened (CORNER_CUT) to create the interlock
-        if (side === 'exterior') {
+        // ODD ROWS: PRIMARY arm extends, SECONDARY arm is cut flush
+        if (endpointInfo.isPrimaryAtStart) {
+          // PRIMARY arm - extends 1×TOOTH beyond intersection
+          // Panel is FULL, positioned to extend past corner
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         } else {
-          // INTERIOR side
-          if (endpointInfo.isPrimaryAtStart) {
-            // PRIMARY arm stays FULL on interior
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-          } else {
-            // SECONDARY arm gets the 1*TOOTH cut on interior
-            reservationMm = PANEL_WIDTH - TOOTH;
-            type = 'CORNER_CUT';
-          }
-        }
-      } else {
-        // EVEN ROWS (2, 4, 6...): both sides CORNER_CUT (alternating pattern)
-        reservationMm = PANEL_WIDTH - TOOTH;
-        type = 'CORNER_CUT';
-      }
-      break;
-      
-    case 'T':
-      // T-JUNCTION
-      if (endpointInfo.isBranchAtStart) {
-        // This chain is the BRANCH (perna)
-        if (isOddRow) {
-          // Odd rows: branch starts with FULL from T
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-        } else {
-          // Even rows: branch gets corner cut for interlock
+          // SECONDARY arm - cut to meet PRIMARY flush
+          // Reduced by 1×TOOTH so it doesn't overlap
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
         }
       } else {
-        // This chain is MAIN (costas)
-        if (isRow1) {
-          // Row 1: costas gets TOPO at T-junction
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          addTopo = true;
-          topoId = endpointInfo.startT?.nodeId || `T-start-${chain.id}`;
+        // EVEN ROWS: roles swap - SECONDARY extends, PRIMARY is cut
+        if (endpointInfo.isPrimaryAtStart) {
+          // PRIMARY gets cut on even rows
+          reservationMm = PANEL_WIDTH - TOOTH;
+          type = 'CORNER_CUT';
         } else {
-          // Other rows: costas continues with FULL
+          // SECONDARY extends on even rows
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         }
+      }
+      break;
+      
+    case 'T':
+      // =============================================
+      // T-JUNCTION RULES:
+      // MAIN (costas): continuous wall - panels continue with TOPO at junction
+      // BRANCH (perna): perpendicular - cut to meet main wall flush
+      // 
+      // Branch is always cut by 1×TOOTH to fit against main wall
+      // Main wall continues, TOPO fills the gap at junction
+      // =============================================
+      if (endpointInfo.isBranchAtStart) {
+        // This chain is the BRANCH (perna) - always cut to meet main flush
+        // Cut by 1×TOOTH so it doesn't overlap with main wall panels
+        reservationMm = PANEL_WIDTH - TOOTH;
+        type = 'CORNER_CUT';
+      } else {
+        // This chain is MAIN (costas) - continues through junction
+        reservationMm = PANEL_WIDTH;
+        type = 'FULL';
+        // Add TOPO at T-junction to close the branch connection
+        addTopo = true;
+        topoId = endpointInfo.startT?.nodeId || `T-start-${chain.id}`;
       }
       break;
       
@@ -709,34 +704,13 @@ function getEndCap(
     case 'L':
       // =============================================
       // L-CORNER CLOSURE RULES (at chain END):
-      // Same logic as start - panels must reach the corner vertex.
+      // Same interlocking logic as start.
+      // PRIMARY extends 1×TOOTH, SECONDARY is cut flush.
+      // Roles swap on alternating rows.
       // =============================================
-       if (isOddRow) {
-         // ODD ROWS (1, 3, 5...):
-         // - EXTERIOR side: ALWAYS FULL on BOTH arms
-         // - INTERIOR side: only one arm is shortened (CORNER_CUT)
-         if (side === 'exterior') {
-           reservationMm = PANEL_WIDTH;
-           type = 'FULL';
-         } else {
-           if (endpointInfo.isPrimaryAtEnd) {
-             reservationMm = PANEL_WIDTH;
-             type = 'FULL';
-           } else {
-             reservationMm = PANEL_WIDTH - TOOTH;
-             type = 'CORNER_CUT';
-           }
-         }
-       } else {
-         // EVEN ROWS: both CORNER_CUT
-         reservationMm = PANEL_WIDTH - TOOTH;
-         type = 'CORNER_CUT';
-       }
-      break;
-      
-    case 'T':
-      if (endpointInfo.isBranchAtEnd) {
-        if (isOddRow) {
+      if (isOddRow) {
+        // ODD ROWS: PRIMARY extends, SECONDARY is cut
+        if (endpointInfo.isPrimaryAtEnd) {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         } else {
@@ -744,16 +718,32 @@ function getEndCap(
           type = 'CORNER_CUT';
         }
       } else {
-        // MAIN (costas)
-        if (isRow1) {
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          addTopo = true;
-          topoId = endpointInfo.endT?.nodeId || `T-end-${chain.id}`;
+        // EVEN ROWS: roles swap
+        if (endpointInfo.isPrimaryAtEnd) {
+          reservationMm = PANEL_WIDTH - TOOTH;
+          type = 'CORNER_CUT';
         } else {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
         }
+      }
+      break;
+      
+    case 'T':
+      // =============================================
+      // T-JUNCTION at chain END - same rules as start
+      // Branch is cut to meet main wall flush
+      // =============================================
+      if (endpointInfo.isBranchAtEnd) {
+        // BRANCH (perna) - cut by 1×TOOTH to fit against main
+        reservationMm = PANEL_WIDTH - TOOTH;
+        type = 'CORNER_CUT';
+      } else {
+        // MAIN (costas) - continues through
+        reservationMm = PANEL_WIDTH;
+        type = 'FULL';
+        addTopo = true;
+        topoId = endpointInfo.endT?.nodeId || `T-end-${chain.id}`;
       }
       break;
       
