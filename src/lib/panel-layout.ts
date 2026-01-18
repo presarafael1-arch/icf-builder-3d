@@ -92,6 +92,11 @@ export interface ClassifiedPanel {
   distanceToNodeMm?: number;
   position?: 'first_from_node' | 'last_before_node' | 'middle' | 'single';
   ruleApplied?: string;
+  
+  // Debug: L-corner offset info
+  lCornerOffsetMm?: number; // Offset applied at L-corner (negative = extends past, positive = starts after)
+  isPrimaryArm?: boolean;   // True if this is the PRIMARY arm at an L-corner
+  isExtendingArm?: boolean; // True if this arm is the one extending past the corner for this row
 }
 
 // Topo placement for T-junctions and free ends
@@ -578,6 +583,9 @@ interface CapResult {
   addTopo: boolean;
   topoId: string;
   startOffsetMm: number; // Offset to apply to panel start position (for avoiding overlap at corners)
+  // Debug info for L-corner visualization
+  isPrimaryArm?: boolean;
+  isExtendingArm?: boolean;
 }
 
 /**
@@ -626,6 +634,7 @@ function getStartCap(
       // Which arm is the "extending" arm for this row (interlock alternation)
       const extendingArmIsPrimary = isOddRow; // row0,2,4... => primary extends; row1,3,5... => secondary extends
       const isExtendingArm = endpointInfo.isPrimaryAtStart ? extendingArmIsPrimary : !extendingArmIsPrimary;
+      const isPrimaryArm = endpointInfo.isPrimaryAtStart;
 
       if (isRow1) {
         if (side === 'exterior') {
@@ -652,7 +661,7 @@ function getStartCap(
         startOffsetMm = isExtendingArm ? -wallHalfThickness : 0;
       }
 
-      break;
+      return { reservationMm, type, addTopo, topoId, startOffsetMm, isPrimaryArm, isExtendingArm };
     }
       
     case 'T':
@@ -722,6 +731,7 @@ function getEndCap(
 
       const extendingArmIsPrimary = isOddRow;
       const isExtendingArm = endpointInfo.isPrimaryAtEnd ? extendingArmIsPrimary : !extendingArmIsPrimary;
+      const isPrimaryArm = endpointInfo.isPrimaryAtEnd;
 
       if (isRow1) {
         if (side === 'exterior') {
@@ -745,7 +755,7 @@ function getEndCap(
         startOffsetMm = isExtendingArm ? -wallHalfThicknessEnd : 0;
       }
 
-      break;
+      return { reservationMm, type, addTopo, topoId, startOffsetMm, isPrimaryArm, isExtendingArm };
     }
       
     case 'T':
@@ -1101,6 +1111,11 @@ export function layoutPanelsForChainWithJunctions(
   // ============= PLACE LEFT CAP (if at chain start) =============
   // Apply startOffsetMm to avoid overlap at L-corners
   let leftEdge = intervalStart + leftCap.startOffsetMm;
+  
+  // DEBUG: Log L-corner offsets
+  if (isAtChainStart && endpointInfo.startType === 'L' && row === 0) {
+    console.log(`[L-CORNER START] chain=${chain.id.slice(0,8)} side=${side} isPrimary=${leftCap.isPrimaryArm} isExtending=${leftCap.isExtendingArm} offset=${leftCap.startOffsetMm.toFixed(1)}mm type=${leftCap.type} width=${leftCap.reservationMm}mm`);
+  }
   
   if (isAtChainStart && leftCap.reservationMm >= MIN_CUT_MM) {
     // CRITICAL: Cap width MUST NEVER exceed PANEL_WIDTH (1200mm)

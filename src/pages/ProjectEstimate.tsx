@@ -90,6 +90,7 @@ export default function ProjectEstimate() {
     showThicknessDetection: false,
     showLJunctionArrows: false,
     highlightCornerCuts: false,
+    showLCornerOffsets: false,
   });
   
   useEffect(() => {
