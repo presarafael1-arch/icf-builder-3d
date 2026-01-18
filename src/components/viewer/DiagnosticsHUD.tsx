@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
-import { AlertTriangle, CheckCircle, Info, Scan } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle, Info, Scan, ChevronDown, ChevronUp } from 'lucide-react';
 import { WallSegment, ViewerSettings, PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
 import { OpeningData, OpeningCandidate, calculateOpeningTopos } from '@/types/openings';
 import { buildWallChainsAutoTuned } from '@/lib/wall-chains';
+import { Button } from '@/components/ui/button';
 
 interface DiagnosticsHUDProps {
   walls: WallSegment[];
@@ -35,6 +36,8 @@ export function DiagnosticsHUD({
   layoutStats,
   panelCountsByType,
 }: DiagnosticsHUDProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
   const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   const { chains, stats, candidates: detectedCandidates } = chainsResult;
   
@@ -71,11 +74,43 @@ export function DiagnosticsHUD({
   const totalCandidates = candidates.length || detectedCandidates.length;
   const hasCandidatesWarning = chains.length > 0 && totalCandidates === 0;
   
-  return (
-    <div className="absolute bottom-20 right-4 z-10 rounded-md bg-background/95 backdrop-blur border border-border px-3 py-2 text-xs font-mono space-y-1 min-w-[220px] shadow-lg">
-      <div className="text-muted-foreground font-sans font-medium mb-2 flex items-center gap-2">
+  // Minimized view - just a toggle button with key stats
+  if (!isExpanded) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setIsExpanded(true)}
+        className="absolute bottom-20 right-4 z-10 bg-background/95 backdrop-blur shadow-lg font-mono text-xs gap-2"
+      >
         <Info className="h-3 w-3" />
-        Diagnóstico
+        <span className="text-muted-foreground">Diag:</span>
+        <span className={panelInstancesCount > 0 ? 'text-green-400' : 'text-red-400'}>
+          {panelInstancesCount}p
+        </span>
+        <span className="text-cyan-400">{chains.length}c</span>
+        {hasError && <AlertTriangle className="h-3 w-3 text-red-400" />}
+        {isOk && <CheckCircle className="h-3 w-3 text-green-400" />}
+        <ChevronUp className="h-3 w-3 ml-1" />
+      </Button>
+    );
+  }
+  
+  return (
+    <div className="absolute bottom-20 right-4 z-10 rounded-md bg-background/95 backdrop-blur border border-border px-3 py-2 text-xs font-mono space-y-1 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-lg">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-muted-foreground font-sans font-medium flex items-center gap-2">
+          <Info className="h-3 w-3" />
+          Diagnóstico
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5"
+          onClick={() => setIsExpanded(false)}
+        >
+          <ChevronDown className="h-3 w-3" />
+        </Button>
       </div>
       
       <div className="flex justify-between gap-4">
