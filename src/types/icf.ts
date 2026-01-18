@@ -36,6 +36,13 @@ export function getConcreteThicknessMm(concreteThickness: ConcreteThickness): nu
   return concreteThickness === '150' ? CONCRETE_CORE_150 : CONCRETE_CORE_220;
 }
 
+// Helper function to get offset from DXF center line to panel inner face
+// For 150mm: 1 tooth (half of 2-tooth concrete core)
+// For 220mm: 1.5 teeth (half of 3-tooth concrete core)
+export function getHalfConcreteOffset(concreteThickness: ConcreteThickness): number {
+  return concreteThickness === '150' ? TOOTH : TOOTH * 1.5;
+}
+
 // Core thickness options
 export type ConcreteThickness = '150' | '220';
 

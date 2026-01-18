@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { PanelOverride, OverrideConflict } from '@/types/panel-selection';
-import { TOOTH } from '@/lib/panel-layout';
+import { TOOTH } from '@/types/icf';
 
 const STORAGE_KEY_PREFIX = 'omni-icf-panel-overrides-';
 

@@ -27,7 +27,8 @@ import {
   CoreConcreteMm,
   getTopoType
 } from '@/types/panel-selection';
-import { PanelType, TOOTH } from '@/lib/panel-layout';
+import { PanelType } from '@/lib/panel-layout';
+import { TOOTH } from '@/types/icf';
 import { PANEL_COLORS } from '@/components/viewer/ICFViewer3D';
 
 interface PanelInspectorProps {
