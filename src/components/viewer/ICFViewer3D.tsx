@@ -1141,6 +1141,91 @@ function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
   );
 }
 
+// WASD keyboard controls for camera panning
+function WASDControls() {
+  const { camera, controls } = useThree();
+  const keysPressed = useRef<Set<string>>(new Set());
+  const PAN_SPEED = 0.15; // meters per frame
+  
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd'].includes(key)) {
+        keysPressed.current.add(key);
+      }
+    };
+    
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      keysPressed.current.delete(key);
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+  
+  // Animation loop for smooth movement
+  useEffect(() => {
+    let animationId: number;
+    
+    const animate = () => {
+      if (keysPressed.current.size > 0 && controls) {
+        const orbitControls = controls as any;
+        const target = orbitControls.target as THREE.Vector3;
+        
+        // Get camera's horizontal forward direction (ignoring Y)
+        const cameraDir = new THREE.Vector3();
+        camera.getWorldDirection(cameraDir);
+        cameraDir.y = 0;
+        cameraDir.normalize();
+        
+        // Get right direction
+        const rightDir = new THREE.Vector3();
+        rightDir.crossVectors(cameraDir, new THREE.Vector3(0, 1, 0)).normalize();
+        
+        // Calculate movement delta
+        const delta = new THREE.Vector3();
+        
+        if (keysPressed.current.has('w')) {
+          delta.add(cameraDir.clone().multiplyScalar(PAN_SPEED));
+        }
+        if (keysPressed.current.has('s')) {
+          delta.add(cameraDir.clone().multiplyScalar(-PAN_SPEED));
+        }
+        if (keysPressed.current.has('a')) {
+          delta.add(rightDir.clone().multiplyScalar(-PAN_SPEED));
+        }
+        if (keysPressed.current.has('d')) {
+          delta.add(rightDir.clone().multiplyScalar(PAN_SPEED));
+        }
+        
+        // Move both camera and target
+        camera.position.add(delta);
+        target.add(delta);
+        orbitControls.update();
+      }
+      
+      animationId = requestAnimationFrame(animate);
+    };
+    
+    animate();
+    
+    return () => {
+      cancelAnimationFrame(animationId);
+    };
+  }, [camera, controls]);
+  
+  return null;
+}
+
 // Camera controller that auto-fits to walls
 function CameraController({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
   const { camera, controls } = useThree();
@@ -1382,6 +1467,7 @@ function Scene({
         minDistance={1}
         maxDistance={2000}
       />
+      <WASDControls />
       <CameraController walls={walls} settings={settings} />
 
       {/* LIGHTING - Strong enough for colors to be ALWAYS visible */}
