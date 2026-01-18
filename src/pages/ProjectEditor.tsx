@@ -808,6 +808,7 @@ export default function ProjectEditor() {
             openings={openings}
             candidates={activeCandidates}
             selectedPanelId={selection.selectedPanelId}
+            panelOverrides={overrides}
             onPanelClick={handlePanelClick}
             onPanelDataReady={handlePanelDataReady}
             className="w-full h-full"
