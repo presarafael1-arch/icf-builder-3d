@@ -2,7 +2,7 @@ import { useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { Canvas, useThree, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
-import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings } from '@/types/icf';
+import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings, TOOTH } from '@/types/icf';
 import { OpeningData, OpeningCandidate, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, buildWallChainsAutoTuned, WallChain } from '@/lib/wall-chains';
@@ -19,7 +19,7 @@ import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
 import { DebugVisualizations } from './DebugVisualizations';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
-import { CoreConcreteMm, ExtendedPanelData } from '@/types/panel-selection';
+import { CoreConcreteMm, ExtendedPanelData, PanelOverride } from '@/types/panel-selection';
 
 // Panel counts by type for legend
 export interface PanelCounts {
@@ -200,6 +200,7 @@ function BatchedPanelInstances({
   showOutlines = true,
   highFidelity = false,
   selectedPanelId,
+  panelOverrides,
   onPanelClick,
   onInstanceCountChange,
   onCountsChange,
@@ -214,6 +215,7 @@ function BatchedPanelInstances({
   showOutlines?: boolean;
   highFidelity?: boolean;
   selectedPanelId?: string | null;
+  panelOverrides?: Map<string, PanelOverride>;
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onInstanceCountChange?: (count: number) => void;
   onCountsChange?: (counts: PanelCounts) => void;
@@ -300,8 +302,69 @@ function BatchedPanelInstances({
       stats: result.stats,
     });
     
+    // Helper function to apply override to a panel's matrix
+    const applyOverrideToPanel = (panel: ClassifiedPanel): ClassifiedPanel => {
+      if (!panelOverrides || !panel.panelId) return panel;
+      
+      const override = panelOverrides.get(panel.panelId);
+      if (!override) return panel;
+      
+      // Check if we have any geometry overrides to apply
+      const hasOffsetOverride = override.offsetMm !== undefined && override.offsetMm !== 0;
+      const hasWidthOverride = override.widthMm !== undefined && override.widthMm !== panel.widthMm;
+      
+      if (!hasOffsetOverride && !hasWidthOverride) return panel;
+      
+      // Decompose the current matrix
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      panel.matrix.decompose(pos, quat, scale);
+      
+      // Get the panel's chain to calculate direction
+      const chain = chains.find(c => c.id === panel.chainId);
+      if (!chain) return panel;
+      
+      const dirX = (chain.endX - chain.startX) / chain.lengthMm;
+      const dirZ = (chain.endY - chain.startY) / chain.lengthMm;
+      
+      // Apply offset override (move along wall direction)
+      if (hasOffsetOverride && override.offsetMm !== undefined) {
+        const offsetMm = override.offsetMm;
+        pos.x += dirX * offsetMm * SCALE;
+        pos.z += dirZ * offsetMm * SCALE;
+      }
+      
+      // Apply width override (change scale)
+      if (hasWidthOverride && override.widthMm !== undefined) {
+        const originalWidth = panel.widthMm;
+        const newWidth = override.widthMm;
+        scale.x = newWidth / PANEL_WIDTH;
+        
+        // Also adjust position if width changed (keep panel anchored at start)
+        const widthDiff = newWidth - originalWidth;
+        pos.x += dirX * (widthDiff / 2) * SCALE;
+        pos.z += dirZ * (widthDiff / 2) * SCALE;
+      }
+      
+      // Recompose the matrix
+      const newMatrix = new THREE.Matrix4();
+      newMatrix.compose(pos, quat, scale);
+      
+      console.log(`[OVERRIDE-APPLIED] Panel ${panel.panelId.slice(0, 16)}... offset=${override.offsetMm ?? 0}mm, width=${override.widthMm ?? panel.widthMm}mm`);
+      
+      return {
+        ...panel,
+        matrix: newMatrix,
+        widthMm: override.widthMm ?? panel.widthMm,
+      };
+    };
+    
+    // Apply overrides to all panels
+    const processedPanels = result.allPanels.map(applyOverrideToPanel);
+    
     // Filter panels by exterior/interior visibility settings
-    const filteredPanels = result.allPanels.filter(panel => {
+    const filteredPanels = processedPanels.filter(panel => {
       const panelId = panel.panelId || '';
       const isExterior = panelId.includes(':ext:');
       const isInterior = panelId.includes(':int:');
@@ -311,7 +374,7 @@ function BatchedPanelInstances({
     });
     
     // Helper function to filter by side visibility
-    const filterBySide = (panels: ClassifiedPanel[]) => panels.filter(p => {
+    const filterBySide = (panels: ClassifiedPanel[]) => panels.map(applyOverrideToPanel).filter(p => {
       const pid = p.panelId || '';
       const isExt = pid.includes(':ext:');
       const isInt = pid.includes(':int:');
@@ -336,7 +399,7 @@ function BatchedPanelInstances({
       allTopos: result.allTopos,
       layoutStats: result.stats,
     };
-  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels]);
+  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, panelOverrides]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;
@@ -1195,6 +1258,7 @@ interface SceneProps {
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
   selectedPanelId?: string | null;
+  panelOverrides?: Map<string, PanelOverride>;
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   onPanelCountChange?: (count: number) => void;
@@ -1216,6 +1280,7 @@ function Scene({
   openings = [], 
   candidates = [], 
   selectedPanelId,
+  panelOverrides,
   onPanelClick,
   onPanelDataReady,
   onPanelCountChange, 
@@ -1318,6 +1383,7 @@ function Scene({
           showOutlines={settings.showOutlines}
           highFidelity={settings.highFidelityPanels}
           selectedPanelId={selectedPanelId}
+          panelOverrides={panelOverrides}
           onPanelClick={onPanelClick}
           onInstanceCountChange={onPanelCountChange}
           onCountsChange={onPanelCountsChange}
@@ -1356,6 +1422,7 @@ interface ICFViewer3DProps {
   openings?: OpeningData[];
   candidates?: OpeningCandidate[];
   selectedPanelId?: string | null;
+  panelOverrides?: Map<string, PanelOverride>;
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   className?: string;
@@ -1367,6 +1434,7 @@ export function ICFViewer3D({
   openings = [], 
   candidates = [], 
   selectedPanelId,
+  panelOverrides,
   onPanelClick,
   onPanelDataReady,
   className = '' 
@@ -1405,6 +1473,7 @@ export function ICFViewer3D({
           openings={openings}
           candidates={candidates}
           selectedPanelId={selectedPanelId}
+          panelOverrides={panelOverrides}
           onPanelClick={onPanelClick}
           onPanelDataReady={onPanelDataReady}
           onPanelCountChange={setPanelInstancesCount}
