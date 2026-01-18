@@ -107,11 +107,9 @@ export function PanelInspector({
     setEditWidth(panelData?.widthMm ?? PANEL_WIDTH);
   };
   
-  // Move panel by half-TOOTH steps (TOOTH / 2)
-  const HALF_TOOTH = TOOTH / 2;
-  
+  // Move panel by full TOOTH steps only
   const movePanel = useCallback((direction: 'left' | 'right') => {
-    const step = direction === 'left' ? -HALF_TOOTH : HALF_TOOTH;
+    const step = direction === 'left' ? -TOOTH : TOOTH;
     const newOffset = Math.round((editOffset + step) * 100) / 100;
     setEditOffset(newOffset);
     
