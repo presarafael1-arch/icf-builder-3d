@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, Minus, Plus, MoveHorizontal } from 'lucide-react';
+import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, MoveHorizontal } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -98,9 +98,11 @@ export function PanelInspector({
     setEditWidth(panelData?.widthMm ?? PANEL_WIDTH);
   };
   
-  // Move panel by TOOTH steps
+  // Move panel by half-TOOTH steps (TOOTH / 2)
+  const HALF_TOOTH = TOOTH / 2;
+  
   const movePanel = useCallback((direction: 'left' | 'right') => {
-    const step = direction === 'left' ? -TOOTH : TOOTH;
+    const step = direction === 'left' ? -HALF_TOOTH : HALF_TOOTH;
     const newOffset = Math.round((editOffset + step) * 100) / 100;
     setEditOffset(newOffset);
     
@@ -121,11 +123,10 @@ export function PanelInspector({
     }
   }, [editOffset, editWidth, editType, editCut, editAnchor, override, panelData, onSetOverride]);
   
-  // Adjust width by TOOTH steps
-  const adjustWidth = useCallback((direction: 'shrink' | 'grow') => {
-    const step = direction === 'shrink' ? -TOOTH : TOOTH;
-    const newWidth = Math.max(TOOTH, Math.round((editWidth + step) * 100) / 100);
-    setEditWidth(newWidth);
+  // Set width directly (free value, any measurement)
+  const setWidthDirectly = useCallback((newWidth: number) => {
+    const clampedWidth = Math.max(10, Math.min(PANEL_WIDTH * 2, newWidth)); // Min 10mm, max 2x panel
+    setEditWidth(clampedWidth);
     
     // Apply immediately
     if (panelData) {
@@ -144,7 +145,7 @@ export function PanelInspector({
     }
   }, [editWidth, editOffset, editType, editCut, editAnchor, override, panelData, onSetOverride]);
   
-  // Keyboard shortcuts for movement
+  // Keyboard shortcuts for movement only (width is now free input)
   useEffect(() => {
     if (!isOpen || !panelData) return;
     
@@ -162,22 +163,12 @@ export function PanelInspector({
           e.preventDefault();
           movePanel('right');
           break;
-        case '-':
-        case '_':
-          e.preventDefault();
-          adjustWidth('shrink');
-          break;
-        case '+':
-        case '=':
-          e.preventDefault();
-          adjustWidth('grow');
-          break;
       }
     };
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, panelData, movePanel, adjustWidth]);
+  }, [isOpen, panelData, movePanel]);
   
   const handleApplyOverride = () => {
     if (!panelData) return;
@@ -332,43 +323,32 @@ export function PanelInspector({
               </p>
             </div>
             
-            {/* Width controls */}
+            {/* Width controls - free input */}
             <div>
-              <Label className="text-xs text-muted-foreground mb-2 block">Largura (mm)</Label>
+              <Label className="text-xs text-muted-foreground mb-2 block">Largura do Painel (mm)</Label>
               <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="icon"
-                  onClick={() => adjustWidth('shrink')}
-                  title="Reduzir largura (-)"
-                  disabled={editWidth <= TOOTH}
-                >
-                  <Minus className="h-4 w-4" />
-                </Button>
-                
-                <div className="flex-1 text-center">
-                  <span className={`font-mono text-lg ${editWidth !== PANEL_WIDTH ? 'text-orange-500 font-bold' : ''}`}>
-                    {editWidth.toFixed(1)}
-                  </span>
-                  <span className="text-xs text-muted-foreground ml-1">mm</span>
-                  {editWidth !== PANEL_WIDTH && (
-                    <span className="text-xs text-orange-500 ml-2">
-                      ({((PANEL_WIDTH - editWidth) / TOOTH).toFixed(1)} TOOTH cortado)
-                    </span>
-                  )}
-                </div>
-                
-                <Button 
-                  variant="outline" 
-                  size="icon"
-                  onClick={() => adjustWidth('grow')}
-                  title="Aumentar largura (+)"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
+                <Input
+                  type="number"
+                  value={editWidth.toFixed(1)}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) {
+                      setWidthDirectly(val);
+                    }
+                  }}
+                  className={`font-mono text-center ${editWidth !== PANEL_WIDTH ? 'border-orange-500 text-orange-500' : ''}`}
+                  min={10}
+                  max={PANEL_WIDTH * 2}
+                  step={1}
+                />
               </div>
+              {editWidth !== PANEL_WIDTH && (
+                <p className="text-xs text-orange-500 text-center mt-1">
+                  Corte: {(PANEL_WIDTH - editWidth).toFixed(1)}mm ({((PANEL_WIDTH - editWidth) / TOOTH).toFixed(2)} TOOTH)
+                </p>
+              )}
               <p className="text-xs text-muted-foreground text-center mt-1">
-                Use - + para ajustar
+                Valor livre - qualquer medida de corte
               </p>
             </div>
             
