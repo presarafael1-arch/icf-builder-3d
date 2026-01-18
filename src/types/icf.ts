@@ -37,7 +37,7 @@ export function getConcreteThicknessMm(concreteThickness: ConcreteThickness): nu
 }
 
 // Core thickness options
-export type ConcreteThickness = '150' | '200';
+export type ConcreteThickness = '150' | '220';
 
 // Corner modes
 export type CornerMode = 'overlap_cut' | 'topo';

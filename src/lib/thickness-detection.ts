@@ -1,9 +1,9 @@
 /**
  * Wall Thickness Detection from DXF
  * 
- * Auto-detects 150mm or 200mm core concrete from parallel wall lines
- * - 280mm spacing → 150mm core concrete
- * - 330mm spacing → 200mm core concrete
+ * Auto-detects 150mm or 220mm core concrete from parallel wall lines
+ * - 282mm spacing → 150mm core concrete (4×tooth)
+ * - 353mm spacing → 220mm core concrete (5×tooth)
  */
 
 import { WallSegment } from '@/types/icf';
@@ -142,20 +142,20 @@ export function detectWallThickness(walls: WallSegment[]): ThicknessDetectionRes
   distances.sort((a, b) => a - b);
   const median = distances[Math.floor(distances.length / 2)];
   
-  // Count how many are close to 280mm and 330mm
-  const near280 = distances.filter(d => Math.abs(d - 280) < PARALLEL_TOLERANCE).length;
-  const near330 = distances.filter(d => Math.abs(d - 330) < PARALLEL_TOLERANCE).length;
+  // Count how many are close to 282mm and 353mm (tooth-based)
+  const near282 = distances.filter(d => Math.abs(d - 282) < PARALLEL_TOLERANCE).length;
+  const near353 = distances.filter(d => Math.abs(d - 353) < PARALLEL_TOLERANCE).length;
   
   // Determine which thickness is more likely
   let detectedThickness: WallOuterThicknessMm;
   let confidence: 'high' | 'medium' | 'low';
   
-  if (near280 > near330 && near280 >= 3) {
-    detectedThickness = 280;
-    confidence = near280 >= distances.length * 0.7 ? 'high' : 'medium';
-  } else if (near330 > near280 && near330 >= 3) {
-    detectedThickness = 330;
-    confidence = near330 >= distances.length * 0.7 ? 'high' : 'medium';
+  if (near282 > near353 && near282 >= 3) {
+    detectedThickness = 282;
+    confidence = near282 >= distances.length * 0.7 ? 'high' : 'medium';
+  } else if (near353 > near282 && near353 >= 3) {
+    detectedThickness = 353;
+    confidence = near353 >= distances.length * 0.7 ? 'high' : 'medium';
   } else {
     // Use median to guess
     const coreFromMedian = wallThicknessToCoreThickness(median);
@@ -169,12 +169,12 @@ export function detectWallThickness(walls: WallSegment[]): ThicknessDetectionRes
         coreConcreteMm: null,
         confidence: 'low',
         detectionMethod: 'parallel_lines',
-        message: `Mediana de espaçamento ${median.toFixed(0)}mm não corresponde a 280mm ou 330mm`
+        message: `Mediana de espaçamento ${median.toFixed(0)}mm não corresponde a 282mm ou 353mm`
       };
     }
   }
   
-  const coreConcreteMm: CoreConcreteMm = detectedThickness === 280 ? 150 : 200;
+  const coreConcreteMm: CoreConcreteMm = detectedThickness === 282 ? 150 : 220;
   
   return {
     detected: true,
@@ -182,7 +182,7 @@ export function detectWallThickness(walls: WallSegment[]): ThicknessDetectionRes
     coreConcreteMm,
     confidence,
     detectionMethod: 'parallel_lines',
-    message: `Detetado ${detectedThickness}mm (${near280} amostras @280mm, ${near330} amostras @330mm)`
+    message: `Detetado ${detectedThickness}mm (${near282} amostras @282mm, ${near353} amostras @353mm)`
   };
 }
 
@@ -190,9 +190,15 @@ export function detectWallThickness(walls: WallSegment[]): ThicknessDetectionRes
  * Get thickness from project settings
  */
 export function getThicknessFromSettings(concreteThickness: string): ThicknessDetectionResult {
-  const core = parseInt(concreteThickness, 10) as CoreConcreteMm;
+  const coreValue = parseInt(concreteThickness, 10);
   
-  if (core !== 150 && core !== 200) {
+  // Map 150 → 150, 220 → 220 (also accept legacy 200 and map to 220)
+  let core: CoreConcreteMm;
+  if (coreValue === 150) {
+    core = 150;
+  } else if (coreValue === 220 || coreValue === 200) {
+    core = 220;
+  } else {
     return {
       detected: false,
       wallOuterThicknessMm: null,

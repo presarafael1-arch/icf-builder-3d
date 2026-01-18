@@ -216,7 +216,10 @@ export default function ProjectEditor() {
   // Core concrete thickness (from project settings)
   const coreConcreteMm: CoreConcreteMm = useMemo(() => {
     if (!project) return 150;
-    return parseInt(project.concrete_thickness) as CoreConcreteMm || 150;
+    const value = parseInt(project.concrete_thickness);
+    // Map legacy 200 to 220, otherwise use value as-is
+    if (value === 200 || value === 220) return 220;
+    return 150;
   }, [project]);
   
   // Openings management

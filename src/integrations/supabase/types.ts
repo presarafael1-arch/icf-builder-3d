@@ -240,7 +240,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      concrete_thickness: "150" | "200"
+      concrete_thickness: "150" | "200" | "220"
       corner_mode: "overlap_cut" | "topo"
     }
     CompositeTypes: {
@@ -369,7 +369,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      concrete_thickness: ["150", "200"],
+      concrete_thickness: ["150", "200", "220"],
       corner_mode: ["overlap_cut", "topo"],
     },
   },
