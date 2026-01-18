@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, MoveHorizontal } from 'lucide-react';
+import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, MoveHorizontal, Minus, Plus } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -45,11 +45,18 @@ interface PanelInspectorProps {
   onUnlockPanel: (panelId: string) => void;
 }
 
+// Panel classification options with colors
+const PANEL_CLASSIFICATION_OPTIONS = [
+  { value: 'FULL', label: 'Inteiro', color: '#facc15' }, // Yellow
+  { value: 'CORNER_CUT', label: 'Corte no Nó', color: '#ef4444' }, // Red
+  { value: 'CUT_DOUBLE', label: 'Corte no Meio', color: '#f97316' }, // Orange
+] as const;
+
 const PANEL_TYPE_LABELS: Record<PanelType, string> = {
   FULL: 'Inteiro (Amarelo)',
   CUT_SINGLE: 'Corte Simples (Verde)',
   CUT_DOUBLE: 'Corte Meio (Laranja)',
-  CORNER_CUT: 'Arranque Canto (Vermelho)',
+  CORNER_CUT: 'Corte no Nó (Vermelho)',
   TOPO: 'Topo (Verde Escuro)',
   END_CUT: 'Corte Terminação (Laranja)',
 };
@@ -123,10 +130,13 @@ export function PanelInspector({
     }
   }, [editOffset, editWidth, editType, editCut, editAnchor, override, panelData, onSetOverride]);
   
-  // Set width directly (free value, any measurement)
-  const setWidthDirectly = useCallback((newWidth: number) => {
-    const clampedWidth = Math.max(10, Math.min(PANEL_WIDTH * 2, newWidth)); // Min 10mm, max 2x panel
-    setEditWidth(clampedWidth);
+  // Adjust width by half-TOOTH steps
+  const HALF_TOOTH_WIDTH = TOOTH / 2;
+  
+  const adjustWidthByHalfTooth = useCallback((direction: 'shrink' | 'grow') => {
+    const step = direction === 'shrink' ? -HALF_TOOTH_WIDTH : HALF_TOOTH_WIDTH;
+    const newWidth = Math.max(10, Math.min(PANEL_WIDTH * 2, editWidth + step));
+    setEditWidth(newWidth);
     
     // Apply immediately
     if (panelData) {
@@ -144,6 +154,49 @@ export function PanelInspector({
       onSetOverride(newOverride);
     }
   }, [editWidth, editOffset, editType, editCut, editAnchor, override, panelData, onSetOverride]);
+  
+  // Set width directly (free value, any measurement in mm)
+  const setWidthDirectly = useCallback((newWidth: number) => {
+    const clampedWidth = Math.max(10, Math.min(PANEL_WIDTH * 2, newWidth)); // Min 10mm, max 2x panel
+    setEditWidth(clampedWidth);
+    
+    // Apply immediately
+    if (panelData) {
+      const newOverride: PanelOverride = {
+        panelId: panelData.panelId,
+        isLocked: override?.isLocked ?? false,
+        createdAt: override?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        offsetMm: editOffset !== 0 ? editOffset : undefined,
+        widthMm: clampedWidth,
+        overrideType: editType !== 'auto' ? editType : undefined,
+        cutMm: editCut ? parseFloat(editCut) : undefined,
+        anchorOverride: editAnchor !== 'auto' ? editAnchor as PanelOverride['anchorOverride'] : undefined,
+      };
+      onSetOverride(newOverride);
+    }
+  }, [editWidth, editOffset, editType, editCut, editAnchor, override, panelData, onSetOverride]);
+  
+  // Set panel classification (type override)
+  const setClassification = useCallback((newType: PanelType) => {
+    setEditType(newType);
+    
+    // Apply immediately
+    if (panelData) {
+      const newOverride: PanelOverride = {
+        panelId: panelData.panelId,
+        isLocked: override?.isLocked ?? false,
+        createdAt: override?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        offsetMm: editOffset !== 0 ? editOffset : undefined,
+        widthMm: editWidth !== PANEL_WIDTH ? editWidth : undefined,
+        overrideType: newType,
+        cutMm: editCut ? parseFloat(editCut) : undefined,
+        anchorOverride: editAnchor !== 'auto' ? editAnchor as PanelOverride['anchorOverride'] : undefined,
+      };
+      onSetOverride(newOverride);
+    }
+  }, [editWidth, editOffset, editCut, editAnchor, override, panelData, onSetOverride]);
   
   // Keyboard shortcuts for movement only (width is now free input)
   useEffect(() => {
@@ -323,10 +376,43 @@ export function PanelInspector({
               </p>
             </div>
             
-            {/* Width controls - free input */}
+            {/* Width controls - two modes: ½ TOOTH buttons + free mm input */}
             <div>
-              <Label className="text-xs text-muted-foreground mb-2 block">Largura do Painel (mm)</Label>
+              <Label className="text-xs text-muted-foreground mb-2 block">Largura do Painel</Label>
+              
+              {/* ½ TOOTH step buttons */}
+              <div className="flex items-center gap-2 mb-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => adjustWidthByHalfTooth('shrink')}
+                  title="Reduzir ½ TOOTH"
+                  disabled={editWidth <= 10}
+                  className="flex-1"
+                >
+                  <Minus className="h-3 w-3 mr-1" />
+                  ½T
+                </Button>
+                
+                <span className={`font-mono text-sm px-2 ${editWidth !== PANEL_WIDTH ? 'text-orange-500 font-bold' : ''}`}>
+                  {editWidth.toFixed(1)}mm
+                </span>
+                
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => adjustWidthByHalfTooth('grow')}
+                  title="Aumentar ½ TOOTH"
+                  className="flex-1"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  ½T
+                </Button>
+              </div>
+              
+              {/* Free mm input */}
               <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">mm:</span>
                 <Input
                   type="number"
                   value={editWidth.toFixed(1)}
@@ -336,20 +422,53 @@ export function PanelInspector({
                       setWidthDirectly(val);
                     }
                   }}
-                  className={`font-mono text-center ${editWidth !== PANEL_WIDTH ? 'border-orange-500 text-orange-500' : ''}`}
+                  className={`font-mono text-center text-sm h-8 ${editWidth !== PANEL_WIDTH ? 'border-orange-500 text-orange-500' : ''}`}
                   min={10}
                   max={PANEL_WIDTH * 2}
                   step={1}
                 />
               </div>
+              
               {editWidth !== PANEL_WIDTH && (
                 <p className="text-xs text-orange-500 text-center mt-1">
                   Corte: {(PANEL_WIDTH - editWidth).toFixed(1)}mm ({((PANEL_WIDTH - editWidth) / TOOTH).toFixed(2)} TOOTH)
                 </p>
               )}
-              <p className="text-xs text-muted-foreground text-center mt-1">
-                Valor livre - qualquer medida de corte
-              </p>
+            </div>
+            
+            {/* Panel Classification */}
+            <div>
+              <Label className="text-xs text-muted-foreground mb-2 block">Classificação do Painel</Label>
+              <div className="flex gap-1">
+                {PANEL_CLASSIFICATION_OPTIONS.map((opt) => {
+                  const isSelected = editType === opt.value;
+                  return (
+                    <Button
+                      key={opt.value}
+                      variant={isSelected ? "default" : "outline"}
+                      size="sm"
+                      className="flex-1 gap-1"
+                      style={{
+                        backgroundColor: isSelected ? opt.color : undefined,
+                        borderColor: opt.color,
+                        color: isSelected ? '#000' : opt.color,
+                      }}
+                      onClick={() => setClassification(opt.value as PanelType)}
+                    >
+                      <div 
+                        className="w-2 h-2 rounded-full" 
+                        style={{ backgroundColor: opt.color }}
+                      />
+                      <span className="text-xs">{opt.label}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+              {editType !== 'auto' && editType !== panelData?.type && (
+                <p className="text-xs text-muted-foreground text-center mt-1">
+                  Override: {PANEL_TYPE_LABELS[editType as PanelType]}
+                </p>
+              )}
             </div>
             
             {/* Quick reset */}
