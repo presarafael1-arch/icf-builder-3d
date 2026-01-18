@@ -281,6 +281,7 @@ export default function ProjectEditor() {
     showMiddleZone: false,
     showThicknessDetection: false,
     showLJunctionArrows: false,
+    highlightCornerCuts: true, // Highlight CORNER_CUT panels by default for debugging
   });
   
   // Build chains from walls (with candidate detection enabled)

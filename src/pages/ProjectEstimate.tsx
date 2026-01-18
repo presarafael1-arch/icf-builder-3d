@@ -89,6 +89,7 @@ export default function ProjectEstimate() {
     showMiddleZone: false,
     showThicknessDetection: false,
     showLJunctionArrows: false,
+    highlightCornerCuts: false,
   });
   
   useEffect(() => {
