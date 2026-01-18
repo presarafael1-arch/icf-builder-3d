@@ -638,10 +638,17 @@ function getStartCap(
 
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: eliminate outside gap by advancing the extending arm 1*TOOTH
+          // EXTERIOR ROW 1: Only PRIMARY extending arm needs extra TOOTH offset
+          // PRIMARY arm "wraps around" the corner, SECONDARY butts into it
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          startOffsetMm = isExtendingArm ? -(wallHalfThickness + TOOTH) : 0;
+          // PRIMARY extending: extends by wallHalfThickness + TOOTH to close gap
+          // SECONDARY extending: extends by just wallHalfThickness (already correct)
+          if (isExtendingArm) {
+            startOffsetMm = isPrimaryArm ? -(wallHalfThickness + TOOTH) : -wallHalfThickness;
+          } else {
+            startOffsetMm = 0;
+          }
         } else {
           // INTERIOR ROW 1: go inward by 2*TOOTH and cut 2*TOOTH on the non-extending arm
           if (isExtendingArm) {
@@ -735,9 +742,14 @@ function getEndCap(
 
       if (isRow1) {
         if (side === 'exterior') {
+          // EXTERIOR ROW 1: Only PRIMARY extending arm needs extra TOOTH offset
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          startOffsetMm = isExtendingArm ? -(wallHalfThicknessEnd + TOOTH) : 0;
+          if (isExtendingArm) {
+            startOffsetMm = isPrimaryArm ? -(wallHalfThicknessEnd + TOOTH) : -wallHalfThicknessEnd;
+          } else {
+            startOffsetMm = 0;
+          }
         } else {
           if (isExtendingArm) {
             reservationMm = PANEL_WIDTH;
