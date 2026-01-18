@@ -1,30 +1,39 @@
 // ICF System Types for OMNI ICF WALLS 3D PLANNER
 
 // Panel dimensions (in mm)
-// Each ICF panel: 1200 x 400mm, thickness depends on concrete core
+// Each ICF panel: 1200 x 400mm
 export const PANEL_WIDTH = 1200;
 export const PANEL_HEIGHT = 400;
 
-// Foam panel thickness on each side (EPS)
-export const FOAM_THICKNESS = 66.5; // mm per side
+// Tooth = 1200/17 ≈ 70.588mm (fundamental unit for ICF system)
+export const TOOTH = PANEL_WIDTH / 17; // ≈ 70.588mm
 
-// Wall total thickness based on concrete core:
-// - 150mm concrete: 66.5 + 150 + 66.5 = 283mm total
-// - 200mm concrete: 66.5 + 200 + 66.5 = 333mm total
-export const WALL_THICKNESS_150 = 283; // mm (for 150mm concrete)
-export const WALL_THICKNESS_200 = 333; // mm (for 200mm concrete)
+// Foam panel thickness = 1 tooth per side
+export const FOAM_THICKNESS = TOOTH; // ≈ 70.59mm per side
 
-// Legacy constant for backwards compatibility (average)
+// Wall total thickness based on concrete core (centered on DXF line):
+// - 150mm concrete option: 4 × tooth = 282.35mm total (foam + 2×tooth betão + foam)
+// - 220mm concrete option: 5 × tooth = 352.94mm total (foam + 3×tooth betão + foam)
+export const WALL_THICKNESS_150 = TOOTH * 4; // ≈ 282.35mm (for ~150mm concrete)
+export const WALL_THICKNESS_220 = TOOTH * 5; // ≈ 352.94mm (for ~220mm concrete)
+
+// Concrete core thickness:
+// - 150mm option: 2 × tooth ≈ 141.18mm
+// - 220mm option: 3 × tooth ≈ 211.76mm
+export const CONCRETE_CORE_150 = TOOTH * 2; // ≈ 141.18mm
+export const CONCRETE_CORE_220 = TOOTH * 3; // ≈ 211.76mm
+
+// Legacy constant for backwards compatibility
 export const PANEL_THICKNESS = FOAM_THICKNESS;
 
 // Helper function to get total wall thickness based on concrete thickness
 export function getWallTotalThickness(concreteThickness: ConcreteThickness): number {
-  return concreteThickness === '150' ? WALL_THICKNESS_150 : WALL_THICKNESS_200;
+  return concreteThickness === '150' ? WALL_THICKNESS_150 : WALL_THICKNESS_220;
 }
 
 // Helper function to get concrete thickness in mm
 export function getConcreteThicknessMm(concreteThickness: ConcreteThickness): number {
-  return concreteThickness === '150' ? 150 : 200;
+  return concreteThickness === '150' ? CONCRETE_CORE_150 : CONCRETE_CORE_220;
 }
 
 // Core thickness options
