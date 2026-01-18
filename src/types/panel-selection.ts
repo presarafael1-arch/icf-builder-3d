@@ -94,6 +94,12 @@ export interface PanelOverride {
   // Anchor/position override
   anchorOverride?: 'center_on_node' | 'first_after_node' | 'last_before_node' | null;
   
+  // Position offset override (in mm, applied to startMm)
+  offsetMm?: number;
+  
+  // Width override (in mm, for adjusting cuts)
+  widthMm?: number;
+  
   // Cut override (must be multiple of TOOTH)
   cutMm?: number;
   
