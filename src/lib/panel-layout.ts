@@ -558,8 +558,140 @@ function getChainEndpointInfo(
 /**
  * Round a length to nearest TOOTH multiple (for clean cuts)
  */
+/**
+ * Round to nearest tooth
+ */
 function roundToTooth(mm: number): number {
   return Math.round(mm / TOOTH) * TOOTH;
+}
+
+/**
+ * Calculate L-corner exterior offset iteratively until collision.
+ * 
+ * For exterior panels at an L-corner (fiada 1):
+ * - Both arms have FULL 1200mm panels
+ * - We iterate offset (in TOOTH steps) toward the corner vertex
+ * - Stop when the two panel bounding boxes would collide
+ * 
+ * Returns the offset in mm (negative = toward corner)
+ */
+function calculateLCornerExteriorOffset(
+  concreteThickness: ConcreteThickness,
+  lJunction: LJunctionInfo | null,
+  isPrimaryArm: boolean
+): number {
+  // Wall half-thickness determines how far apart the two perpendicular panel edges are
+  const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
+  
+  // At an L-corner, the two perpendicular exterior panels are separated by:
+  // - The wall half-thickness on each side = wallHalfThickness * 2 = full wall thickness
+  // But they approach the corner vertex from perpendicular directions.
+  //
+  // Geometry: If both panels start at offset 0 (at the DXF corner vertex),
+  // the exterior faces are wallHalfThickness away from the centerline.
+  // The gap at the corner between exterior faces = wallHalfThickness (one side only matters).
+  //
+  // To close the gap: advance by wallHalfThickness / cos(45°) for diagonal,
+  // but since panels are axis-aligned, we just need to advance by wallHalfThickness.
+  // However, we want to iterate by TOOTH until collision.
+  
+  // Start with no offset
+  let offset = 0;
+  const maxIterations = 10; // Safety limit
+  
+  // Each iteration, move one TOOTH toward the corner
+  // Collision occurs when the panel would extend past the perpendicular wall's exterior face
+  // The perpendicular wall's exterior face is at distance wallHalfThickness from center
+  
+  for (let i = 0; i < maxIterations; i++) {
+    const testOffset = -(i * TOOTH);
+    
+    // Panel extends from (corner + testOffset) to (corner + testOffset + 1200mm)
+    // The perpendicular arm's exterior surface is at wallHalfThickness from corner (perpendicular direction)
+    // Collision in the along-chain direction: when our panel reaches the perpendicular chain's space
+    
+    // Simple model: collision when our offset puts our panel start past -(wallHalfThickness + FOAM_THICKNESS)
+    // Because the perpendicular arm's panel (also offset) occupies that space
+    
+    // For proper interlocking: we want to just touch (or slightly overlap) at the corner
+    // The perpendicular exterior panel also advances by the same logic, so they meet
+    
+    // Collision threshold: when offset reaches -(wallHalfThickness)
+    // This means panel extends wallHalfThickness past the corner vertex
+    if (Math.abs(testOffset) >= wallHalfThickness) {
+      // Would collide - use previous offset
+      offset = -((i > 0 ? i - 1 : 0) * TOOTH);
+      break;
+    }
+    offset = testOffset;
+  }
+  
+  // Round to nearest tooth
+  return roundToTooth(offset);
+}
+
+/**
+ * Calculate L-corner interior offset and cut iteratively.
+ * 
+ * For interior panels at an L-corner (fiada 1):
+ * - We want to AVOID collision with the other arm's interior panel
+ * - Iterate offset AWAY from corner (positive offset) in TOOTH steps
+ * - Cut the panel by the same amount we offset
+ * 
+ * Returns { offset, cut } both in mm
+ */
+function calculateLCornerInteriorOffsetAndCut(
+  concreteThickness: ConcreteThickness,
+  lJunction: LJunctionInfo | null,
+  isPrimaryArm: boolean
+): { offset: number; cut: number } {
+  const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
+  
+  // Interior panels are wallHalfThickness inward from the DXF line
+  // At an L-corner, the two interior panels would overlap if both start at corner vertex
+  // 
+  // The overlap zone is approximately: wallHalfThickness (the concrete core region)
+  // We need to offset away from corner and cut to avoid this overlap
+  
+  // Start with no offset
+  let offset = 0;
+  let cut = 0;
+  const maxIterations = 10;
+  
+  // Each iteration, move one TOOTH away from corner
+  // We want to find the minimum offset where there's no collision
+  
+  for (let i = 1; i <= maxIterations; i++) {
+    const testOffset = i * TOOTH;
+    
+    // With this offset, our interior panel starts at (corner + testOffset)
+    // The perpendicular interior panel also has an offset
+    // Collision zone is within wallHalfThickness of corner
+    
+    // No collision when offset >= wallHalfThickness (we're outside the perpendicular panel's zone)
+    // But we want to iterate by TOOTH, so find first TOOTH multiple >= some threshold
+    
+    // For interior, we want the panel to start where it won't overlap with perpendicular
+    // The perpendicular interior panel's edge is at approx wallHalfThickness from corner
+    // So we need offset >= that to clear it
+    
+    // Threshold: wallHalfThickness rounded up to next TOOTH
+    const threshold = Math.ceil(wallHalfThickness / TOOTH) * TOOTH;
+    
+    if (testOffset >= threshold) {
+      offset = testOffset;
+      cut = testOffset; // Cut same amount as offset
+      break;
+    }
+  }
+  
+  // Default: 2*TOOTH offset and cut (as fallback)
+  if (offset === 0) {
+    offset = 2 * TOOTH;
+    cut = 2 * TOOTH;
+  }
+  
+  return { offset: roundToTooth(offset), cut: roundToTooth(cut) };
 }
 
 /**
@@ -638,15 +770,18 @@ function getStartCap(
 
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: offset -2*TOOTH para o corner (avança 2 tooth)
+          // EXTERIOR ROW 1: iterate offset toward corner until collision
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          startOffsetMm = -2 * TOOTH;
+          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.startL, isPrimaryArm);
+          console.log(`[L-EXT-START] isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm`);
         } else {
-          // INTERIOR ROW 1: offset +2*TOOTH (afasta do corner) e corta 2*TOOTH
-          reservationMm = PANEL_WIDTH - 2 * TOOTH;
+          // INTERIOR ROW 1: iterate offset away from corner, cut same amount
+          const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.startL, isPrimaryArm);
+          reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
-          startOffsetMm = 2 * TOOTH;
+          startOffsetMm = offset;
+          console.log(`[L-INT-START] isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm cut=${cut.toFixed(1)}mm`);
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
@@ -729,15 +864,18 @@ function getEndCap(
 
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: offset -2*TOOTH para o corner (avança 2 tooth)
+          // EXTERIOR ROW 1: iterate offset toward corner until collision
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          startOffsetMm = -2 * TOOTH;
+          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.endL, isPrimaryArm);
+          console.log(`[L-EXT-END] isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm`);
         } else {
-          // INTERIOR ROW 1: offset +2*TOOTH (afasta do corner) e corta 2*TOOTH
-          reservationMm = PANEL_WIDTH - 2 * TOOTH;
+          // INTERIOR ROW 1: iterate offset away from corner, cut same amount
+          const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.endL, isPrimaryArm);
+          reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
-          startOffsetMm = 2 * TOOTH;
+          startOffsetMm = offset;
+          console.log(`[L-INT-END] isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm cut=${cut.toFixed(1)}mm`);
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
