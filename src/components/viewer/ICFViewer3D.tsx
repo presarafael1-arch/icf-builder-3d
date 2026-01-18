@@ -560,10 +560,11 @@ function BatchedPanelInstances({
 
   const wireframe = settings.wireframe;
 
-  // Topo geometry - small block for T-junction placement
+  // Topo geometry - unit box, scale comes from each instance's matrix
+  // The matrix contains: scaleX = topoWidth, scaleY = panelHeight, scaleZ = wallThickness
   const topoGeometry = useMemo(() => {
-    return new THREE.BoxGeometry(tc * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE * 1.2);
-  }, [tc]);
+    return new THREE.BoxGeometry(1, 1, 1); // Unit box - scale applied via matrix
+  }, []);
 
   // Don't render if no panels
   if (totalCount === 0) return null;

@@ -95,12 +95,15 @@ export interface ClassifiedPanel {
 }
 
 // Topo placement for T-junctions and free ends
+// TOPO closes the gap between exterior and interior panels at wall ends
 export interface TopoPlacement {
   matrix: THREE.Matrix4;
   rowIndex: number;
   chainId: string;
   junctionId: string;
   reason: 'T_junction' | 'free_end';
+  side?: 'exterior' | 'interior' | 'closing'; // 'closing' = closes both sides at free end
+  widthMm: number; // Width of topo based on concrete thickness
 }
 
 // L-junction info
@@ -950,19 +953,65 @@ export function layoutPanelsForChainWithJunctions(
   };
   
   // Helper to create TOPO
-  const createTopo = (posAlongChain: number, reason: 'T_junction' | 'free_end', junctionId: string): TopoPlacement => {
-    const posX = chain.startX + dirX * posAlongChain;
-    const posZ = chain.startY + dirY * posAlongChain;
+  // TOPO at free ends: closes BOTH sides (exterior + interior) - bridges the gap
+  // TOPO at T-junctions: positioned per side
+  const createTopo = (
+    posAlongChain: number, 
+    reason: 'T_junction' | 'free_end', 
+    junctionId: string,
+    topoSide: 'exterior' | 'interior' | 'closing' = 'closing'
+  ): TopoPlacement => {
+    const halfConcreteOffset = getHalfConcreteOffset(concreteThickness);
+    
+    // TOPO width based on concrete thickness:
+    // - 150mm: 2×TOOTH (~141.18mm)
+    // - 220mm: 3×TOOTH (~211.76mm)
+    const topoWidthMm = concreteThickness === '150' ? TOOTH * 2 : TOOTH * 3;
+    
+    let posX = chain.startX + dirX * posAlongChain;
+    let posZ = chain.startY + dirY * posAlongChain;
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
     
+    // Perpendicular direction (for offset)
+    const perpX = -dirY;
+    const perpZ = dirX;
+    
+    // For closing TOPO at free ends: positioned at CENTER of wall (on DXF line)
+    // For side-specific TOPOs: offset like panels
+    if (topoSide === 'interior') {
+      const offsetMm = halfConcreteOffset + FOAM_THICKNESS / 2;
+      posX += perpX * offsetMm;
+      posZ += perpZ * offsetMm;
+    } else if (topoSide === 'exterior') {
+      const offsetMm = -(halfConcreteOffset + FOAM_THICKNESS / 2);
+      posX += perpX * offsetMm;
+      posZ += perpZ * offsetMm;
+    }
+    // 'closing' stays on center line
+    
     const matrix = new THREE.Matrix4();
+    // Scale X by topoWidth (along wall), Y by panel height, Z by wall total thickness
+    // For closing TOPO at free ends: Z spans full wall width (exterior to interior)
+    const totalWallThickness = concreteThickness === '150' 
+      ? TOOTH * 4 // ~282mm 
+      : TOOTH * 5; // ~353mm
+    const zScale = topoSide === 'closing' ? totalWallThickness : FOAM_THICKNESS;
+    
     matrix.compose(
       new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle),
-      new THREE.Vector3(1, 1, 1)
+      new THREE.Vector3(topoWidthMm * SCALE, PANEL_HEIGHT * SCALE, zScale * SCALE)
     );
     
-    return { matrix, rowIndex: row, chainId: chain.id, junctionId, reason };
+    return { 
+      matrix, 
+      rowIndex: row, 
+      chainId: chain.id, 
+      junctionId, 
+      reason,
+      side: topoSide,
+      widthMm: topoWidthMm,
+    };
   };
   
   // ============= GET CAPS (START AND END RESERVATIONS) =============
@@ -992,12 +1041,16 @@ export function layoutPanelsForChainWithJunctions(
     const isCorner = isAtChainStart && leftCap.type === 'CORNER_CUT';
     panels.push(createPanel(intervalStart, panelWidth, type, isCorner));
     
-    // Add TOPOs if needed
-    if (isAtChainStart && leftCap.addTopo) {
-      topos.push(createTopo(intervalStart, endpointInfo.startType === 'free' ? 'free_end' : 'T_junction', leftCap.topoId));
+    // Add TOPOs if needed - at free ends, TOPO closes both sides (only add once from exterior)
+    if (isAtChainStart && leftCap.addTopo && side === 'exterior') {
+      const isFreeEnd = endpointInfo.startType === 'free';
+      const topoSide = isFreeEnd ? 'closing' : side; // Free ends close both, T-junctions are per-side
+      topos.push(createTopo(intervalStart, isFreeEnd ? 'free_end' : 'T_junction', leftCap.topoId, topoSide));
     }
-    if (isAtChainEnd && rightCap.addTopo) {
-      topos.push(createTopo(intervalEnd, endpointInfo.endType === 'free' ? 'free_end' : 'T_junction', rightCap.topoId));
+    if (isAtChainEnd && rightCap.addTopo && side === 'exterior') {
+      const isFreeEnd = endpointInfo.endType === 'free';
+      const topoSide = isFreeEnd ? 'closing' : side;
+      topos.push(createTopo(intervalEnd, isFreeEnd ? 'free_end' : 'T_junction', rightCap.topoId, topoSide));
     }
     
     return { panels, topos };
@@ -1012,8 +1065,10 @@ export function layoutPanelsForChainWithJunctions(
     panels.push(createPanel(leftEdge, capWidth, leftCap.type, leftCap.type === 'CORNER_CUT'));
     leftEdge += capWidth;
     
-    if (leftCap.addTopo) {
-      topos.push(createTopo(intervalStart, endpointInfo.startType === 'free' ? 'free_end' : 'T_junction', leftCap.topoId));
+    if (leftCap.addTopo && side === 'exterior') {
+      const isFreeEnd = endpointInfo.startType === 'free';
+      const topoSide = isFreeEnd ? 'closing' : side;
+      topos.push(createTopo(intervalStart, isFreeEnd ? 'free_end' : 'T_junction', leftCap.topoId, topoSide));
     }
   }
   
@@ -1026,8 +1081,10 @@ export function layoutPanelsForChainWithJunctions(
     rightEdge = intervalEnd - capWidth;
     panels.push(createPanel(rightEdge, capWidth, rightCap.type, rightCap.type === 'CORNER_CUT'));
     
-    if (rightCap.addTopo) {
-      topos.push(createTopo(intervalEnd, endpointInfo.endType === 'free' ? 'free_end' : 'T_junction', rightCap.topoId));
+    if (rightCap.addTopo && side === 'exterior') {
+      const isFreeEnd = endpointInfo.endType === 'free';
+      const topoSide = isFreeEnd ? 'closing' : side;
+      topos.push(createTopo(intervalEnd, isFreeEnd ? 'free_end' : 'T_junction', rightCap.topoId, topoSide));
     }
   }
   
