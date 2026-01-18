@@ -608,62 +608,52 @@ function getStartCap(
   let startOffsetMm = 0; // Offset from corner vertex where panel actually starts
   
   switch (endpointInfo.startType) {
-    case 'L':
+    case 'L': {
       // =============================================
-      // L-CORNER CLOSURE RULES (at chain START):
+      // L-CORNER (chain START)
       // 
-      // Panels must TOUCH at corners - exterior with exterior, interior with interior
-      // NO OVERLAP, NO GAP between them.
+      // Target behaviour (as per debugging screenshots):
+      // - Row 1:
+      //   - EXTERIOR: one arm must advance 1*TOOTH to eliminate the outside gap
+      //   - INTERIOR: must go "para dentro" by 2*TOOTH and be cut by 2*TOOTH
+      // - Rows 2+: keep simple interlock by swapping which arm "extends".
       // 
-      // At L-corners, two perpendicular walls meet. The DXF lines cross at the corner vertex.
-      // Each wall has panels offset from the DXF line (exterior to one side, interior to other).
-      // 
-      // For panels to TOUCH:
-      // - PRIMARY arm: FULL panel that EXTENDS past the corner by wallHalfThickness
-      //   (negative offset = panel starts before corner vertex)
-      // - SECONDARY arm: FULL panel starting at corner vertex (0 offset)
-      // 
-      // The perpendicular walls don't overlap because their panels are offset
-      // in perpendicular directions (one in X, one in Z).
-      // 
-      // Extension = half wall thickness:
-      // - For 150mm: 2×TOOTH ≈ 141mm
-      // - For 220mm: 2.5×TOOTH ≈ 176mm
-      // 
-      // Row alternation for interlocking:
-      // - Odd rows (1,3,5): PRIMARY extends past corner
-      // - Even rows (2,4,6): SECONDARY extends past corner (roles swap)
+      // NOTE: Offsets are along-chain (X direction in chain space).
+      // Per-side separation (exterior/interior) is handled later by the perpendicular offset.
       // =============================================
       const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
-      
-      if (isOddRow) {
-        // ODD ROWS: PRIMARY extends past corner, SECONDARY starts at corner
-        if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY arm - FULL panel extends PAST corner by wallHalfThickness
+
+      // Which arm is the "extending" arm for this row (interlock alternation)
+      const extendingArmIsPrimary = isOddRow; // row0,2,4... => primary extends; row1,3,5... => secondary extends
+      const isExtendingArm = endpointInfo.isPrimaryAtStart ? extendingArmIsPrimary : !extendingArmIsPrimary;
+
+      if (isRow1) {
+        if (side === 'exterior') {
+          // EXTERIOR ROW 1: eliminate outside gap by advancing the extending arm 1*TOOTH
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          startOffsetMm = -wallHalfThickness; // Negative = extend before corner
+          startOffsetMm = isExtendingArm ? -(wallHalfThickness + TOOTH) : 0;
         } else {
-          // SECONDARY arm - FULL panel starts at corner vertex
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = 0;
+          // INTERIOR ROW 1: go inward by 2*TOOTH and cut 2*TOOTH on the non-extending arm
+          if (isExtendingArm) {
+            reservationMm = PANEL_WIDTH;
+            type = 'FULL';
+            startOffsetMm = -wallHalfThickness;
+          } else {
+            reservationMm = PANEL_WIDTH - 2 * TOOTH;
+            type = 'CORNER_CUT';
+            startOffsetMm = 2 * TOOTH;
+          }
         }
       } else {
-        // EVEN ROWS: roles swap for interlocking
-        if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY starts at corner on even rows
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = 0;
-        } else {
-          // SECONDARY extends past corner on even rows
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = -wallHalfThickness;
-        }
+        // Rows 2+: keep both as FULL, alternating who extends (no special 2-tooth interior cut)
+        reservationMm = PANEL_WIDTH;
+        type = 'FULL';
+        startOffsetMm = isExtendingArm ? -wallHalfThickness : 0;
       }
+
       break;
+    }
       
     case 'T':
       // =============================================
@@ -723,43 +713,40 @@ function getEndCap(
   let startOffsetMm = 0;
   
   switch (endpointInfo.endType) {
-    case 'L':
+    case 'L': {
       // =============================================
-      // L-CORNER CLOSURE RULES (at chain END):
-      // Same interlocking logic as start.
-      // PRIMARY extends past corner, SECONDARY starts at corner.
-      // Roles swap on alternating rows for interlocking.
+      // L-CORNER (chain END)
+      // Same rules as START, but offsets are applied from the chain end.
       // =============================================
       const wallHalfThicknessEnd = getWallTotalThickness(concreteThickness) / 2;
-      
-      if (isOddRow) {
-        // ODD ROWS: PRIMARY extends past corner, SECONDARY starts at corner
-        if (endpointInfo.isPrimaryAtEnd) {
-          // PRIMARY extends past corner
+
+      const extendingArmIsPrimary = isOddRow;
+      const isExtendingArm = endpointInfo.isPrimaryAtEnd ? extendingArmIsPrimary : !extendingArmIsPrimary;
+
+      if (isRow1) {
+        if (side === 'exterior') {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          startOffsetMm = -wallHalfThicknessEnd; // Negative = extend past corner
+          startOffsetMm = isExtendingArm ? -(wallHalfThicknessEnd + TOOTH) : 0;
         } else {
-          // SECONDARY starts at corner
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = 0;
+          if (isExtendingArm) {
+            reservationMm = PANEL_WIDTH;
+            type = 'FULL';
+            startOffsetMm = -wallHalfThicknessEnd;
+          } else {
+            reservationMm = PANEL_WIDTH - 2 * TOOTH;
+            type = 'CORNER_CUT';
+            startOffsetMm = 2 * TOOTH;
+          }
         }
       } else {
-        // EVEN ROWS: roles swap
-        if (endpointInfo.isPrimaryAtEnd) {
-          // PRIMARY starts at corner on even rows
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = 0;
-        } else {
-          // SECONDARY extends past corner on even rows
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = -wallHalfThicknessEnd;
-        }
+        reservationMm = PANEL_WIDTH;
+        type = 'FULL';
+        startOffsetMm = isExtendingArm ? -wallHalfThicknessEnd : 0;
       }
+
       break;
+    }
       
     case 'T':
       // =============================================
