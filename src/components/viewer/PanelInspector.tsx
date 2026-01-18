@@ -107,9 +107,12 @@ export function PanelInspector({
     setEditWidth(panelData?.widthMm ?? PANEL_WIDTH);
   };
   
-  // Move panel by full TOOTH steps only
-  const movePanel = useCallback((direction: 'left' | 'right') => {
-    const step = direction === 'left' ? -TOOTH : TOOTH;
+  // HALF TOOTH for fine adjustments
+  const HALF_TOOTH = TOOTH / 2;
+  
+  // Move panel by specified TOOTH steps (½T or 1T)
+  const movePanelByStep = useCallback((stepMultiplier: number) => {
+    const step = TOOTH * stepMultiplier;
     const newOffset = Math.round((editOffset + step) * 100) / 100;
     setEditOffset(newOffset);
     
@@ -129,6 +132,11 @@ export function PanelInspector({
       onSetOverride(newOverride);
     }
   }, [editOffset, editWidth, editType, editCut, editAnchor, override, panelData, onSetOverride]);
+  
+  // Legacy function for keyboard shortcuts (1T step)
+  const movePanel = useCallback((direction: 'left' | 'right') => {
+    movePanelByStep(direction === 'left' ? -1 : 1);
+  }, [movePanelByStep]);
   
   // Adjust width by half-TOOTH steps
   const HALF_TOOTH_WIDTH = TOOTH / 2;
@@ -339,40 +347,102 @@ export function PanelInspector({
             <div className="flex items-center gap-2">
               <MoveHorizontal className="h-4 w-4 text-primary" />
               <Label className="text-sm font-medium">Controles de Posição</Label>
-              <span className="text-xs text-muted-foreground ml-auto">Passo: {TOOTH.toFixed(1)}mm</span>
+              <span className="text-xs text-muted-foreground ml-auto">1T = {TOOTH.toFixed(1)}mm</span>
             </div>
             
-            {/* Position offset controls */}
+            {/* Position offset controls with ½T and 1T buttons */}
             <div>
-              <Label className="text-xs text-muted-foreground mb-2 block">Offset (mm)</Label>
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="icon"
-                  onClick={() => movePanel('left')}
-                  title="Mover para esquerda (←)"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                
-                <div className="flex-1 text-center">
-                  <span className={`font-mono text-lg ${editOffset !== 0 ? 'text-primary font-bold' : ''}`}>
-                    {editOffset >= 0 ? '+' : ''}{editOffset.toFixed(1)}
+              <Label className="text-xs text-muted-foreground mb-2 block">Offset</Label>
+              
+              {/* Current offset display with TOOTH units */}
+              <div className="text-center mb-2 p-2 rounded bg-muted/50">
+                <span className={`font-mono text-lg ${editOffset !== 0 ? 'text-primary font-bold' : ''}`}>
+                  {editOffset >= 0 ? '+' : ''}{editOffset.toFixed(1)}mm
+                </span>
+                {editOffset !== 0 && (
+                  <span className="text-sm text-primary ml-2 font-medium">
+                    ({(editOffset / TOOTH) >= 0 ? '+' : ''}{(editOffset / TOOTH).toFixed(1)}T)
                   </span>
-                  <span className="text-xs text-muted-foreground ml-1">mm</span>
-                </div>
-                
+                )}
+              </div>
+              
+              {/* ½T step buttons */}
+              <div className="flex items-center gap-1 mb-2">
                 <Button 
                   variant="outline" 
-                  size="icon"
-                  onClick={() => movePanel('right')}
-                  title="Mover para direita (→)"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => movePanelByStep(-0.5)}
+                  title="Mover -½ TOOTH"
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronLeft className="h-3 w-3" />
+                  ½T
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => movePanelByStep(0.5)}
+                  title="Mover +½ TOOTH"
+                >
+                  ½T
+                  <ChevronRight className="h-3 w-3" />
                 </Button>
               </div>
+              
+              {/* 1T step buttons */}
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => movePanelByStep(-1)}
+                  title="Mover -1 TOOTH (←)"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                  1T
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => movePanelByStep(1)}
+                  title="Mover +1 TOOTH (→)"
+                >
+                  1T
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+              </div>
+              
+              {editOffset !== 0 && (
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="w-full mt-2 text-xs"
+                  onClick={() => {
+                    setEditOffset(0);
+                    if (panelData) {
+                      const newOverride: PanelOverride = {
+                        panelId: panelData.panelId,
+                        isLocked: override?.isLocked ?? false,
+                        createdAt: override?.createdAt ?? new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        offsetMm: 0,
+                        widthMm: editWidth !== PANEL_WIDTH ? editWidth : undefined,
+                        overrideType: editType !== 'auto' ? editType : undefined,
+                        cutMm: editCut ? parseFloat(editCut) : undefined,
+                        anchorOverride: editAnchor !== 'auto' ? editAnchor as PanelOverride['anchorOverride'] : undefined,
+                      };
+                      onSetOverride(newOverride);
+                    }
+                  }}
+                >
+                  Resetar offset
+                </Button>
+              )}
+              
               <p className="text-xs text-muted-foreground text-center mt-1">
-                Use ← → para mover
+                Use ← → para mover 1T
               </p>
             </div>
             
