@@ -300,13 +300,43 @@ function BatchedPanelInstances({
       stats: result.stats,
     });
     
+    // Filter panels by exterior/interior visibility settings
+    const filteredPanels = result.allPanels.filter(panel => {
+      const panelId = panel.panelId || '';
+      const isExterior = panelId.includes(':ext:');
+      const isInterior = panelId.includes(':int:');
+      if (isExterior && !settings.showExteriorPanels) return false;
+      if (isInterior && !settings.showInteriorPanels) return false;
+      return true;
+    });
+    
+    // Helper function to filter by side visibility
+    const filterBySide = (panels: ClassifiedPanel[]) => panels.filter(p => {
+      const pid = p.panelId || '';
+      const isExt = pid.includes(':ext:');
+      const isInt = pid.includes(':int:');
+      if (isExt && !settings.showExteriorPanels) return false;
+      if (isInt && !settings.showInteriorPanels) return false;
+      return true;
+    });
+    
+    // Filter panelsByType for accurate counts
+    const filteredPanelsByType: Record<PanelType, ClassifiedPanel[]> = {
+      FULL: filterBySide(result.panelsByType.FULL),
+      CUT_SINGLE: filterBySide(result.panelsByType.CUT_SINGLE),
+      CUT_DOUBLE: filterBySide(result.panelsByType.CUT_DOUBLE),
+      CORNER_CUT: filterBySide(result.panelsByType.CORNER_CUT),
+      TOPO: filterBySide(result.panelsByType.TOPO),
+      END_CUT: filterBySide(result.panelsByType.END_CUT),
+    };
+    
     return {
-      panelsByType: result.panelsByType,
-      allPanels: result.allPanels,
+      panelsByType: filteredPanelsByType,
+      allPanels: filteredPanels,
       allTopos: result.allTopos,
       layoutStats: result.stats,
     };
-  }, [chains, openings, settings.currentRow, settings.maxRows]);
+  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;
