@@ -568,7 +568,7 @@ function BatchedPanelInstances({
     onPanelDataReady?.(panelsByType, allPanels, allTopos);
   }, [panelsByType, allPanels, allTopos, onPanelDataReady]);
 
-  // Update selection highlight mesh
+  // Update selection highlight mesh - MUST match exact panel size
   useEffect(() => {
     if (!selectionMeshRef.current || !selectedPanelId) return;
     
@@ -576,15 +576,9 @@ function BatchedPanelInstances({
     const selectedIdx = allPanels.findIndex(p => p.panelId === selectedPanelId);
     if (selectedIdx >= 0) {
       const panel = allPanels[selectedIdx];
-      // Scale up slightly for selection highlight
-      const selMatrix = panel.matrix.clone();
-      const pos = new THREE.Vector3();
-      const quat = new THREE.Quaternion();
-      const scale = new THREE.Vector3();
-      selMatrix.decompose(pos, quat, scale);
-      scale.multiplyScalar(1.05);
-      selMatrix.compose(pos, quat, scale);
-      selectionMeshRef.current.setMatrixAt(0, selMatrix);
+      // Use EXACT same matrix as panel - no scaling for accurate visual match
+      // Just copy the matrix directly so selection matches panel exactly
+      selectionMeshRef.current.setMatrixAt(0, panel.matrix);
       selectionMeshRef.current.instanceMatrix.needsUpdate = true;
       selectionMeshRef.current.visible = true;
     } else {
@@ -1153,7 +1147,7 @@ function WASDControls() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       
       const key = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd'].includes(key)) {
+      if (['w', 'a', 's', 'd', 'q', 'e'].includes(key)) {
         keysPressed.current.add(key);
       }
     };
@@ -1205,6 +1199,13 @@ function WASDControls() {
         }
         if (keysPressed.current.has('d')) {
           delta.add(rightDir.clone().multiplyScalar(PAN_SPEED));
+        }
+        // Q/E for vertical movement
+        if (keysPressed.current.has('q')) {
+          delta.y -= PAN_SPEED;
+        }
+        if (keysPressed.current.has('e')) {
+          delta.y += PAN_SPEED;
         }
         
         // Move both camera and target
