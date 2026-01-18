@@ -12,20 +12,21 @@
  * - ORANGE (CUT_DOUBLE): adjustment cut in the MIDDLE of run
  * - GREEN (TOPO): topo product (at T-junctions and free ends)
  * 
- * CRITICAL CORNER CLOSURE RULES (LEARNED FROM USER CORRECTIONS):
- * ===============================================================
+ * CRITICAL CORNER CLOSURE RULES (LEARNED FROM USER CORRECTIONS 2025-01-18):
+ * =========================================================================
  * Corners MUST always close properly - panels unite both inside and outside.
  * 
  * L-CORNER (90° junction between 2 chains):
  *   Row 1 (index 0):
- *     - EXTERIOR: CORNER_CUT - recua halfThickness (2.5T p/ 220mm, 2T p/ 150mm)
- *                 para não sobrepor com o painel perpendicular exterior
- *     - INTERIOR: FULL - avança halfThickness em direção ao vértice
- *                 para encontrar o painel perpendicular interior
+ *     - EXTERIOR: FULL (SEM CORTE!), apenas offset (0 ou 1T dependendo do braço)
+ *     - INTERIOR: CORNER_CUT com corte = 4 TOOTH SEMPRE (~282mm)
+ *                 + offset (0 ou 1T dependendo do braço)
+ *   
+ *   O corte de 4T no interior evita sobreposição com o painel perpendicular.
+ *   O exterior não precisa de corte, apenas posicionamento.
+ *   
  *   Row 2+ (alternating):
  *     - BOTH sides: FULL with alternating arm extension for interlocking
- *   
- * The exterior cut + interior advance creates proper closure at both faces.
  *   
  * T-JUNCTION RULES:
  *   - "Costas" = continuous wall (main)
@@ -615,52 +616,38 @@ function roundToHalfTooth(mm: number): number {
 }
 
 /**
- * Calculate L-corner exterior offset to make panels touch at the vertex.
+ * Calculate L-corner EXTERIOR offset.
  * 
- * For panels to meet at the corner vertex on the exterior:
- * - 150mm (4 TOOTH total): each panel advances 2 TOOTH toward corner
- * - 220mm (5 TOOTH total): each panel advances 2.5 TOOTH toward corner
+ * REGRA (corrigida pelo utilizador 2025-01-18):
+ * EXTERIOR = FULL (sem corte!), apenas offset para posicionamento.
  * 
- * The offset is measured from the chain endpoint to where the panel STARTS.
- * Negative offset = panel extends PAST the endpoint (toward corner vertex)
+ * O offset depende do braço:
+ * - Braço primário: 0 (sem offset)
+ * - Braço secundário: 1 TOOTH (para não sobrepor)
  * 
- * Returns the offset in mm (negative = toward corner)
+ * Returns the offset in mm (0 or 1T)
  */
 function calculateLCornerExteriorOffset(
   concreteThickness: ConcreteThickness,
   lJunction: LJunctionInfo | null,
   isPrimaryArm: boolean
 ): number {
-  // Wall half thickness in TOOTH units:
-  // 150mm: 4 TOOTH / 2 = 2 TOOTH
-  // 220mm: 5 TOOTH / 2 = 2.5 TOOTH
-  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
-  const halfThicknessTooth = wallTotalTooth / 2;
+  // Exterior: primary arm has no offset, secondary arm has 1T offset
+  const offsetMm = isPrimaryArm ? 0 : TOOTH;
   
-  // Offset in mm (negative = extend toward corner)
-  // Exact value, not rounded to integer TOOTH
-  const offsetMm = -(halfThicknessTooth * TOOTH);
-  
-  console.log(`[L-EXT-CALC] ${concreteThickness}mm: wallTotal=${wallTotalTooth}T halfThickness=${halfThicknessTooth}T offset=${offsetMm.toFixed(1)}mm`);
+  console.log(`[L-EXT-CALC] EXTERIOR isPrimary=${isPrimaryArm} offset=${offsetMm.toFixed(1)}mm (${(offsetMm/TOOTH).toFixed(1)}T)`);
   
   return offsetMm;
 }
 
 /**
- * Calculate L-corner interior offset and cut.
+ * Calculate L-corner INTERIOR offset and cut.
  * 
- * For interior panels at an L-corner:
- * - They must NOT overlap with the perpendicular interior panel
- * - Each interior panel recedes FROM the corner by wallHalfThickness
- * - The cut removes the overlapping portion
+ * REGRA (corrigida pelo utilizador 2025-01-18):
+ * INTERIOR = CORNER_CUT com corte = 4 TOOTH SEMPRE (~282mm)
+ * + offset dependendo do braço (0 ou 1T)
  * 
- * For 220mm (5 TOOTH total):
- * - Interior panel starts 2.5 TOOTH AFTER the corner vertex
- * - Cut = 2.5 TOOTH from the panel end
- * 
- * For 150mm (4 TOOTH total):
- * - Interior panel starts 2 TOOTH AFTER the corner vertex
- * - Cut = 2 TOOTH from the panel end
+ * O corte de 4T no interior evita sobreposição com o painel perpendicular.
  * 
  * Returns { offset, cut } both in mm
  */
@@ -669,18 +656,13 @@ function calculateLCornerInteriorOffsetAndCut(
   lJunction: LJunctionInfo | null,
   isPrimaryArm: boolean
 ): { offset: number; cut: number } {
-  // Wall half thickness in TOOTH units:
-  // 150mm: 4 TOOTH / 2 = 2 TOOTH
-  // 220mm: 5 TOOTH / 2 = 2.5 TOOTH
-  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
-  const halfThicknessTooth = wallTotalTooth / 2;
+  // INTERIOR: corte = 4 TOOTH SEMPRE (independente da espessura)
+  const cutMm = 4 * TOOTH; // ~282.35mm
   
-  // Offset in mm (positive = recede from corner)
-  const offsetMm = halfThicknessTooth * TOOTH;
-  // Cut the same amount
-  const cutMm = halfThicknessTooth * TOOTH;
+  // Offset: primary arm has no offset, secondary arm has 1T offset
+  const offsetMm = isPrimaryArm ? 0 : TOOTH;
   
-  console.log(`[L-INT-CALC] ${concreteThickness}mm: halfThickness=${halfThicknessTooth}T offset=${offsetMm.toFixed(1)}mm cut=${cutMm.toFixed(1)}mm`);
+  console.log(`[L-INT-CALC] INTERIOR isPrimary=${isPrimaryArm} cut=4T (${cutMm.toFixed(1)}mm) offset=${offsetMm.toFixed(1)}mm (${(offsetMm/TOOTH).toFixed(1)}T)`);
   
   return { offset: offsetMm, cut: cutMm };
 }
@@ -772,20 +754,21 @@ function getStartCap(
       // ===========================================================================
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: recua para não sobrepor com perpendicular
-          // Offset POSITIVO = afasta do vértice do canto
+          // EXTERIOR ROW 1: FULL (sem corte!), apenas offset
+          // Regra corrigida pelo utilizador: exterior não leva corte
+          const offset = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.startL, isPrimaryArm);
+          reservationMm = PANEL_WIDTH;
+          type = 'FULL';
+          startOffsetMm = offset;
+          console.log(`[L-EXT-START] FULL isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T)`);
+        } else {
+          // INTERIOR ROW 1: CORNER_CUT com corte = 4T sempre
+          // Regra corrigida pelo utilizador: interior leva corte de 4 TOOTH
           const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.startL, isPrimaryArm);
           reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
           startOffsetMm = offset;
-          console.log(`[L-EXT-START] CORNER_CUT isPrimary=${isPrimaryArm} offset=+${offset.toFixed(1)}mm (+${(offset/TOOTH).toFixed(1)}T) cut=${cut.toFixed(1)}mm`);
-        } else {
-          // INTERIOR ROW 1: FULL avança para o vértice
-          // Offset NEGATIVO = avança em direção ao vértice do canto
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.startL, isPrimaryArm);
-          console.log(`[L-INT-START] FULL isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm (${(startOffsetMm/TOOTH).toFixed(1)}T)`);
+          console.log(`[L-INT-START] CORNER_CUT isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T) cut=4T (${cut.toFixed(1)}mm)`);
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
@@ -872,18 +855,19 @@ function getEndCap(
       // ===========================================================================
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1: recua para não sobrepor com perpendicular
+          // EXTERIOR ROW 1: FULL (sem corte!), apenas offset
+          const offset = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.endL, isPrimaryArm);
+          reservationMm = PANEL_WIDTH;
+          type = 'FULL';
+          startOffsetMm = offset;
+          console.log(`[L-EXT-END] FULL isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T)`);
+        } else {
+          // INTERIOR ROW 1: CORNER_CUT com corte = 4T sempre
           const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.endL, isPrimaryArm);
           reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
           startOffsetMm = offset;
-          console.log(`[L-EXT-END] CORNER_CUT isPrimary=${isPrimaryArm} offset=+${offset.toFixed(1)}mm (+${(offset/TOOTH).toFixed(1)}T) cut=${cut.toFixed(1)}mm`);
-        } else {
-          // INTERIOR ROW 1: FULL avança para o vértice
-          reservationMm = PANEL_WIDTH;
-          type = 'FULL';
-          startOffsetMm = calculateLCornerExteriorOffset(concreteThickness, endpointInfo.endL, isPrimaryArm);
-          console.log(`[L-INT-END] FULL isPrimary=${isPrimaryArm} offset=${startOffsetMm.toFixed(1)}mm (${(startOffsetMm/TOOTH).toFixed(1)}T)`);
+          console.log(`[L-INT-END] CORNER_CUT isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T) cut=4T (${cut.toFixed(1)}mm)`);
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
