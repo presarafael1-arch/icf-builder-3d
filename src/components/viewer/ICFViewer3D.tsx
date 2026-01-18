@@ -288,7 +288,7 @@ function BatchedPanelInstances({
       return getRemainingIntervalsForRow(chain, openings, row);
     };
     
-    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow);
+    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow, settings.concreteThickness);
 
     console.log('[BatchedPanelInstances] Generated panels:', {
       FULL: result.panelsByType.FULL.length,

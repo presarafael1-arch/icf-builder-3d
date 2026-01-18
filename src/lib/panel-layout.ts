@@ -786,7 +786,8 @@ export function layoutPanelsForChainWithJunctions(
   lJunctions: LJunctionInfo[],
   tJunctions: TJunctionInfo[],
   freeEnds: EndpointInfo[],
-  side: WallSide = 'exterior'
+  side: WallSide = 'exterior',
+  concreteThickness: ConcreteThickness = '150'
 ): { panels: ClassifiedPanel[]; topos: TopoPlacement[] } {
   const panels: ClassifiedPanel[] = [];
   const topos: TopoPlacement[] = [];
@@ -874,7 +875,7 @@ export function layoutPanelsForChainWithJunctions(
     //   - Exterior panel inner face at: center - 1.5 teeth
     //   - Interior panel inner face at: center + 1.5 teeth
     
-    const concreteThickness: ConcreteThickness = '150'; // TODO: pass from settings
+    // Use the concreteThickness parameter passed from settings
     const halfConcreteOffset = getHalfConcreteOffset(concreteThickness);
     
     // Perpendicular unit vector (90° CW from wall direction)
@@ -1081,7 +1082,8 @@ export function generatePanelLayout(
   chains: WallChain[],
   visibleRows: number,
   maxRows: number,
-  getIntervalsForRow: (chain: WallChain, row: number) => { start: number; end: number }[]
+  getIntervalsForRow: (chain: WallChain, row: number) => { start: number; end: number }[],
+  concreteThickness: ConcreteThickness = '150'
 ): {
   panelsByType: Record<PanelType, ClassifiedPanel[]>;
   allPanels: ClassifiedPanel[];
@@ -1150,7 +1152,8 @@ export function generatePanelLayout(
               lJunctions,
               tJunctions,
               freeEnds,
-              side
+              side,
+              concreteThickness
             );
             
             panels.forEach(panel => {
