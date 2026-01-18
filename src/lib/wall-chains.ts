@@ -453,6 +453,131 @@ function simplifyJogs(segments: WallSegment[], jogMaxMm: number, angleTolRad: nu
   return result;
 }
 
+// =============== segment intersection detection ===============
+
+/**
+ * Finds the intersection point of two line segments if they cross.
+ * Returns null if segments don't intersect or only touch at endpoints.
+ */
+function findSegmentIntersection(
+  s1: { startX: number; startY: number; endX: number; endY: number },
+  s2: { startX: number; startY: number; endX: number; endY: number },
+  tol: number = 1
+): { x: number; y: number } | null {
+  const x1 = s1.startX, y1 = s1.startY, x2 = s1.endX, y2 = s1.endY;
+  const x3 = s2.startX, y3 = s2.startY, x4 = s2.endX, y4 = s2.endY;
+
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(denom) < 1e-10) return null; // Parallel or coincident
+
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+
+  // Check if intersection is strictly inside both segments (not at endpoints)
+  const eps = tol / Math.max(calculateLength(s1), calculateLength(s2), 1);
+  if (t > eps && t < 1 - eps && u > eps && u < 1 - eps) {
+    const ix = x1 + t * (x2 - x1);
+    const iy = y1 + t * (y2 - y1);
+    return { x: ix, y: iy };
+  }
+
+  return null;
+}
+
+/**
+ * Splits segments at their intersection points to create proper graph nodes.
+ * This ensures T and X junctions are detected even when segments cross without
+ * sharing endpoints.
+ */
+function splitSegmentsAtIntersections(segments: WallSegment[], tol: number): WallSegment[] {
+  // Find all intersection points
+  const intersections: { segIdx1: number; segIdx2: number; point: { x: number; y: number } }[] = [];
+  
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      const pt = findSegmentIntersection(segments[i], segments[j], tol);
+      if (pt) {
+        intersections.push({ segIdx1: i, segIdx2: j, point: pt });
+      }
+    }
+  }
+
+  if (intersections.length === 0) return segments;
+
+  // Group intersections by segment
+  const splitPointsBySegment = new Map<number, { x: number; y: number }[]>();
+  for (const { segIdx1, segIdx2, point } of intersections) {
+    if (!splitPointsBySegment.has(segIdx1)) splitPointsBySegment.set(segIdx1, []);
+    if (!splitPointsBySegment.has(segIdx2)) splitPointsBySegment.set(segIdx2, []);
+    splitPointsBySegment.get(segIdx1)!.push(point);
+    splitPointsBySegment.get(segIdx2)!.push(point);
+  }
+
+  // Split each segment at its intersection points
+  const result: WallSegment[] = [];
+  
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const splitPoints = splitPointsBySegment.get(i);
+    
+    if (!splitPoints || splitPoints.length === 0) {
+      result.push(seg);
+      continue;
+    }
+
+    // Sort split points along the segment
+    const dx = seg.endX - seg.startX;
+    const dy = seg.endY - seg.startY;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    
+    const pointsWithT = splitPoints.map(pt => {
+      const t = len > 0 ? ((pt.x - seg.startX) * dx + (pt.y - seg.startY) * dy) / (len * len) : 0;
+      return { ...pt, t };
+    });
+    
+    pointsWithT.sort((a, b) => a.t - b.t);
+
+    // Create sub-segments
+    let prevX = seg.startX;
+    let prevY = seg.startY;
+    let subIdx = 0;
+    
+    for (const pt of pointsWithT) {
+      if (distance(prevX, prevY, pt.x, pt.y) > tol) {
+        result.push({
+          ...seg,
+          id: `${seg.id}-sub${subIdx}`,
+          startX: prevX,
+          startY: prevY,
+          endX: pt.x,
+          endY: pt.y,
+          length: distance(prevX, prevY, pt.x, pt.y),
+          angle: calculateNormalizedAngle({ startX: prevX, startY: prevY, endX: pt.x, endY: pt.y }),
+        });
+        subIdx++;
+      }
+      prevX = pt.x;
+      prevY = pt.y;
+    }
+    
+    // Final sub-segment
+    if (distance(prevX, prevY, seg.endX, seg.endY) > tol) {
+      result.push({
+        ...seg,
+        id: `${seg.id}-sub${subIdx}`,
+        startX: prevX,
+        startY: prevY,
+        endX: seg.endX,
+        endY: seg.endY,
+        length: distance(prevX, prevY, seg.endX, seg.endY),
+        angle: calculateNormalizedAngle({ startX: prevX, startY: prevY, endX: seg.endX, endY: seg.endY }),
+      });
+    }
+  }
+
+  return result;
+}
+
 // =============== graph reduction ===============
 
 type Edge = {
@@ -790,11 +915,14 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     detectCandidates ? { minWidthMm: candidateMinWidthMm, maxWidthMm: candidateMaxWidthMm } : undefined
   );
 
-  // 7) Graph build + reduction
-  const graph = buildGraph(afterGaps, opts.snapTolMm);
+  // 7) Split segments at intersections to detect T/X junctions
+  const afterSplit = splitSegmentsAtIntersections(afterGaps, opts.snapTolMm);
+
+  // 8) Graph build + reduction
+  const graph = buildGraph(afterSplit, opts.snapTolMm);
   reduceGraphColinear(graph, angleTolRad);
 
-  // 8) Convert reduced edges to chains
+  // 9) Convert reduced edges to chains
   const edgeList = [...graph.edges.values()];
 
   const chainNodeById = new Map<string, ChainNode>();
@@ -864,7 +992,7 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     end: nodes.filter((n) => n.type === 'end').length,
   };
 
-  // 9) Build opening candidates from detected gaps
+  // 10) Build opening candidates from detected gaps
   const candidates: OpeningCandidate[] = [];
   if (detectCandidates && detectedGaps.length > 0) {
     // Match gaps to chains
