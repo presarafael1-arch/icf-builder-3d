@@ -223,6 +223,30 @@ export default function ProjectEditor() {
     return 150;
   }, [project]);
   
+  // DEBUG: Log L-corner overrides from Row 1 to extract correct values
+  useEffect(() => {
+    if (overrides.size > 0) {
+      console.log('=== PANEL OVERRIDES (L-corners Row 1) ===');
+      const lCornerOverrides: any[] = [];
+      overrides.forEach((override, panelId) => {
+        // Filter for row 0 (fiada 1) panels that look like L-corners
+        if (panelId.includes(':0:') && (panelId.includes(':L-') || panelId.includes('-L'))) {
+          lCornerOverrides.push({
+            panelId,
+            offsetMm: override.offsetMm,
+            widthMm: override.widthMm,
+            type: override.overrideType,
+            cutMm: override.cutMm,
+          });
+        }
+      });
+      if (lCornerOverrides.length > 0) {
+        console.log('L-corner overrides Row 1:', JSON.stringify(lCornerOverrides, null, 2));
+      }
+      console.log('All overrides:', JSON.stringify(Object.fromEntries(overrides), null, 2));
+    }
+  }, [overrides]);
+  
   // Openings management
   const { 
     openings, 
