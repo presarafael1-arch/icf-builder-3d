@@ -1005,12 +1005,12 @@ export function layoutPanelsForChainWithJunctions(
     // 'closing' stays on center line
     
     const matrix = new THREE.Matrix4();
-    // Scale X by topoWidth (along wall), Y by panel height, Z by wall total thickness
-    // For closing TOPO at free ends: Z spans full wall width (exterior to interior)
-    const totalWallThickness = concreteThickness === '150' 
-      ? TOOTH * 4 // ~282mm 
-      : TOOTH * 5; // ~353mm
-    const zScale = topoSide === 'closing' ? totalWallThickness : FOAM_THICKNESS;
+    // Scale X by topoWidth (along wall), Y by panel height, Z by concrete core thickness
+    // TOPO fits INSIDE the foam panels (between interior faces), not on the exterior
+    // So Z = concrete core = topoWidthMm (2×TOOTH for 150mm, 3×TOOTH for 220mm)
+    // This is reduced by 1×TOOTH on each side compared to full wall thickness
+    const concreteCoreThickness = topoWidthMm; // Same as concrete core
+    const zScale = topoSide === 'closing' ? concreteCoreThickness : FOAM_THICKNESS;
     
     matrix.compose(
       new THREE.Vector3(posX * SCALE, posY * SCALE, posZ * SCALE),
