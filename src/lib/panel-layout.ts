@@ -638,30 +638,15 @@ function getStartCap(
 
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1:
-          // - PRIMARY extending: extends by wallHalfThickness + TOOTH
-          // - SECONDARY non-extending: offset left by 2*TOOTH (unir por fora)
+          // EXTERIOR ROW 1: offset -2*TOOTH para o corner (avança 2 tooth)
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          if (isPrimaryArm) {
-            startOffsetMm = isExtendingArm ? -(wallHalfThickness + TOOTH) : 0;
-          } else {
-            // SECONDARY: non-extending needs -2*TOOTH offset to left
-            startOffsetMm = isExtendingArm ? -wallHalfThickness : -2 * TOOTH;
-          }
+          startOffsetMm = -2 * TOOTH;
         } else {
-          // INTERIOR ROW 1:
-          // Non-extending arm: offset 2*TOOTH para dentro (direita no eixo da chain) e corta 3*TOOTH
-          // Extending arm: stays FULL and extends by wallHalfThickness
-          if (isExtendingArm) {
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-            startOffsetMm = -wallHalfThickness;
-          } else {
-            reservationMm = PANEL_WIDTH - 3 * TOOTH;
-            type = 'CORNER_CUT';
-            startOffsetMm = 2 * TOOTH;
-          }
+          // INTERIOR ROW 1: offset +2*TOOTH (afasta do corner) e corta 2*TOOTH
+          reservationMm = PANEL_WIDTH - 2 * TOOTH;
+          type = 'CORNER_CUT';
+          startOffsetMm = 2 * TOOTH;
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
@@ -744,30 +729,15 @@ function getEndCap(
 
       if (isRow1) {
         if (side === 'exterior') {
-          // EXTERIOR ROW 1:
-          // - PRIMARY extending: extends by wallHalfThickness + TOOTH
-          // - SECONDARY non-extending: offset left by 2*TOOTH (unir por fora)
+          // EXTERIOR ROW 1: offset -2*TOOTH para o corner (avança 2 tooth)
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
-          if (isPrimaryArm) {
-            startOffsetMm = isExtendingArm ? -(wallHalfThicknessEnd + TOOTH) : 0;
-          } else {
-            // SECONDARY: non-extending needs -2*TOOTH offset
-            startOffsetMm = isExtendingArm ? -wallHalfThicknessEnd : -2 * TOOTH;
-          }
+          startOffsetMm = -2 * TOOTH;
         } else {
-          // INTERIOR ROW 1:
-          // Non-extending arm: offset 2*TOOTH para dentro e corta 3*TOOTH
-          // Extending arm: stays FULL and extends by wallHalfThickness
-          if (isExtendingArm) {
-            reservationMm = PANEL_WIDTH;
-            type = 'FULL';
-            startOffsetMm = -wallHalfThicknessEnd;
-          } else {
-            reservationMm = PANEL_WIDTH - 3 * TOOTH;
-            type = 'CORNER_CUT';
-            startOffsetMm = 2 * TOOTH;
-          }
+          // INTERIOR ROW 1: offset +2*TOOTH (afasta do corner) e corta 2*TOOTH
+          reservationMm = PANEL_WIDTH - 2 * TOOTH;
+          type = 'CORNER_CUT';
+          startOffsetMm = 2 * TOOTH;
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
