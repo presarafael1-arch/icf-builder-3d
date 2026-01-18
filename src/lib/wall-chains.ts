@@ -456,10 +456,10 @@ function simplifyJogs(segments: WallSegment[], jogMaxMm: number, angleTolRad: nu
 // =============== segment intersection detection ===============
 
 /**
- * Finds the intersection point of two line segments if they cross.
- * Returns null if segments don't intersect or only touch at endpoints.
+ * Finds the intersection point of two line segments if they cross (X-junction).
+ * Returns null if segments don't intersect.
  */
-function findSegmentIntersection(
+function findCrossingIntersection(
   s1: { startX: number; startY: number; endX: number; endY: number },
   s2: { startX: number; startY: number; endX: number; endY: number },
   tol: number = 1
@@ -485,33 +485,116 @@ function findSegmentIntersection(
 }
 
 /**
+ * Checks if a point lies on a segment (not at endpoints).
+ * Returns the point if it does, null otherwise.
+ */
+function pointOnSegment(
+  px: number, py: number,
+  seg: { startX: number; startY: number; endX: number; endY: number },
+  tol: number
+): { x: number; y: number } | null {
+  const dx = seg.endX - seg.startX;
+  const dy = seg.endY - seg.startY;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  
+  if (len < tol) return null;
+  
+  // Project point onto segment line
+  const t = ((px - seg.startX) * dx + (py - seg.startY) * dy) / (len * len);
+  
+  // Check if projection is strictly inside segment (not at endpoints)
+  const eps = tol / len;
+  if (t <= eps || t >= 1 - eps) return null;
+  
+  // Check distance from point to line
+  const projX = seg.startX + t * dx;
+  const projY = seg.startY + t * dy;
+  const distToLine = distance(px, py, projX, projY);
+  
+  if (distToLine <= tol) {
+    return { x: projX, y: projY };
+  }
+  
+  return null;
+}
+
+/**
+ * Finds T-junction points where an endpoint of one segment touches the middle of another.
+ */
+function findTJunctionPoints(
+  segments: WallSegment[],
+  tol: number
+): { segIdx: number; point: { x: number; y: number } }[] {
+  const tJunctions: { segIdx: number; point: { x: number; y: number } }[] = [];
+  
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    
+    // Check each endpoint of this segment against all other segments
+    for (let j = 0; j < segments.length; j++) {
+      if (i === j) continue;
+      
+      const other = segments[j];
+      
+      // Check if seg's start point lies on other segment
+      const startOnOther = pointOnSegment(seg.startX, seg.startY, other, tol);
+      if (startOnOther) {
+        tJunctions.push({ segIdx: j, point: startOnOther });
+      }
+      
+      // Check if seg's end point lies on other segment
+      const endOnOther = pointOnSegment(seg.endX, seg.endY, other, tol);
+      if (endOnOther) {
+        tJunctions.push({ segIdx: j, point: endOnOther });
+      }
+    }
+  }
+  
+  return tJunctions;
+}
+
+/**
  * Splits segments at their intersection points to create proper graph nodes.
  * This ensures T and X junctions are detected even when segments cross without
  * sharing endpoints.
  */
 function splitSegmentsAtIntersections(segments: WallSegment[], tol: number): WallSegment[] {
-  // Find all intersection points
-  const intersections: { segIdx1: number; segIdx2: number; point: { x: number; y: number } }[] = [];
+  // Find all X-crossing intersection points
+  const crossings: { segIdx1: number; segIdx2: number; point: { x: number; y: number } }[] = [];
   
   for (let i = 0; i < segments.length; i++) {
     for (let j = i + 1; j < segments.length; j++) {
-      const pt = findSegmentIntersection(segments[i], segments[j], tol);
+      const pt = findCrossingIntersection(segments[i], segments[j], tol);
       if (pt) {
-        intersections.push({ segIdx1: i, segIdx2: j, point: pt });
+        crossings.push({ segIdx1: i, segIdx2: j, point: pt });
       }
     }
   }
-
-  if (intersections.length === 0) return segments;
-
-  // Group intersections by segment
+  
+  // Find all T-junction points
+  const tJunctions = findTJunctionPoints(segments, tol);
+  
+  // Group all split points by segment
   const splitPointsBySegment = new Map<number, { x: number; y: number }[]>();
-  for (const { segIdx1, segIdx2, point } of intersections) {
+  
+  for (const { segIdx1, segIdx2, point } of crossings) {
     if (!splitPointsBySegment.has(segIdx1)) splitPointsBySegment.set(segIdx1, []);
     if (!splitPointsBySegment.has(segIdx2)) splitPointsBySegment.set(segIdx2, []);
     splitPointsBySegment.get(segIdx1)!.push(point);
     splitPointsBySegment.get(segIdx2)!.push(point);
   }
+  
+  for (const { segIdx, point } of tJunctions) {
+    if (!splitPointsBySegment.has(segIdx)) splitPointsBySegment.set(segIdx, []);
+    // Check if point already exists (avoid duplicates)
+    const existing = splitPointsBySegment.get(segIdx)!;
+    const isDuplicate = existing.some(p => distance(p.x, p.y, point.x, point.y) < tol);
+    if (!isDuplicate) {
+      existing.push(point);
+    }
+  }
+
+  if (splitPointsBySegment.size === 0) return segments;
 
   // Split each segment at its intersection points
   const result: WallSegment[] = [];
