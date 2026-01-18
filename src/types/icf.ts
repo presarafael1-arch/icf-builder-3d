@@ -257,6 +257,7 @@ export interface ViewerSettings {
   showThicknessDetection: boolean; // Show wall thickness detection info
   showLJunctionArrows: boolean; // Show primary/secondary arrows at L-junctions
   highlightCornerCuts: boolean; // Highlight CORNER_CUT panels with pulsing glow
+  showLCornerOffsets: boolean; // Show offset labels on L-corner panels for calibration
 }
 
 // DXF parsing result
