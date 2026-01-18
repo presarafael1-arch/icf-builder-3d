@@ -615,31 +615,36 @@ function getStartCap(
       // Panels must TOUCH at corners - exterior with exterior, interior with interior
       // NO OVERLAP, NO GAP between them.
       // 
-      // PRIMARY arm: Full panel (1200mm) from corner
-      // SECONDARY arm: Cut panel (1200-TOOTH) starting at TOOTH offset
+      // At L-corners, two perpendicular walls meet. The DXF lines cross at the corner vertex.
+      // Each wall has panels offset from the DXF line (exterior to one side, interior to other).
       // 
-      // This creates the interlocking pattern where:
-      // - Primary's panel starts at corner vertex (0mm)
-      // - Secondary's panel starts at TOOTH offset (~70.5mm) so they TOUCH
-      // - The cut makes secondary panel 1*TOOTH shorter to end at same point
+      // For panels to TOUCH (not overlap):
+      // - PRIMARY arm: panels start at corner vertex (0mm offset along chain)
+      // - SECONDARY arm: panels start AFTER clearing the PRIMARY wall
+      //   The offset = half wall thickness (from center to exterior/interior face)
+      //   This is: halfConcreteOffset + FOAM_THICKNESS/2
+      // 
+      // The CORNER_CUT (1*TOOTH shorter) creates interlocking pattern.
       // 
       // Row alternation for interlocking:
       // - Odd rows (1,3,5): PRIMARY extends, SECONDARY is cut
       // - Even rows (2,4,6): roles swap for interlocking
       // =============================================
+      const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
+      
       if (isOddRow) {
-        // ODD ROWS: PRIMARY extends from corner, SECONDARY is cut and offset by TOOTH
+        // ODD ROWS: PRIMARY extends from corner, SECONDARY starts after PRIMARY's half-thickness
         if (endpointInfo.isPrimaryAtStart) {
           // PRIMARY arm - full panel starts at corner vertex
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
           startOffsetMm = 0;
         } else {
-          // SECONDARY arm - cut panel starts at TOOTH offset to TOUCH primary
-          // Panel is cut by 1*TOOTH so it ends flush with primary
+          // SECONDARY arm - cut panel starts at half-wall-thickness offset
+          // This makes exterior panels TOUCH exterior, interior TOUCH interior
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = TOOTH; // Start at TOOTH to touch primary, not overlap
+          startOffsetMm = wallHalfThickness;
         }
       } else {
         // EVEN ROWS: roles swap for interlocking
@@ -647,7 +652,7 @@ function getStartCap(
           // PRIMARY gets cut and offset on even rows
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = TOOTH;
+          startOffsetMm = wallHalfThickness;
         } else {
           // SECONDARY extends on even rows
           reservationMm = PANEL_WIDTH;
@@ -719,9 +724,11 @@ function getEndCap(
       // =============================================
       // L-CORNER CLOSURE RULES (at chain END):
       // Same interlocking logic as start.
-      // PRIMARY = full panel, SECONDARY = cut panel with TOOTH offset
+      // PRIMARY = full panel, SECONDARY = cut panel with half-wall-thickness offset
       // Roles swap on alternating rows for interlocking.
       // =============================================
+      const wallHalfThicknessEnd = getWallTotalThickness(concreteThickness) / 2;
+      
       if (isOddRow) {
         // ODD ROWS: PRIMARY extends, SECONDARY is cut and offset
         if (endpointInfo.isPrimaryAtEnd) {
@@ -731,14 +738,14 @@ function getEndCap(
         } else {
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = TOOTH; // End cap offset (from end of chain)
+          startOffsetMm = wallHalfThicknessEnd;
         }
       } else {
         // EVEN ROWS: roles swap
         if (endpointInfo.isPrimaryAtEnd) {
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
-          startOffsetMm = TOOTH;
+          startOffsetMm = wallHalfThicknessEnd;
         } else {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
