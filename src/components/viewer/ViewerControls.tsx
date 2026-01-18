@@ -307,6 +307,15 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                       onCheckedChange={() => toggleSetting('highlightCornerCuts')}
                     />
                   </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="show-wall-dimensions" className="text-sm text-green-400">📏 Medidas TOOTH</Label>
+                    <Switch
+                      id="show-wall-dimensions"
+                      checked={settings.showWallDimensions}
+                      onCheckedChange={() => toggleSetting('showWallDimensions')}
+                    />
+                  </div>
                 </div>
               </div>
               

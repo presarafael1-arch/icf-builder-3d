@@ -259,6 +259,7 @@ export interface ViewerSettings {
   highlightCornerCuts: boolean; // Highlight CORNER_CUT panels with pulsing glow
   showLCornerOffsets: boolean; // Show offset labels on L-corner panels for calibration
   showLCornerBoundingBoxes: boolean; // Show bounding boxes of corner panels for collision debug
+  showWallDimensions: boolean; // Show wall dimensions in TOOTH units (exterior-to-exterior, panel thickness, concrete core)
 }
 
 // DXF parsing result

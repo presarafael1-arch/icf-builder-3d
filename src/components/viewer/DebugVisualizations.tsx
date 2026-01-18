@@ -7,6 +7,7 @@
  * - Run segments with different colors
  * - Middle zone where orange cuts are allowed
  * - Index from seed overlay
+ * - Wall dimensions in TOOTH units
  */
 
 import { useMemo, useRef, useEffect } from 'react';
@@ -19,7 +20,14 @@ import {
   LJunctionInfo, 
   TJunctionInfo 
 } from '@/lib/panel-layout';
-import { PANEL_HEIGHT, ViewerSettings } from '@/types/icf';
+import { 
+  PANEL_HEIGHT, 
+  ViewerSettings, 
+  TOOTH, 
+  FOAM_THICKNESS,
+  getWallTotalThickness,
+  getConcreteThicknessMm
+} from '@/types/icf';
 
 // Scale factor: mm to meters
 const SCALE = 0.001;
@@ -752,6 +760,210 @@ function LCornerBoundingBoxes({ chainsResult, settings }: DebugVisualizationsPro
   );
 }
 
+// Wall Dimensions Visualization - shows measurements in TOOTH units
+function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizationsProps) {
+  const { chains } = chainsResult;
+  
+  // Calculate wall measurements
+  const toothMm = TOOTH;
+  const foamThicknessMm = FOAM_THICKNESS;
+  const wallTotalMm = getWallTotalThickness(settings.concreteThickness);
+  const concreteMm = getConcreteThicknessMm(settings.concreteThickness);
+  
+  // Calculate in TOOTH units
+  const wallTotalTooth = wallTotalMm / toothMm; // 4 or 5
+  const foamTooth = foamThicknessMm / toothMm; // 1
+  const concreteTooth = concreteMm / toothMm; // 2 or 3
+  
+  const y = settings.maxRows * PANEL_HEIGHT * SCALE + 0.5;
+  
+  // Show one label per chain at midpoint
+  const chainLabels = useMemo(() => {
+    return chains.map(chain => {
+      const midX = (chain.startX + chain.endX) / 2;
+      const midY = (chain.startY + chain.endY) / 2;
+      
+      // Calculate perpendicular direction for offset labels
+      const dx = chain.endX - chain.startX;
+      const dy = chain.endY - chain.startY;
+      const length = Math.hypot(dx, dy);
+      const perpX = -dy / length;
+      const perpY = dx / length;
+      
+      // Offset positions for exterior and interior labels
+      const offsetDist = wallTotalMm / 2 + 100; // 100mm beyond wall edge
+      
+      return {
+        chainId: chain.id,
+        centerX: midX,
+        centerY: midY,
+        perpX,
+        perpY,
+        offsetDist,
+        chainLength: chain.lengthMm,
+      };
+    });
+  }, [chains, wallTotalMm]);
+  
+  return (
+    <group>
+      {/* Global info panel at top */}
+      <Html
+        position={[0, y + 0.3, 0]}
+        center
+        distanceFactor={20}
+        style={{
+          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+          border: '2px solid #4ade80',
+          borderRadius: '8px',
+          padding: '12px 16px',
+          color: 'white',
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          whiteSpace: 'pre',
+          pointerEvents: 'none',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+        }}
+      >
+        {`╔═══════════════════════════════════════╗
+║ 📏 MEDIDAS EM TOOTH (1200/17 ≈ ${toothMm.toFixed(1)}mm) ║
+╠═══════════════════════════════════════╣
+║ Espessura ${settings.concreteThickness}mm:                        ║
+║ ├─ Total ext→ext: ${wallTotalTooth.toFixed(0)} TOOTH (${wallTotalMm.toFixed(0)}mm)     ║
+║ ├─ Painel (foam): ${foamTooth.toFixed(0)} TOOTH (${foamThicknessMm.toFixed(0)}mm)       ║
+║ └─ Betão (core):  ${concreteTooth.toFixed(0)} TOOTH (${concreteMm.toFixed(0)}mm)     ║
+╚═══════════════════════════════════════╝`}
+      </Html>
+      
+      {/* Per-chain dimension markers */}
+      {chainLabels.map(label => {
+        const exteriorOffset = label.offsetDist * SCALE;
+        const interiorOffset = -label.offsetDist * SCALE;
+        
+        return (
+          <group key={label.chainId}>
+            {/* Chain length label at center */}
+            <Html
+              position={[
+                label.centerX * SCALE,
+                y - 0.2,
+                label.centerY * SCALE
+              ]}
+              center
+              distanceFactor={15}
+              style={{
+                background: '#0ea5e9',
+                borderRadius: '4px',
+                padding: '3px 8px',
+                color: 'white',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                fontFamily: 'monospace',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}
+            >
+              {`L: ${(label.chainLength / 1000).toFixed(2)}m (${(label.chainLength / toothMm).toFixed(1)} TOOTH)`}
+            </Html>
+            
+            {/* Exterior wall face marker */}
+            <Html
+              position={[
+                (label.centerX + label.perpX * label.offsetDist) * SCALE,
+                y - 0.4,
+                (label.centerY + label.perpY * label.offsetDist) * SCALE
+              ]}
+              center
+              distanceFactor={12}
+              style={{
+                background: '#3b82f6',
+                borderRadius: '3px',
+                padding: '2px 6px',
+                color: 'white',
+                fontSize: '9px',
+                fontFamily: 'monospace',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}
+            >
+              EXT
+            </Html>
+            
+            {/* Interior wall face marker */}
+            <Html
+              position={[
+                (label.centerX - label.perpX * label.offsetDist) * SCALE,
+                y - 0.4,
+                (label.centerY - label.perpY * label.offsetDist) * SCALE
+              ]}
+              center
+              distanceFactor={12}
+              style={{
+                background: '#8b5cf6',
+                borderRadius: '3px',
+                padding: '2px 6px',
+                color: 'white',
+                fontSize: '9px',
+                fontFamily: 'monospace',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}
+            >
+              INT
+            </Html>
+          </group>
+        );
+      })}
+      
+      {/* Wall thickness cross-section indicator lines */}
+      {chainLabels.slice(0, 1).map(label => {
+        // Only show on first chain for clarity
+        const halfWall = (wallTotalMm / 2) * SCALE;
+        const halfConcrete = (concreteMm / 2) * SCALE;
+        
+        const baseX = label.centerX * SCALE;
+        const baseZ = label.centerY * SCALE;
+        
+        // Create dimension line perpendicular to wall
+        const positions = new Float32Array([
+          baseX + label.perpX * halfWall, y - 0.6, baseZ + label.perpY * halfWall * 1000 * SCALE,
+          baseX - label.perpX * halfWall, y - 0.6, baseZ - label.perpY * halfWall * 1000 * SCALE,
+        ]);
+        
+        return (
+          <group key={`dim-${label.chainId}`}>
+            {/* Dimension line */}
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={2}
+                  array={new Float32Array([
+                    baseX + label.perpX * halfWall, y - 0.55, baseZ + label.perpY * halfWall,
+                    baseX - label.perpX * halfWall, y - 0.55, baseZ - label.perpY * halfWall,
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color="#4ade80" linewidth={2} />
+            </line>
+            
+            {/* End caps */}
+            <mesh position={[baseX + label.perpX * halfWall, y - 0.55, baseZ + label.perpY * halfWall]}>
+              <sphereGeometry args={[0.02, 8, 8]} />
+              <meshBasicMaterial color="#4ade80" />
+            </mesh>
+            <mesh position={[baseX - label.perpX * halfWall, y - 0.55, baseZ - label.perpY * halfWall]}>
+              <sphereGeometry args={[0.02, 8, 8]} />
+              <meshBasicMaterial color="#4ade80" />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 // Main component that renders debug visualizations based on settings
 export function DebugVisualizations({ chainsResult, settings }: DebugVisualizationsProps) {
   return (
@@ -782,6 +994,10 @@ export function DebugVisualizations({ chainsResult, settings }: DebugVisualizati
       
       {settings.showLCornerBoundingBoxes && (
         <LCornerBoundingBoxes chainsResult={chainsResult} settings={settings} />
+      )}
+      
+      {settings.showWallDimensions && (
+        <WallDimensionsVisualization chainsResult={chainsResult} settings={settings} />
       )}
     </group>
   );
