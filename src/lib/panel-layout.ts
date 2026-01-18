@@ -599,27 +599,29 @@ function getChainEndpointInfo(
 
 /**
  * Round a length to nearest TOOTH multiple (for clean cuts)
- */
-/**
- * Round to nearest tooth
+ * Supports rounding to full TOOTH or half-TOOTH increments
  */
 function roundToTooth(mm: number): number {
   return Math.round(mm / TOOTH) * TOOTH;
 }
 
 /**
+ * Round to nearest half-TOOTH (for 220mm concrete which uses 2.5 TOOTH values)
+ */
+function roundToHalfTooth(mm: number): number {
+  const halfTooth = TOOTH / 2;
+  return Math.round(mm / halfTooth) * halfTooth;
+}
+
+/**
  * Calculate L-corner exterior offset to make panels touch at the vertex.
  * 
- * For exterior panels at an L-corner (fiada 1):
- * - Both arms have FULL 1200mm panels
- * - We iterate offset (in TOOTH steps) toward the corner vertex
- * - Stop when the two panel bounding boxes would collide (touch)
+ * For panels to meet at the corner vertex on the exterior:
+ * - 150mm (4 TOOTH total): each panel advances 2 TOOTH toward corner
+ * - 220mm (5 TOOTH total): each panel advances 2.5 TOOTH toward corner
  * 
- * Geometry:
- * - Exterior panel surface is at wallHalfThickness from DXF centerline
- * - At L-corner vertex, the two perpendicular exterior faces need to meet
- * - Each panel must advance by wallHalfThickness to reach the vertex
- * - We round UP to nearest TOOTH to ensure they touch/overlap slightly
+ * The offset is measured from the chain endpoint to where the panel STARTS.
+ * Negative offset = panel extends PAST the endpoint (toward corner vertex)
  * 
  * Returns the offset in mm (negative = toward corner)
  */
@@ -628,25 +630,36 @@ function calculateLCornerExteriorOffset(
   lJunction: LJunctionInfo | null,
   isPrimaryArm: boolean
 ): number {
-  const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
+  // Wall half thickness in TOOTH units:
+  // 150mm: 4 TOOTH / 2 = 2 TOOTH
+  // 220mm: 5 TOOTH / 2 = 2.5 TOOTH
+  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
+  const halfThicknessTooth = wallTotalTooth / 2;
   
-  // To touch at vertex: each panel must advance wallHalfThickness
-  // Round UP to nearest TOOTH to ensure they meet (no gap)
-  const teethNeeded = Math.ceil(wallHalfThickness / TOOTH);
-  const offset = -(teethNeeded * TOOTH);
+  // Offset in mm (negative = extend toward corner)
+  // Exact value, not rounded to integer TOOTH
+  const offsetMm = -(halfThicknessTooth * TOOTH);
   
-  console.log(`[L-EXT-CALC] wallHalfThickness=${wallHalfThickness.toFixed(1)}mm teethNeeded=${teethNeeded} offset=${offset.toFixed(1)}mm`);
+  console.log(`[L-EXT-CALC] ${concreteThickness}mm: wallTotal=${wallTotalTooth}T halfThickness=${halfThicknessTooth}T offset=${offsetMm.toFixed(1)}mm`);
   
-  return offset;
+  return offsetMm;
 }
 
 /**
- * Calculate L-corner interior offset and cut iteratively.
+ * Calculate L-corner interior offset and cut.
  * 
- * For interior panels at an L-corner (fiada 1):
- * - We want to AVOID collision with the other arm's interior panel
- * - Iterate offset AWAY from corner (positive offset) in TOOTH steps
- * - Cut the panel by the same amount we offset
+ * For interior panels at an L-corner:
+ * - They must NOT overlap with the perpendicular interior panel
+ * - Each interior panel recedes FROM the corner by wallHalfThickness
+ * - The cut removes the overlapping portion
+ * 
+ * For 220mm (5 TOOTH total):
+ * - Interior panel starts 2.5 TOOTH AFTER the corner vertex
+ * - Cut = 2.5 TOOTH from the panel end
+ * 
+ * For 150mm (4 TOOTH total):
+ * - Interior panel starts 2 TOOTH AFTER the corner vertex
+ * - Cut = 2 TOOTH from the panel end
  * 
  * Returns { offset, cut } both in mm
  */
@@ -655,53 +668,20 @@ function calculateLCornerInteriorOffsetAndCut(
   lJunction: LJunctionInfo | null,
   isPrimaryArm: boolean
 ): { offset: number; cut: number } {
-  const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
+  // Wall half thickness in TOOTH units:
+  // 150mm: 4 TOOTH / 2 = 2 TOOTH
+  // 220mm: 5 TOOTH / 2 = 2.5 TOOTH
+  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
+  const halfThicknessTooth = wallTotalTooth / 2;
   
-  // Interior panels are wallHalfThickness inward from the DXF line
-  // At an L-corner, the two interior panels would overlap if both start at corner vertex
-  // 
-  // The overlap zone is approximately: wallHalfThickness (the concrete core region)
-  // We need to offset away from corner and cut to avoid this overlap
+  // Offset in mm (positive = recede from corner)
+  const offsetMm = halfThicknessTooth * TOOTH;
+  // Cut the same amount
+  const cutMm = halfThicknessTooth * TOOTH;
   
-  // Start with no offset
-  let offset = 0;
-  let cut = 0;
-  const maxIterations = 10;
+  console.log(`[L-INT-CALC] ${concreteThickness}mm: halfThickness=${halfThicknessTooth}T offset=${offsetMm.toFixed(1)}mm cut=${cutMm.toFixed(1)}mm`);
   
-  // Each iteration, move one TOOTH away from corner
-  // We want to find the minimum offset where there's no collision
-  
-  for (let i = 1; i <= maxIterations; i++) {
-    const testOffset = i * TOOTH;
-    
-    // With this offset, our interior panel starts at (corner + testOffset)
-    // The perpendicular interior panel also has an offset
-    // Collision zone is within wallHalfThickness of corner
-    
-    // No collision when offset >= wallHalfThickness (we're outside the perpendicular panel's zone)
-    // But we want to iterate by TOOTH, so find first TOOTH multiple >= some threshold
-    
-    // For interior, we want the panel to start where it won't overlap with perpendicular
-    // The perpendicular interior panel's edge is at approx wallHalfThickness from corner
-    // So we need offset >= that to clear it
-    
-    // Threshold: wallHalfThickness rounded up to next TOOTH
-    const threshold = Math.ceil(wallHalfThickness / TOOTH) * TOOTH;
-    
-    if (testOffset >= threshold) {
-      offset = testOffset;
-      cut = testOffset; // Cut same amount as offset
-      break;
-    }
-  }
-  
-  // Default: 2*TOOTH offset and cut (as fallback)
-  if (offset === 0) {
-    offset = 2 * TOOTH;
-    cut = 2 * TOOTH;
-  }
-  
-  return { offset: roundToTooth(offset), cut: roundToTooth(cut) };
+  return { offset: offsetMm, cut: cutMm };
 }
 
 /**
@@ -1024,20 +1004,13 @@ export function layoutPanelsForChainWithJunctions(
     // Structure: [exterior foam] [concrete core] [interior foam]
     // DXF line is at the CENTER of the wall
     // 
-    // For 150mm concrete (2 teeth core):
-    //   - Half concrete = 1 tooth from center
-    //   - Foam panel = 1 tooth thick
-    //   - Exterior panel inner face at: center - 1 tooth
-    //   - Interior panel inner face at: center + 1 tooth
+    // Wall total in TOOTH units:
+    // - 150mm: 4 TOOTH (1 foam + 2 core + 1 foam)
+    // - 220mm: 5 TOOTH (1 foam + 3 core + 1 foam)
     //
-    // For 220mm concrete (3 teeth core):
-    //   - Half concrete = 1.5 teeth from center
-    //   - Foam panel = 1 tooth thick
-    //   - Exterior panel inner face at: center - 1.5 teeth
-    //   - Interior panel inner face at: center + 1.5 teeth
-    
-    // Use the concreteThickness parameter passed from settings
-    const halfConcreteOffset = getHalfConcreteOffset(concreteThickness);
+    // Panel center offset from DXF center:
+    // - 150mm: 2 - 0.5 = 1.5 TOOTH
+    // - 220mm: 2.5 - 0.5 = 2 TOOTH
     
     // Perpendicular unit vector (90° CW from wall direction)
     // Positive perpendicular = "right" side when looking along wall direction
@@ -1059,18 +1032,36 @@ export function layoutPanelsForChainWithJunctions(
       console.log(`[FLIP-END] chain=${chain.id.slice(0,8)} side=${side}→${effectiveSide}`);
     }
     
+    // Panel positioning perpendicular to wall:
+    // Wall total thickness = 4 TOOTH (150mm) or 5 TOOTH (220mm)
+    // Panel center should be at (wallTotal/2 - FOAM_THICKNESS/2) from DXF center
+    // For 150mm: (4/2 - 1/2) = 1.5 TOOTH... NO, this is wrong
+    // 
+    // Correct calculation:
+    // - Exterior face of wall is at wallTotal/2 from center
+    // - Panel is 1 TOOTH thick (FOAM_THICKNESS)
+    // - Panel center is at (wallTotal/2 - FOAM_THICKNESS/2) from center
+    // 
+    // For 150mm (4 TOOTH): center at (2 - 0.5) = 1.5 TOOTH
+    // For 220mm (5 TOOTH): center at (2.5 - 0.5) = 2 TOOTH
+    //
+    // But the user says: for 220mm, offset from DXF should be 2.5 TOOTH to exterior face
+    // So panel CENTER is at 2.5 - 0.5 = 2 TOOTH from center
+    // Total exterior-to-exterior = 2 * 2.5 = 5 TOOTH ✓
+    
+    const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
+    const wallHalfTooth = wallTotalTooth / 2;
+    const panelCenterOffsetTooth = wallHalfTooth - 0.5; // Subtract half of foam thickness (0.5 TOOTH)
+    const panelCenterOffsetMm = panelCenterOffsetTooth * TOOTH;
+    
     if (effectiveSide === 'interior') {
       // Interior panel: offset to the positive perpendicular side (inside of building)
-      // Position at center + halfConcreteOffset (inner face of foam touches concrete)
-      const offsetMm = halfConcreteOffset + FOAM_THICKNESS / 2; // Center of foam panel
-      posX += perpX * offsetMm;
-      posZ += perpZ * offsetMm;
+      posX += perpX * panelCenterOffsetMm;
+      posZ += perpZ * panelCenterOffsetMm;
     } else {
       // Exterior panel: offset to the negative perpendicular side (outside of building)
-      // Position at center - halfConcreteOffset (inner face of foam touches concrete)
-      const offsetMm = -(halfConcreteOffset + FOAM_THICKNESS / 2); // Center of foam panel
-      posX += perpX * offsetMm;
-      posZ += perpZ * offsetMm;
+      posX += perpX * (-panelCenterOffsetMm);
+      posZ += perpZ * (-panelCenterOffsetMm);
     }
 
     const matrix = new THREE.Matrix4();
