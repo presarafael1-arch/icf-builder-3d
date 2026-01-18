@@ -283,6 +283,7 @@ export default function ProjectEditor() {
     showLJunctionArrows: false,
     highlightCornerCuts: true, // Highlight CORNER_CUT panels by default for debugging
     showLCornerOffsets: true, // Show offset labels on L-corner panels for calibration
+    showLCornerBoundingBoxes: false, // Show bounding boxes of corner panels
   });
   
   // Build chains from walls (with candidate detection enabled)

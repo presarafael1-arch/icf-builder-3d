@@ -631,6 +631,127 @@ function IndexFromSeedOverlay({ chainsResult, settings }: DebugVisualizationsPro
   );
 }
 
+// L-corner bounding boxes visualization for collision debugging
+interface LCornerBoundingBoxesProps extends DebugVisualizationsProps {
+  panels?: any[]; // Panel data from layout
+}
+
+function LCornerBoundingBoxes({ chainsResult, settings }: DebugVisualizationsProps) {
+  const { chains } = chainsResult;
+  const lJunctions = useMemo(() => detectLJunctions(chains), [chains]);
+  
+  // Create wireframe boxes at each L-junction to show the theoretical panel bounds
+  // This helps visualize where panels should meet
+  
+  const y = PANEL_HEIGHT * SCALE / 2; // Row 1 center height
+  const panelDepth = 0.07; // ~70mm foam thickness in meters
+  const panelLength = 1.2; // 1200mm panel width in meters
+  
+  // Get chain by ID
+  const chainMap = useMemo(() => {
+    const map = new Map<string, typeof chains[0]>();
+    chains.forEach(c => map.set(c.id, c));
+    return map;
+  }, [chains]);
+  
+  return (
+    <group>
+      {lJunctions.map((lj) => {
+        const primaryChain = chainMap.get(lj.primaryChainId);
+        const secondaryChain = chainMap.get(lj.secondaryChainId);
+        if (!primaryChain || !secondaryChain) return null;
+        
+        const junctionPos = [lj.x * SCALE, y, lj.y * SCALE] as [number, number, number];
+        
+        // Calculate directions for each arm
+        const getPrimaryDir = () => {
+          const distToStart = Math.hypot(lj.x - primaryChain.startX, lj.y - primaryChain.startY);
+          const distToEnd = Math.hypot(lj.x - primaryChain.endX, lj.y - primaryChain.endY);
+          
+          if (distToStart < distToEnd) {
+            return { 
+              x: (primaryChain.endX - primaryChain.startX) / primaryChain.lengthMm,
+              y: (primaryChain.endY - primaryChain.startY) / primaryChain.lengthMm,
+              angle: Math.atan2(primaryChain.endY - primaryChain.startY, primaryChain.endX - primaryChain.startX)
+            };
+          } else {
+            return {
+              x: (primaryChain.startX - primaryChain.endX) / primaryChain.lengthMm,
+              y: (primaryChain.startY - primaryChain.endY) / primaryChain.lengthMm,
+              angle: Math.atan2(primaryChain.startY - primaryChain.endY, primaryChain.startX - primaryChain.endX)
+            };
+          }
+        };
+        
+        const getSecondaryDir = () => {
+          const distToStart = Math.hypot(lj.x - secondaryChain.startX, lj.y - secondaryChain.startY);
+          const distToEnd = Math.hypot(lj.x - secondaryChain.endX, lj.y - secondaryChain.endY);
+          
+          if (distToStart < distToEnd) {
+            return { 
+              x: (secondaryChain.endX - secondaryChain.startX) / secondaryChain.lengthMm,
+              y: (secondaryChain.endY - secondaryChain.startY) / secondaryChain.lengthMm,
+              angle: Math.atan2(secondaryChain.endY - secondaryChain.startY, secondaryChain.endX - secondaryChain.startX)
+            };
+          } else {
+            return {
+              x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm,
+              y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm,
+              angle: Math.atan2(secondaryChain.startY - secondaryChain.endY, secondaryChain.startX - secondaryChain.endX)
+            };
+          }
+        };
+        
+        const primDir = getPrimaryDir();
+        const secDir = getSecondaryDir();
+        
+        // Offset for exterior panels (2 TOOTH = ~141mm = 0.141m)
+        const extOffset = 0.141; // meters
+        
+        return (
+          <group key={lj.nodeId}>
+            {/* PRIMARY arm bounding box (EXTERIOR) - Yellow wireframe */}
+            <group
+              position={[
+                junctionPos[0] + primDir.x * (panelLength / 2 - extOffset),
+                junctionPos[1],
+                junctionPos[2] + primDir.y * (panelLength / 2 - extOffset)
+              ]}
+              rotation={[0, -primDir.angle, 0]}
+            >
+              <mesh>
+                <boxGeometry args={[panelLength, PANEL_HEIGHT * SCALE, panelDepth]} />
+                <meshBasicMaterial color="#FFFF00" wireframe transparent opacity={0.8} />
+              </mesh>
+            </group>
+            
+            {/* SECONDARY arm bounding box (EXTERIOR) - Cyan wireframe */}
+            <group
+              position={[
+                junctionPos[0] + secDir.x * (panelLength / 2 - extOffset),
+                junctionPos[1],
+                junctionPos[2] + secDir.y * (panelLength / 2 - extOffset)
+              ]}
+              rotation={[0, -secDir.angle, 0]}
+            >
+              <mesh>
+                <boxGeometry args={[panelLength, PANEL_HEIGHT * SCALE, panelDepth]} />
+                <meshBasicMaterial color="#00FFFF" wireframe transparent opacity={0.8} />
+              </mesh>
+            </group>
+            
+            {/* Junction center marker */}
+            <mesh position={junctionPos}>
+              <sphereGeometry args={[0.05, 8, 8]} />
+              <meshBasicMaterial color="#FF0000" />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 // Main component that renders debug visualizations based on settings
 export function DebugVisualizations({ chainsResult, settings }: DebugVisualizationsProps) {
   return (
@@ -657,6 +778,10 @@ export function DebugVisualizations({ chainsResult, settings }: DebugVisualizati
       
       {settings.showLJunctionArrows && (
         <LJunctionArrows chainsResult={chainsResult} settings={settings} />
+      )}
+      
+      {settings.showLCornerBoundingBoxes && (
+        <LCornerBoundingBoxes chainsResult={chainsResult} settings={settings} />
       )}
     </group>
   );
