@@ -258,6 +258,7 @@ export interface ViewerSettings {
   showLJunctionArrows: boolean; // Show primary/secondary arrows at L-junctions
   highlightCornerCuts: boolean; // Highlight CORNER_CUT panels with pulsing glow
   showLCornerOffsets: boolean; // Show offset labels on L-corner panels for calibration
+  showLCornerBoundingBoxes: boolean; // Show bounding boxes of corner panels for collision debug
 }
 
 // DXF parsing result

@@ -485,6 +485,9 @@ function getChainEndpointInfo(
   // For free ends
   hasFreeStart: boolean;
   hasFreeEnd: boolean;
+  // For L-corners: should we flip interior/exterior sides?
+  flipSideAtStart: boolean;
+  flipSideAtEnd: boolean;
 } {
   let startType: 'L' | 'T' | 'free' | 'none' = 'none';
   let endType: 'L' | 'T' | 'free' | 'none' = 'none';
@@ -498,6 +501,8 @@ function getChainEndpointInfo(
   let isBranchAtEnd = false;
   let hasFreeStart = false;
   let hasFreeEnd = false;
+  let flipSideAtStart = false;
+  let flipSideAtEnd = false;
   
   // Check L-junctions
   for (const lj of lJunctions) {
@@ -508,11 +513,47 @@ function getChainEndpointInfo(
       startType = 'L';
       startL = lj;
       isPrimaryAtStart = lj.primaryChainId === chain.id;
+      
+      // Determine if we need to flip sides at this L-corner
+      // The perpendicular direction for "exterior" should point AWAY from the corner's interior angle
+      // Chain direction at START points outward (away from corner)
+      const chainDirX = (chain.endX - chain.startX) / chain.lengthMm;
+      const chainDirY = (chain.endY - chain.startY) / chain.lengthMm;
+      // Perpendicular (90° CW) = "right" side when looking along chain
+      const perpX = -chainDirY;
+      const perpY = chainDirX;
+      
+      // Get the other arm's direction (at the same junction)
+      const otherChainId = isPrimaryAtStart ? lj.secondaryChainId : lj.primaryChainId;
+      const otherAngle = isPrimaryAtStart ? lj.secondaryAngle : lj.primaryAngle;
+      const otherDirX = Math.cos(otherAngle);
+      const otherDirY = Math.sin(otherAngle);
+      
+      // Cross product to check if our perpendicular points toward the other arm (interior) or away (exterior)
+      // If perp · otherDir > 0, our "exterior" (negative perp) actually points toward the corner interior
+      const dot = perpX * otherDirX + perpY * otherDirY;
+      
+      // If the perpendicular direction aligns with the other arm, we're looking at the "inside" of the L
+      // In that case, what we call "exterior" is actually interior, so flip
+      flipSideAtStart = dot > 0.3; // Threshold to account for 90° angle (should be ~0 if truly perpendicular)
     }
     if (distToEnd < tolerance) {
       endType = 'L';
       endL = lj;
       isPrimaryAtEnd = lj.primaryChainId === chain.id;
+      
+      // Same logic for chain END (but direction is reversed - pointing toward corner)
+      const chainDirX = (chain.startX - chain.endX) / chain.lengthMm; // Reversed for END
+      const chainDirY = (chain.startY - chain.endY) / chain.lengthMm;
+      const perpX = -chainDirY;
+      const perpY = chainDirX;
+      
+      const otherAngle = isPrimaryAtEnd ? lj.secondaryAngle : lj.primaryAngle;
+      const otherDirX = Math.cos(otherAngle);
+      const otherDirY = Math.sin(otherAngle);
+      
+      const dot = perpX * otherDirX + perpY * otherDirY;
+      flipSideAtEnd = dot > 0.3;
     }
   }
   
@@ -551,7 +592,8 @@ function getChainEndpointInfo(
     startL, endL, startT, endT,
     isPrimaryAtStart, isPrimaryAtEnd,
     isBranchAtStart, isBranchAtEnd,
-    hasFreeStart, hasFreeEnd
+    hasFreeStart, hasFreeEnd,
+    flipSideAtStart, flipSideAtEnd
   };
 }
 
@@ -1002,7 +1044,22 @@ export function layoutPanelsForChainWithJunctions(
     const perpX = -dirY;
     const perpZ = dirX;
     
-    if (side === 'interior') {
+    // Determine if we should flip the side for this panel at L-corners
+    // This corrects cases where "exterior" points toward the corner interior
+    const isNearStart = startPos <= PANEL_WIDTH; // First panel at chain start
+    const isNearEnd = endPos >= chain.lengthMm - PANEL_WIDTH; // Last panel at chain end
+    
+    let effectiveSide = side;
+    if (isNearStart && endpointInfo.startType === 'L' && endpointInfo.flipSideAtStart) {
+      effectiveSide = side === 'exterior' ? 'interior' : 'exterior';
+      console.log(`[FLIP-START] chain=${chain.id.slice(0,8)} side=${side}→${effectiveSide}`);
+    }
+    if (isNearEnd && endpointInfo.endType === 'L' && endpointInfo.flipSideAtEnd) {
+      effectiveSide = side === 'exterior' ? 'interior' : 'exterior';
+      console.log(`[FLIP-END] chain=${chain.id.slice(0,8)} side=${side}→${effectiveSide}`);
+    }
+    
+    if (effectiveSide === 'interior') {
       // Interior panel: offset to the positive perpendicular side (inside of building)
       // Position at center + halfConcreteOffset (inner face of foam touches concrete)
       const offsetMm = halfConcreteOffset + FOAM_THICKNESS / 2; // Center of foam panel
