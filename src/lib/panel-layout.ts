@@ -566,12 +566,18 @@ function roundToTooth(mm: number): number {
 }
 
 /**
- * Calculate L-corner exterior offset iteratively until collision.
+ * Calculate L-corner exterior offset to make panels touch at the vertex.
  * 
  * For exterior panels at an L-corner (fiada 1):
  * - Both arms have FULL 1200mm panels
  * - We iterate offset (in TOOTH steps) toward the corner vertex
- * - Stop when the two panel bounding boxes would collide
+ * - Stop when the two panel bounding boxes would collide (touch)
+ * 
+ * Geometry:
+ * - Exterior panel surface is at wallHalfThickness from DXF centerline
+ * - At L-corner vertex, the two perpendicular exterior faces need to meet
+ * - Each panel must advance by wallHalfThickness to reach the vertex
+ * - We round UP to nearest TOOTH to ensure they touch/overlap slightly
  * 
  * Returns the offset in mm (negative = toward corner)
  */
@@ -580,54 +586,16 @@ function calculateLCornerExteriorOffset(
   lJunction: LJunctionInfo | null,
   isPrimaryArm: boolean
 ): number {
-  // Wall half-thickness determines how far apart the two perpendicular panel edges are
   const wallHalfThickness = getWallTotalThickness(concreteThickness) / 2;
   
-  // At an L-corner, the two perpendicular exterior panels are separated by:
-  // - The wall half-thickness on each side = wallHalfThickness * 2 = full wall thickness
-  // But they approach the corner vertex from perpendicular directions.
-  //
-  // Geometry: If both panels start at offset 0 (at the DXF corner vertex),
-  // the exterior faces are wallHalfThickness away from the centerline.
-  // The gap at the corner between exterior faces = wallHalfThickness (one side only matters).
-  //
-  // To close the gap: advance by wallHalfThickness / cos(45°) for diagonal,
-  // but since panels are axis-aligned, we just need to advance by wallHalfThickness.
-  // However, we want to iterate by TOOTH until collision.
+  // To touch at vertex: each panel must advance wallHalfThickness
+  // Round UP to nearest TOOTH to ensure they meet (no gap)
+  const teethNeeded = Math.ceil(wallHalfThickness / TOOTH);
+  const offset = -(teethNeeded * TOOTH);
   
-  // Start with no offset
-  let offset = 0;
-  const maxIterations = 10; // Safety limit
+  console.log(`[L-EXT-CALC] wallHalfThickness=${wallHalfThickness.toFixed(1)}mm teethNeeded=${teethNeeded} offset=${offset.toFixed(1)}mm`);
   
-  // Each iteration, move one TOOTH toward the corner
-  // Collision occurs when the panel would extend past the perpendicular wall's exterior face
-  // The perpendicular wall's exterior face is at distance wallHalfThickness from center
-  
-  for (let i = 0; i < maxIterations; i++) {
-    const testOffset = -(i * TOOTH);
-    
-    // Panel extends from (corner + testOffset) to (corner + testOffset + 1200mm)
-    // The perpendicular arm's exterior surface is at wallHalfThickness from corner (perpendicular direction)
-    // Collision in the along-chain direction: when our panel reaches the perpendicular chain's space
-    
-    // Simple model: collision when our offset puts our panel start past -(wallHalfThickness + FOAM_THICKNESS)
-    // Because the perpendicular arm's panel (also offset) occupies that space
-    
-    // For proper interlocking: we want to just touch (or slightly overlap) at the corner
-    // The perpendicular exterior panel also advances by the same logic, so they meet
-    
-    // Collision threshold: when offset reaches -(wallHalfThickness)
-    // This means panel extends wallHalfThickness past the corner vertex
-    if (Math.abs(testOffset) >= wallHalfThickness) {
-      // Would collide - use previous offset
-      offset = -((i > 0 ? i - 1 : 0) * TOOTH);
-      break;
-    }
-    offset = testOffset;
-  }
-  
-  // Round to nearest tooth
-  return roundToTooth(offset);
+  return offset;
 }
 
 /**
