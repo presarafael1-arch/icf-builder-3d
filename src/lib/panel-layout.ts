@@ -577,6 +577,7 @@ interface CapResult {
   type: PanelType;
   addTopo: boolean;
   topoId: string;
+  startOffsetMm: number; // Offset to apply to panel start position (for avoiding overlap at corners)
 }
 
 /**
@@ -593,7 +594,8 @@ function getStartCap(
   chain: WallChain,
   endpointInfo: ReturnType<typeof getChainEndpointInfo>,
   row: number,
-  side: WallSide = 'exterior'
+  side: WallSide = 'exterior',
+  concreteThickness: ConcreteThickness = '150'
 ): CapResult {
   const isRow1 = row === 0;  // Index 0 = Row 1
   const isRow2 = row === 1;  // Index 1 = Row 2
@@ -603,6 +605,7 @@ function getStartCap(
   let type: PanelType = 'FULL';
   let addTopo = false;
   let topoId = '';
+  let startOffsetMm = 0; // Offset from corner vertex where panel actually starts
   
   switch (endpointInfo.startType) {
     case 'L':
@@ -619,28 +622,33 @@ function getStartCap(
       // - Even rows (2,4,6): roles swap for interlocking
       // =============================================
       if (isOddRow) {
-        // ODD ROWS: PRIMARY arm extends, SECONDARY arm is cut flush
+        // ODD ROWS: PRIMARY arm extends, SECONDARY arm is cut and offset
         if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY arm - extends 1×TOOTH beyond intersection
-          // Panel is FULL, positioned to extend past corner
+          // PRIMARY arm - panel starts at corner, extends full length
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
+          startOffsetMm = 0;
         } else {
-          // SECONDARY arm - cut to meet PRIMARY flush
-          // Reduced by 1×TOOTH so it doesn't overlap
+          // SECONDARY arm - must start AFTER the primary wall thickness
+          // This prevents overlap - panel starts at wallThickness offset
+          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
+          startOffsetMm = wallThickness; // Start after clearing the primary wall
         }
       } else {
-        // EVEN ROWS: roles swap - SECONDARY extends, PRIMARY is cut
+        // EVEN ROWS: roles swap - SECONDARY extends, PRIMARY is cut and offset
         if (endpointInfo.isPrimaryAtStart) {
-          // PRIMARY gets cut on even rows
+          // PRIMARY gets cut and offset on even rows
+          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
+          startOffsetMm = wallThickness;
         } else {
           // SECONDARY extends on even rows
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
+          startOffsetMm = 0;
         }
       }
       break;
@@ -683,14 +691,15 @@ function getStartCap(
       type = 'FULL';
   }
   
-  return { reservationMm, type, addTopo, topoId };
+  return { reservationMm, type, addTopo, topoId, startOffsetMm };
 }
 
 function getEndCap(
   chain: WallChain,
   endpointInfo: ReturnType<typeof getChainEndpointInfo>,
   row: number,
-  side: WallSide = 'exterior'
+  side: WallSide = 'exterior',
+  concreteThickness: ConcreteThickness = '150'
 ): CapResult {
   const isRow1 = row === 0;
   const isOddRow = row % 2 === 0; // 0, 2, 4...
@@ -699,6 +708,7 @@ function getEndCap(
   let type: PanelType = 'FULL';
   let addTopo = false;
   let topoId = '';
+  let startOffsetMm = 0;
   
   switch (endpointInfo.endType) {
     case 'L':
@@ -709,22 +719,28 @@ function getEndCap(
       // Roles swap on alternating rows.
       // =============================================
       if (isOddRow) {
-        // ODD ROWS: PRIMARY extends, SECONDARY is cut
+        // ODD ROWS: PRIMARY extends, SECONDARY is cut and offset
         if (endpointInfo.isPrimaryAtEnd) {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
+          startOffsetMm = 0;
         } else {
+          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
+          startOffsetMm = wallThickness; // End cap offset (from end of chain)
         }
       } else {
         // EVEN ROWS: roles swap
         if (endpointInfo.isPrimaryAtEnd) {
+          const wallThickness = getWallTotalThickness(concreteThickness);
           reservationMm = PANEL_WIDTH - TOOTH;
           type = 'CORNER_CUT';
+          startOffsetMm = wallThickness;
         } else {
           reservationMm = PANEL_WIDTH;
           type = 'FULL';
+          startOffsetMm = 0;
         }
       }
       break;
@@ -759,7 +775,7 @@ function getEndCap(
       type = 'FULL';
   }
   
-  return { reservationMm, type, addTopo, topoId };
+  return { reservationMm, type, addTopo, topoId, startOffsetMm };
 }
 
 /**
@@ -1024,27 +1040,32 @@ export function layoutPanelsForChainWithJunctions(
   const isAtChainEnd = intervalEnd === chain.lengthMm;
   
   // Left (start) cap - pass side for correct L-corner rules
-  let leftCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '' };
+  let leftCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '', startOffsetMm: 0 };
   if (isAtChainStart) {
-    leftCap = getStartCap(chain, endpointInfo, row, side);
+    leftCap = getStartCap(chain, endpointInfo, row, side, concreteThickness);
   }
   
   // Right (end) cap - pass side for correct L-corner rules
-  let rightCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '' };
+  let rightCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '', startOffsetMm: 0 };
   if (isAtChainEnd) {
-    rightCap = getEndCap(chain, endpointInfo, row, side);
+    rightCap = getEndCap(chain, endpointInfo, row, side, concreteThickness);
   }
   
   // ============= HANDLE VERY SHORT INTERVALS =============
   const totalReservations = (isAtChainStart ? leftCap.reservationMm : 0) + (isAtChainEnd ? rightCap.reservationMm : 0);
   
   // CRITICAL: Panel width MUST NEVER exceed PANEL_WIDTH (1200mm)
-  if (intervalLength <= PANEL_WIDTH) {
+  // Account for offsets at both ends
+  const effectiveStart = intervalStart + leftCap.startOffsetMm;
+  const effectiveEnd = intervalEnd - rightCap.startOffsetMm;
+  const effectiveLength = effectiveEnd - effectiveStart;
+  
+  if (effectiveLength <= PANEL_WIDTH && effectiveLength >= MIN_CUT_MM) {
     // Interval fits in one panel (possibly cut)
-    const panelWidth = Math.min(intervalLength, PANEL_WIDTH);
+    const panelWidth = Math.min(effectiveLength, PANEL_WIDTH);
     const type: PanelType = panelWidth < PANEL_WIDTH ? 'CUT_DOUBLE' : (isAtChainStart ? leftCap.type : 'FULL');
     const isCorner = isAtChainStart && leftCap.type === 'CORNER_CUT';
-    panels.push(createPanel(intervalStart, panelWidth, type, isCorner));
+    panels.push(createPanel(effectiveStart, panelWidth, type, isCorner));
     
     // Add TOPOs if needed - at free ends, TOPO closes both sides (only add once from exterior)
     if (isAtChainStart && leftCap.addTopo && side === 'exterior') {
@@ -1059,16 +1080,34 @@ export function layoutPanelsForChainWithJunctions(
     }
     
     return { panels, topos };
+  } else if (effectiveLength < MIN_CUT_MM) {
+    // Interval too small after offsets - just add TOPOs if needed
+    if (isAtChainStart && leftCap.addTopo && side === 'exterior') {
+      const isFreeEnd = endpointInfo.startType === 'free';
+      const topoSide = isFreeEnd ? 'closing' : side;
+      topos.push(createTopo(intervalStart, isFreeEnd ? 'free_end' : 'T_junction', leftCap.topoId, topoSide));
+    }
+    if (isAtChainEnd && rightCap.addTopo && side === 'exterior') {
+      const isFreeEnd = endpointInfo.endType === 'free';
+      const topoSide = isFreeEnd ? 'closing' : side;
+      topos.push(createTopo(intervalEnd, isFreeEnd ? 'free_end' : 'T_junction', rightCap.topoId, topoSide));
+    }
+    return { panels, topos };
   }
   
   // ============= PLACE LEFT CAP (if at chain start) =============
-  let leftEdge = intervalStart;
+  // Apply startOffsetMm to avoid overlap at L-corners
+  let leftEdge = intervalStart + leftCap.startOffsetMm;
   
   if (isAtChainStart && leftCap.reservationMm >= MIN_CUT_MM) {
     // CRITICAL: Cap width MUST NEVER exceed PANEL_WIDTH (1200mm)
-    const capWidth = Math.min(leftCap.reservationMm, intervalLength, PANEL_WIDTH);
-    panels.push(createPanel(leftEdge, capWidth, leftCap.type, leftCap.type === 'CORNER_CUT'));
-    leftEdge += capWidth;
+    // Also account for the offset reducing available space
+    const availableLength = intervalLength - leftCap.startOffsetMm;
+    const capWidth = Math.min(leftCap.reservationMm, availableLength, PANEL_WIDTH);
+    if (capWidth >= MIN_CUT_MM) {
+      panels.push(createPanel(leftEdge, capWidth, leftCap.type, leftCap.type === 'CORNER_CUT'));
+      leftEdge += capWidth;
+    }
     
     if (leftCap.addTopo && side === 'exterior') {
       const isFreeEnd = endpointInfo.startType === 'free';
@@ -1078,13 +1117,17 @@ export function layoutPanelsForChainWithJunctions(
   }
   
   // ============= PLACE RIGHT CAP (if at chain end) =============
-  let rightEdge = intervalEnd;
+  // Apply startOffsetMm for right cap (offset from the end)
+  let rightEdge = intervalEnd - rightCap.startOffsetMm;
   
   if (isAtChainEnd && rightCap.reservationMm >= MIN_CUT_MM) {
     // CRITICAL: Cap width MUST NEVER exceed PANEL_WIDTH (1200mm)
-    const capWidth = Math.min(rightCap.reservationMm, intervalEnd - leftEdge, PANEL_WIDTH);
-    rightEdge = intervalEnd - capWidth;
-    panels.push(createPanel(rightEdge, capWidth, rightCap.type, rightCap.type === 'CORNER_CUT'));
+    const availableLength = rightEdge - leftEdge;
+    const capWidth = Math.min(rightCap.reservationMm, availableLength, PANEL_WIDTH);
+    if (capWidth >= MIN_CUT_MM) {
+      rightEdge = rightEdge - capWidth;
+      panels.push(createPanel(rightEdge, capWidth, rightCap.type, rightCap.type === 'CORNER_CUT'));
+    }
     
     if (rightCap.addTopo && side === 'exterior') {
       const isFreeEnd = endpointInfo.endType === 'free';
