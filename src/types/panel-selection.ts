@@ -7,11 +7,11 @@
 import { PanelType } from '@/lib/panel-layout';
 
 // Core thickness detection from DXF wall spacing
-export type CoreConcreteMm = 150 | 200;
-export type WallOuterThicknessMm = 280 | 330;
+export type CoreConcreteMm = 150 | 220;
+export type WallOuterThicknessMm = 282 | 353; // 4×tooth or 5×tooth
 
 // TOPO product types based on core concrete thickness
-export type TopoType = 'TOPO_150' | 'TOPO_200';
+export type TopoType = 'TOPO_150' | 'TOPO_220';
 
 // Junction/seed origin types
 export type SeedOrigin = 'L_junction' | 'T_junction' | 'X_junction' | 'free_end' | 'middle' | 'none';
@@ -193,15 +193,18 @@ export function parsePanelId(panelId: string): StablePanelId | null {
  * Get topo type based on core concrete thickness
  */
 export function getTopoType(coreConcreteMm: CoreConcreteMm): TopoType {
-  return coreConcreteMm === 150 ? 'TOPO_150' : 'TOPO_200';
+  return coreConcreteMm === 150 ? 'TOPO_150' : 'TOPO_220';
 }
 
 /**
  * Convert wall outer thickness to core concrete thickness
+ * Using tooth-based measurements: 4×tooth (282mm) or 5×tooth (353mm)
  */
 export function wallThicknessToCoreThickness(wallThicknessMm: number): CoreConcreteMm | null {
-  if (Math.abs(wallThicknessMm - 280) < 20) return 150;
-  if (Math.abs(wallThicknessMm - 330) < 20) return 200;
+  // 4×tooth ≈ 282mm → 150mm core
+  if (Math.abs(wallThicknessMm - 282) < 20) return 150;
+  // 5×tooth ≈ 353mm → 220mm core
+  if (Math.abs(wallThicknessMm - 353) < 20) return 220;
   return null;
 }
 
@@ -209,5 +212,5 @@ export function wallThicknessToCoreThickness(wallThicknessMm: number): CoreConcr
  * Convert core concrete thickness to wall outer thickness
  */
 export function coreThicknessToWallThickness(coreConcreteMm: CoreConcreteMm): WallOuterThicknessMm {
-  return coreConcreteMm === 150 ? 280 : 330;
+  return coreConcreteMm === 150 ? 282 : 353;
 }

@@ -170,7 +170,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
       finalThickness = {
         detected: true,
         coreConcreteMm: manualThickness,
-        wallOuterThicknessMm: manualThickness === 150 ? 280 : 330,
+        wallOuterThicknessMm: manualThickness === 150 ? 282 : 353,
         confidence: 'high',
         detectionMethod: 'manual_selection',
         message: `Selecionado manualmente: ${manualThickness}mm`
@@ -585,7 +585,7 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                           <div>
                             <div className="font-bold">150mm</div>
                             <div className={`text-xs ${manualThickness === 150 ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                              Parede 280mm
+                              Parede ~282mm
                             </div>
                           </div>
                         </div>
@@ -594,21 +594,21 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
                       
                       <label 
                         className={`flex items-center justify-between p-3 rounded-md cursor-pointer transition-colors ${
-                          manualThickness === 200 
+                          manualThickness === 220 
                             ? 'bg-primary text-primary-foreground' 
                             : 'bg-background hover:bg-muted'
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <RadioGroupItem value="200" id="thickness-200" className="sr-only" />
+                          <RadioGroupItem value="220" id="thickness-220" className="sr-only" />
                           <div>
-                            <div className="font-bold">200mm</div>
-                            <div className={`text-xs ${manualThickness === 200 ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                              Parede 330mm
+                            <div className="font-bold">220mm</div>
+                            <div className={`text-xs ${manualThickness === 220 ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                              Parede ~353mm
                             </div>
                           </div>
                         </div>
-                        {manualThickness === 200 && <Check className="h-4 w-4" />}
+                        {manualThickness === 220 && <Check className="h-4 w-4" />}
                       </label>
                     </RadioGroup>
                   </div>

@@ -20,7 +20,7 @@ export function NewProjectForm() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    concreteThickness: '150' as '150' | '200',
+    concreteThickness: '150' as '150' | '220',
     wallHeightMm: 2800,
     rebarSpacingCm: 20,
     cornerMode: 'overlap_cut' as 'overlap_cut' | 'topo'
@@ -141,16 +141,16 @@ export function NewProjectForm() {
             </div>
             <RadioGroup
               value={formData.concreteThickness}
-              onValueChange={(value) => setFormData({ ...formData, concreteThickness: value as '150' | '200' })}
+              onValueChange={(value) => setFormData({ ...formData, concreteThickness: value as '150' | '220' })}
               className="flex gap-4"
             >
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="150" id="tc-150" />
-                <Label htmlFor="tc-150" className="font-mono cursor-pointer">150 mm</Label>
+                <Label htmlFor="tc-150" className="font-mono cursor-pointer">150 mm (~282mm parede)</Label>
               </div>
               <div className="flex items-center space-x-2">
-                <RadioGroupItem value="200" id="tc-200" />
-                <Label htmlFor="tc-200" className="font-mono cursor-pointer">200 mm</Label>
+                <RadioGroupItem value="220" id="tc-220" />
+                <Label htmlFor="tc-220" className="font-mono cursor-pointer">220 mm (~353mm parede)</Label>
               </div>
             </RadioGroup>
           </div>
