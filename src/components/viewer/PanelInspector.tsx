@@ -2,10 +2,11 @@
  * Panel Inspector Component
  * 
  * Shows detailed panel information and allows override editing
+ * Includes movement controls (TOOTH steps) and width adjustment
  */
 
-import { useState } from 'react';
-import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, Minus, Plus, MoveHorizontal } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +29,7 @@ import {
   getTopoType
 } from '@/types/panel-selection';
 import { PanelType } from '@/lib/panel-layout';
-import { TOOTH } from '@/types/icf';
+import { TOOTH, PANEL_WIDTH } from '@/types/icf';
 import { PANEL_COLORS } from '@/components/viewer/ICFViewer3D';
 
 interface PanelInspectorProps {
@@ -68,13 +69,115 @@ export function PanelInspector({
   const [editType, setEditType] = useState<PanelType | 'auto'>('auto');
   const [editCut, setEditCut] = useState<string>('');
   const [editAnchor, setEditAnchor] = useState<string>('auto');
+  const [editOffset, setEditOffset] = useState<number>(0);
+  const [editWidth, setEditWidth] = useState<number>(PANEL_WIDTH);
+  
+  // Initialize edit values from override or panel data
+  useEffect(() => {
+    if (override) {
+      setEditOffset(override.offsetMm ?? 0);
+      setEditWidth(override.widthMm ?? panelData?.widthMm ?? PANEL_WIDTH);
+      setEditType(override.overrideType ?? 'auto');
+      setEditCut(override.cutMm?.toString() ?? '');
+      setEditAnchor(override.anchorOverride ?? 'auto');
+    } else if (panelData) {
+      setEditOffset(0);
+      setEditWidth(panelData.widthMm);
+      setEditType('auto');
+      setEditCut('');
+      setEditAnchor('auto');
+    }
+  }, [override, panelData]);
   
   // Reset form when panel changes
   const resetForm = () => {
     setEditType('auto');
     setEditCut('');
     setEditAnchor('auto');
+    setEditOffset(0);
+    setEditWidth(panelData?.widthMm ?? PANEL_WIDTH);
   };
+  
+  // Move panel by TOOTH steps
+  const movePanel = useCallback((direction: 'left' | 'right') => {
+    const step = direction === 'left' ? -TOOTH : TOOTH;
+    const newOffset = Math.round((editOffset + step) * 100) / 100;
+    setEditOffset(newOffset);
+    
+    // Apply immediately
+    if (panelData) {
+      const newOverride: PanelOverride = {
+        panelId: panelData.panelId,
+        isLocked: override?.isLocked ?? false,
+        createdAt: override?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        offsetMm: newOffset,
+        widthMm: editWidth !== PANEL_WIDTH ? editWidth : undefined,
+        overrideType: editType !== 'auto' ? editType : undefined,
+        cutMm: editCut ? parseFloat(editCut) : undefined,
+        anchorOverride: editAnchor !== 'auto' ? editAnchor as PanelOverride['anchorOverride'] : undefined,
+      };
+      onSetOverride(newOverride);
+    }
+  }, [editOffset, editWidth, editType, editCut, editAnchor, override, panelData, onSetOverride]);
+  
+  // Adjust width by TOOTH steps
+  const adjustWidth = useCallback((direction: 'shrink' | 'grow') => {
+    const step = direction === 'shrink' ? -TOOTH : TOOTH;
+    const newWidth = Math.max(TOOTH, Math.round((editWidth + step) * 100) / 100);
+    setEditWidth(newWidth);
+    
+    // Apply immediately
+    if (panelData) {
+      const newOverride: PanelOverride = {
+        panelId: panelData.panelId,
+        isLocked: override?.isLocked ?? false,
+        createdAt: override?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        offsetMm: editOffset !== 0 ? editOffset : undefined,
+        widthMm: newWidth,
+        overrideType: editType !== 'auto' ? editType : undefined,
+        cutMm: editCut ? parseFloat(editCut) : undefined,
+        anchorOverride: editAnchor !== 'auto' ? editAnchor as PanelOverride['anchorOverride'] : undefined,
+      };
+      onSetOverride(newOverride);
+    }
+  }, [editWidth, editOffset, editType, editCut, editAnchor, override, panelData, onSetOverride]);
+  
+  // Keyboard shortcuts for movement
+  useEffect(() => {
+    if (!isOpen || !panelData) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle when inspector is focused or no input is focused
+      const activeElement = document.activeElement;
+      if (activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA') return;
+      
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          movePanel('left');
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          movePanel('right');
+          break;
+        case '-':
+        case '_':
+          e.preventDefault();
+          adjustWidth('shrink');
+          break;
+        case '+':
+        case '=':
+          e.preventDefault();
+          adjustWidth('grow');
+          break;
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, panelData, movePanel, adjustWidth]);
   
   const handleApplyOverride = () => {
     if (!panelData) return;
@@ -96,6 +199,14 @@ export function PanelInspector({
     
     if (editAnchor !== 'auto') {
       newOverride.anchorOverride = editAnchor as PanelOverride['anchorOverride'];
+    }
+    
+    if (editOffset !== 0) {
+      newOverride.offsetMm = editOffset;
+    }
+    
+    if (editWidth !== PANEL_WIDTH && editWidth !== panelData.widthMm) {
+      newOverride.widthMm = editWidth;
     }
     
     onSetOverride(newOverride);
@@ -134,6 +245,8 @@ export function PanelInspector({
   }
   
   const typeColor = PANEL_COLORS[panelData.type] || '#666';
+  const effectiveOffset = override?.offsetMm ?? 0;
+  const effectiveWidth = override?.widthMm ?? panelData.widthMm;
   
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -177,6 +290,119 @@ export function PanelInspector({
           
           <Separator />
           
+          {/* === MOVEMENT CONTROLS === */}
+          <div className="space-y-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
+            <div className="flex items-center gap-2">
+              <MoveHorizontal className="h-4 w-4 text-primary" />
+              <Label className="text-sm font-medium">Controles de Posição</Label>
+              <span className="text-xs text-muted-foreground ml-auto">Passo: {TOOTH.toFixed(1)}mm</span>
+            </div>
+            
+            {/* Position offset controls */}
+            <div>
+              <Label className="text-xs text-muted-foreground mb-2 block">Offset (mm)</Label>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  onClick={() => movePanel('left')}
+                  title="Mover para esquerda (←)"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                
+                <div className="flex-1 text-center">
+                  <span className={`font-mono text-lg ${editOffset !== 0 ? 'text-primary font-bold' : ''}`}>
+                    {editOffset >= 0 ? '+' : ''}{editOffset.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-muted-foreground ml-1">mm</span>
+                </div>
+                
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  onClick={() => movePanel('right')}
+                  title="Mover para direita (→)"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground text-center mt-1">
+                Use ← → para mover
+              </p>
+            </div>
+            
+            {/* Width controls */}
+            <div>
+              <Label className="text-xs text-muted-foreground mb-2 block">Largura (mm)</Label>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  onClick={() => adjustWidth('shrink')}
+                  title="Reduzir largura (-)"
+                  disabled={editWidth <= TOOTH}
+                >
+                  <Minus className="h-4 w-4" />
+                </Button>
+                
+                <div className="flex-1 text-center">
+                  <span className={`font-mono text-lg ${editWidth !== PANEL_WIDTH ? 'text-orange-500 font-bold' : ''}`}>
+                    {editWidth.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-muted-foreground ml-1">mm</span>
+                  {editWidth !== PANEL_WIDTH && (
+                    <span className="text-xs text-orange-500 ml-2">
+                      ({((PANEL_WIDTH - editWidth) / TOOTH).toFixed(1)} TOOTH cortado)
+                    </span>
+                  )}
+                </div>
+                
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  onClick={() => adjustWidth('grow')}
+                  title="Aumentar largura (+)"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground text-center mt-1">
+                Use - + para ajustar
+              </p>
+            </div>
+            
+            {/* Quick reset */}
+            {(editOffset !== 0 || editWidth !== PANEL_WIDTH) && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-full"
+                onClick={() => {
+                  setEditOffset(0);
+                  setEditWidth(PANEL_WIDTH);
+                  if (panelData) {
+                    const newOverride: PanelOverride = {
+                      panelId: panelData.panelId,
+                      isLocked: override?.isLocked ?? false,
+                      createdAt: override?.createdAt ?? new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                      overrideType: editType !== 'auto' ? editType : undefined,
+                      cutMm: editCut ? parseFloat(editCut) : undefined,
+                      anchorOverride: editAnchor !== 'auto' ? editAnchor as PanelOverride['anchorOverride'] : undefined,
+                    };
+                    onSetOverride(newOverride);
+                  }
+                }}
+              >
+                <RefreshCw className="h-3 w-3 mr-2" />
+                Reset posição/largura
+              </Button>
+            )}
+          </div>
+          
+          <Separator />
+          
           {/* Current State */}
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
@@ -191,18 +417,27 @@ export function PanelInspector({
             </div>
             
             <div>
-              <Label className="text-xs text-muted-foreground">Largura</Label>
+              <Label className="text-xs text-muted-foreground">Largura Original</Label>
               <span className="font-mono">{panelData.widthMm.toFixed(1)} mm</span>
             </div>
             
             <div>
               <Label className="text-xs text-muted-foreground">Posição (início)</Label>
-              <span className="font-mono">{panelData.startMm.toFixed(1)} mm</span>
+              <span className="font-mono">
+                {(panelData.startMm + effectiveOffset).toFixed(1)} mm
+                {effectiveOffset !== 0 && (
+                  <span className="text-primary text-xs ml-1">
+                    ({effectiveOffset > 0 ? '+' : ''}{effectiveOffset.toFixed(1)})
+                  </span>
+                )}
+              </span>
             </div>
             
             <div>
               <Label className="text-xs text-muted-foreground">Posição (fim)</Label>
-              <span className="font-mono">{panelData.endMm.toFixed(1)} mm</span>
+              <span className="font-mono">
+                {(panelData.startMm + effectiveOffset + effectiveWidth).toFixed(1)} mm
+              </span>
             </div>
             
             <div>
@@ -298,7 +533,7 @@ export function PanelInspector({
           
           {/* Override Controls */}
           <div className="space-y-3">
-            <Label className="text-sm font-medium">Overrides</Label>
+            <Label className="text-sm font-medium">Overrides Avançados</Label>
             
             {override && (
               <Alert>
@@ -306,6 +541,8 @@ export function PanelInspector({
                 <AlertDescription>
                   Este painel tem override ativo
                   {override.overrideType && ` (tipo: ${PANEL_TYPE_LABELS[override.overrideType]})`}
+                  {override.offsetMm && ` (offset: ${override.offsetMm.toFixed(1)}mm)`}
+                  {override.widthMm && ` (largura: ${override.widthMm.toFixed(1)}mm)`}
                 </AlertDescription>
               </Alert>
             )}
