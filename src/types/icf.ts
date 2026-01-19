@@ -261,6 +261,8 @@ export interface ViewerSettings {
   showLCornerBoundingBoxes: boolean; // Show bounding boxes of corner panels for collision debug
   showWallDimensions: boolean; // Show wall dimensions in TOOTH units (exterior-to-exterior, panel thickness, concrete core)
   showCornerNodes: boolean; // Show exterior/interior intersection nodes at L-corners
+  showCornerNodeLabels: boolean; // Show NÓ EXT / NÓ INT labels
+  showCornerNodeWires: boolean; // Show vertical "fio" lines at corner nodes
 }
 
 // DXF parsing result

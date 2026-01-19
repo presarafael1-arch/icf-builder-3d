@@ -165,6 +165,8 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
 // Corner nodes visualization - shows exterior and interior intersection points
 function CornerNodesVisualization({ chainsResult, settings }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
+  const showLabels = settings.showCornerNodeLabels ?? true;
+  const showWires = settings.showCornerNodeWires ?? true;
 
   // Detect L-junctions with computed corner nodes
   const lJunctions = useMemo(
@@ -172,154 +174,177 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
     [chains, settings.concreteThickness]
   );
 
-  // Collect all corner nodes
-  const cornerNodes = useMemo(() => {
-    const nodes: { x: number; y: number; type: 'exterior' | 'interior'; id: string; ljId: string }[] = [];
-
-    lJunctions.forEach((lj) => {
-      if (lj.exteriorNode) {
-        nodes.push({
-          x: lj.exteriorNode.x,
-          y: lj.exteriorNode.y,
-          type: 'exterior',
-          id: lj.exteriorNode.id,
-          ljId: lj.nodeId,
-        });
-      }
-      if (lj.interiorNode) {
-        nodes.push({
-          x: lj.interiorNode.x,
-          y: lj.interiorNode.y,
-          type: 'interior',
-          id: lj.interiorNode.id,
-          ljId: lj.nodeId,
-        });
-      }
-    });
-
-    return nodes;
-  }, [lJunctions]);
-
-  // Vertical reference line (“fio”) so you can see where the node is in plan
+  // Vertical reference line ("fio") so you can see where the node is in plan
   const yTop = settings.maxRows * PANEL_HEIGHT * SCALE + 0.4;
-  const yBase = 0.02; // slightly above ground
+  const yBase = 0.02;
 
   return (
     <group>
-      {cornerNodes.map((node) => {
-        const color = node.type === 'exterior' ? '#FF0000' : '#FFCC00';
+      {lJunctions.map((lj) => {
+        if (!lj.exteriorNode || !lj.interiorNode) return null;
+
+        const extNode = lj.exteriorNode;
+        const intNode = lj.interiorNode;
+        const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE] as [number, number, number];
 
         return (
-          <group key={node.id}>
-            {/* Vertical string */}
-            <line>
-              <bufferGeometry>
-                <bufferAttribute
-                  attach="attributes-position"
-                  count={2}
-                  array={new Float32Array([
-                    node.x * SCALE,
-                    yBase,
-                    node.y * SCALE,
-                    node.x * SCALE,
-                    yTop,
-                    node.y * SCALE,
-                  ])}
-                  itemSize={3}
-                />
-              </bufferGeometry>
-              <lineBasicMaterial color={color} linewidth={2} />
-            </line>
+          <group key={lj.nodeId}>
+            {/* EXTERIOR node */}
+            <group>
+              {showWires && (
+                <line>
+                  <bufferGeometry>
+                    <bufferAttribute
+                      attach="attributes-position"
+                      count={2}
+                      array={new Float32Array([
+                        extNode.x * SCALE, yBase, extNode.y * SCALE,
+                        extNode.x * SCALE, yTop, extNode.y * SCALE,
+                      ])}
+                      itemSize={3}
+                    />
+                  </bufferGeometry>
+                  <lineBasicMaterial color="#FF0000" linewidth={2} />
+                </line>
+              )}
 
-            {/* Marker + label at the top */}
-            <group position={[node.x * SCALE, yTop, node.y * SCALE]}>
-              <mesh>
-                <sphereGeometry args={[0.12, 16, 16]} />
-                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
-              </mesh>
-
-              {/* Crosshair lines */}
               <line>
                 <bufferGeometry>
                   <bufferAttribute
                     attach="attributes-position"
-                    count={4}
+                    count={2}
                     array={new Float32Array([
-                      -0.15, 0, 0,
-                      0.15, 0, 0,
-                      0, 0, -0.15,
-                      0, 0, 0.15,
+                      dxfPos[0], dxfPos[1], dxfPos[2],
+                      extNode.x * SCALE, yBase, extNode.y * SCALE,
                     ])}
                     itemSize={3}
                   />
                 </bufferGeometry>
-                <lineBasicMaterial color={color} linewidth={2} />
+                <lineBasicMaterial color="#FF0000" linewidth={2} />
               </line>
 
-              <Html
-                center
-                distanceFactor={8}
-                style={{
-                  color: node.type === 'exterior' ? '#FFF' : '#000',
-                  fontSize: '11px',
-                  fontWeight: 'bold',
-                  background: color,
-                  padding: '3px 8px',
-                  borderRadius: '4px',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                  border: '2px solid white',
-                }}
-              >
-                {node.type === 'exterior' ? 'NÓ EXT' : 'NÓ INT'}
-              </Html>
+              <group position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}>
+                <mesh>
+                  <sphereGeometry args={[0.12, 16, 16]} />
+                  <meshStandardMaterial color="#FF0000" emissive="#FF0000" emissiveIntensity={0.8} />
+                </mesh>
+
+                <line>
+                  <bufferGeometry>
+                    <bufferAttribute
+                      attach="attributes-position"
+                      count={4}
+                      array={new Float32Array([
+                        -0.15, 0, 0, 0.15, 0, 0,
+                        0, 0, -0.15, 0, 0, 0.15,
+                      ])}
+                      itemSize={3}
+                    />
+                  </bufferGeometry>
+                  <lineBasicMaterial color="#FF0000" linewidth={2} />
+                </line>
+
+                {showLabels && (
+                  <Html
+                    center
+                    distanceFactor={8}
+                    style={{
+                      color: '#FFF',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      background: '#FF0000',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      whiteSpace: 'nowrap',
+                      pointerEvents: 'none',
+                      border: '2px solid white',
+                    }}
+                  >
+                    NÓ EXT
+                  </Html>
+                )}
+              </group>
             </group>
-          </group>
-        );
-      })}
 
-      {/* Diagonal reference lines on the ground plane (DXF intersection -> node) */}
-      {lJunctions.map((lj) => {
-        if (!lj.exteriorNode || !lj.interiorNode) return null;
+            {/* INTERIOR node */}
+            <group>
+              {showWires && (
+                <line>
+                  <bufferGeometry>
+                    <bufferAttribute
+                      attach="attributes-position"
+                      count={2}
+                      array={new Float32Array([
+                        intNode.x * SCALE, yBase, intNode.y * SCALE,
+                        intNode.x * SCALE, yTop, intNode.y * SCALE,
+                      ])}
+                      itemSize={3}
+                    />
+                  </bufferGeometry>
+                  <lineBasicMaterial color="#FFCC00" linewidth={2} />
+                </line>
+              )}
 
-        const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE];
-        const extPos = [lj.exteriorNode.x * SCALE, yBase, lj.exteriorNode.y * SCALE];
-        const intPos = [lj.interiorNode.x * SCALE, yBase, lj.interiorNode.y * SCALE];
+              <line>
+                <bufferGeometry>
+                  <bufferAttribute
+                    attach="attributes-position"
+                    count={2}
+                    array={new Float32Array([
+                      dxfPos[0], dxfPos[1], dxfPos[2],
+                      intNode.x * SCALE, yBase, intNode.y * SCALE,
+                    ])}
+                    itemSize={3}
+                  />
+                </bufferGeometry>
+                <lineBasicMaterial color="#FFCC00" linewidth={2} />
+              </line>
 
-        return (
-          <group key={`lines-${lj.nodeId}`}>
-            <line>
-              <bufferGeometry>
-                <bufferAttribute
-                  attach="attributes-position"
-                  count={2}
-                  array={new Float32Array([
-                    dxfPos[0], dxfPos[1], dxfPos[2],
-                    extPos[0], extPos[1], extPos[2],
-                  ])}
-                  itemSize={3}
-                />
-              </bufferGeometry>
-              <lineBasicMaterial color="#FF0000" linewidth={2} />
-            </line>
+              <group position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}>
+                <mesh>
+                  <sphereGeometry args={[0.12, 16, 16]} />
+                  <meshStandardMaterial color="#FFCC00" emissive="#FFCC00" emissiveIntensity={0.8} />
+                </mesh>
 
-            <line>
-              <bufferGeometry>
-                <bufferAttribute
-                  attach="attributes-position"
-                  count={2}
-                  array={new Float32Array([
-                    dxfPos[0], dxfPos[1], dxfPos[2],
-                    intPos[0], intPos[1], intPos[2],
-                  ])}
-                  itemSize={3}
-                />
-              </bufferGeometry>
-              <lineBasicMaterial color="#FFCC00" linewidth={2} />
-            </line>
+                <line>
+                  <bufferGeometry>
+                    <bufferAttribute
+                      attach="attributes-position"
+                      count={4}
+                      array={new Float32Array([
+                        -0.15, 0, 0, 0.15, 0, 0,
+                        0, 0, -0.15, 0, 0, 0.15,
+                      ])}
+                      itemSize={3}
+                    />
+                  </bufferGeometry>
+                  <lineBasicMaterial color="#FFCC00" linewidth={2} />
+                </line>
 
-            {/* DXF intersection marker on the ground */}
-            <mesh position={dxfPos as [number, number, number]}>
+                {showLabels && (
+                  <Html
+                    center
+                    distanceFactor={8}
+                    style={{
+                      color: '#000',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      background: '#FFCC00',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      whiteSpace: 'nowrap',
+                      pointerEvents: 'none',
+                      border: '2px solid white',
+                    }}
+                  >
+                    NÓ INT
+                  </Html>
+                )}
+              </group>
+            </group>
+
+            {/* DXF intersection marker */}
+            <mesh position={dxfPos}>
               <sphereGeometry args={[0.06, 8, 8]} />
               <meshBasicMaterial color="#FFFFFF" />
             </mesh>

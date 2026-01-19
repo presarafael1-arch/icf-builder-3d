@@ -94,6 +94,8 @@ export default function ProjectEstimate() {
     showLCornerBoundingBoxes: false,
     showWallDimensions: false,
     showCornerNodes: false,
+    showCornerNodeLabels: false,
+    showCornerNodeWires: false,
   });
   
   useEffect(() => {
