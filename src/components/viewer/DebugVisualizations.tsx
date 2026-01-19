@@ -167,6 +167,12 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
   const { chains } = chainsResult;
   const showLabels = settings.showCornerNodeLabels ?? true;
   const showWires = settings.showCornerNodeWires ?? true;
+  
+  // Manual offset calibration (in TOOTH units, converted to mm)
+  const extOffsetX = (settings.cornerNodeExtOffsetX ?? 0) * TOOTH;
+  const extOffsetY = (settings.cornerNodeExtOffsetY ?? 0) * TOOTH;
+  const intOffsetX = (settings.cornerNodeIntOffsetX ?? 0) * TOOTH;
+  const intOffsetY = (settings.cornerNodeIntOffsetY ?? 0) * TOOTH;
 
   // Detect L-junctions with computed corner nodes
   const lJunctions = useMemo(
@@ -183,8 +189,17 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
       {lJunctions.map((lj) => {
         if (!lj.exteriorNode || !lj.interiorNode) return null;
 
-        const extNode = lj.exteriorNode;
-        const intNode = lj.interiorNode;
+        // Apply manual offsets to node positions
+        const extNode = {
+          ...lj.exteriorNode,
+          x: lj.exteriorNode.x + extOffsetX,
+          y: lj.exteriorNode.y + extOffsetY,
+        };
+        const intNode = {
+          ...lj.interiorNode,
+          x: lj.interiorNode.x + intOffsetX,
+          y: lj.interiorNode.y + intOffsetY,
+        };
         const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE] as [number, number, number];
 
         return (

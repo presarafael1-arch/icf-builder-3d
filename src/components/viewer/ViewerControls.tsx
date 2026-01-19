@@ -316,6 +316,102 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                       onCheckedChange={() => toggleSetting('showWallDimensions')}
                     />
                   </div>
+                  
+                  {/* Corner Nodes Section */}
+                  <div className="pt-2 mt-2 border-t border-border/50">
+                    <h5 className="text-xs font-medium mb-2 text-red-400">📍 Nós de Canto</h5>
+                    
+                    <div className="flex items-center justify-between mb-2">
+                      <Label htmlFor="show-corner-nodes" className="text-sm text-muted-foreground">Mostrar Nós</Label>
+                      <Switch
+                        id="show-corner-nodes"
+                        checked={settings.showCornerNodes}
+                        onCheckedChange={() => toggleSetting('showCornerNodes')}
+                      />
+                    </div>
+                    
+                    <div className="flex items-center justify-between mb-2">
+                      <Label htmlFor="show-corner-labels" className="text-sm text-muted-foreground">Labels</Label>
+                      <Switch
+                        id="show-corner-labels"
+                        checked={settings.showCornerNodeLabels}
+                        onCheckedChange={() => toggleSetting('showCornerNodeLabels')}
+                        disabled={!settings.showCornerNodes}
+                      />
+                    </div>
+                    
+                    <div className="flex items-center justify-between mb-3">
+                      <Label htmlFor="show-corner-wires" className="text-sm text-muted-foreground">Fios</Label>
+                      <Switch
+                        id="show-corner-wires"
+                        checked={settings.showCornerNodeWires}
+                        onCheckedChange={() => toggleSetting('showCornerNodeWires')}
+                        disabled={!settings.showCornerNodes}
+                      />
+                    </div>
+                    
+                    {settings.showCornerNodes && (
+                      <div className="space-y-3 p-2 bg-muted/30 rounded">
+                        <p className="text-[10px] text-muted-foreground">Offset Manual (TOOTH)</p>
+                        
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-red-400">EXT X</Label>
+                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeExtOffsetX?.toFixed(1) ?? '0.0'}</span>
+                          </div>
+                          <Slider
+                            value={[settings.cornerNodeExtOffsetX ?? 0]}
+                            min={-5}
+                            max={5}
+                            step={0.1}
+                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeExtOffsetX: v })}
+                          />
+                        </div>
+                        
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-red-400">EXT Y</Label>
+                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeExtOffsetY?.toFixed(1) ?? '0.0'}</span>
+                          </div>
+                          <Slider
+                            value={[settings.cornerNodeExtOffsetY ?? 0]}
+                            min={-5}
+                            max={5}
+                            step={0.1}
+                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeExtOffsetY: v })}
+                          />
+                        </div>
+                        
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-yellow-400">INT X</Label>
+                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeIntOffsetX?.toFixed(1) ?? '0.0'}</span>
+                          </div>
+                          <Slider
+                            value={[settings.cornerNodeIntOffsetX ?? 0]}
+                            min={-5}
+                            max={5}
+                            step={0.1}
+                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeIntOffsetX: v })}
+                          />
+                        </div>
+                        
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-yellow-400">INT Y</Label>
+                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeIntOffsetY?.toFixed(1) ?? '0.0'}</span>
+                          </div>
+                          <Slider
+                            value={[settings.cornerNodeIntOffsetY ?? 0]}
+                            min={-5}
+                            max={5}
+                            step={0.1}
+                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeIntOffsetY: v })}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               
