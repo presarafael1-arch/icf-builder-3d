@@ -58,14 +58,15 @@ export function usePanelRaycast(): UsePanelRaycastResult {
     meshTypes.forEach((meshType) => {
       const panels = panelsByType[meshType] || [];
       panels.forEach((panel, instanceId) => {
-        const panelId = panel.panelId || `${panel.chainId}:${panel.rowIndex}:exterior:${instanceId}:auto`;
+        const panelId = panel.panelId || `${panel.chainId}:${panel.rowIndex}:${panel.side || 'exterior'}:${instanceId}:auto`;
+        const panelSide = panel.side || 'exterior';
         
         const extendedData: ExtendedPanelData = {
           panelId,
           parsedId: {
             chainId: panel.chainId,
             rowIndex: panel.rowIndex,
-            side: 'exterior',
+            side: panelSide,
             slotIndex: instanceId,
             seedKey: 'auto',
           },
@@ -82,7 +83,7 @@ export function usePanelRaycast(): UsePanelRaycastResult {
           chainId: panel.chainId,
           rowIndex: panel.rowIndex,
           rowParity: (panel.rowIndex % 2 === 0) ? 1 : 2,
-          side: 'exterior',
+          side: panelSide,
           seedOrigin: panel.seedOrigin || 'none',
           nearestNodeId: panel.nearestNodeId || null,
           nearestNodeType: null,
