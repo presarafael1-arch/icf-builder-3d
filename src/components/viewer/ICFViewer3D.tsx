@@ -176,6 +176,106 @@ function ChainOverlay({ walls }: { walls: WallSegment[] }) {
   );
 }
 
+// Footprint polygon visualization (green lines outlining detected outer polygon)
+function FootprintVisualization({ walls }: { walls: WallSegment[] }) {
+  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
+  
+  const geometry = useMemo(() => {
+    const footprint = chainsResult.footprint;
+    if (!footprint || !footprint.outerPolygon || footprint.outerPolygon.length < 3) return null;
+    
+    const polygon = footprint.outerPolygon;
+    // Create closed loop: each segment connects consecutive vertices, plus last-to-first
+    const positions = new Float32Array(polygon.length * 2 * 3);
+    
+    for (let i = 0; i < polygon.length; i++) {
+      const p1 = polygon[i];
+      const p2 = polygon[(i + 1) % polygon.length];
+      
+      positions[i * 6 + 0] = p1.x * SCALE;
+      positions[i * 6 + 1] = 0.03; // Slightly above grid
+      positions[i * 6 + 2] = p1.y * SCALE;
+      positions[i * 6 + 3] = p2.x * SCALE;
+      positions[i * 6 + 4] = 0.03;
+      positions[i * 6 + 5] = p2.y * SCALE;
+    }
+    
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    g.computeBoundingSphere();
+    return g;
+  }, [chainsResult]);
+  
+  if (!geometry) return null;
+  
+  return (
+    <lineSegments geometry={geometry} frustumCulled={false}>
+      <lineBasicMaterial color={'#22c55e'} linewidth={3} opacity={0.9} transparent />
+    </lineSegments>
+  );
+}
+
+// Footprint stats overlay component (HTML overlay)
+interface FootprintStatsOverlayProps {
+  walls: WallSegment[];
+}
+
+function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
+  const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
+  
+  const footprint = chainsResult.footprint;
+  if (!footprint) return null;
+  
+  const areaM2 = footprint.outerAreaMm2 / 1e6;
+  const { exteriorChains, interiorPartitions, unresolved } = footprint.stats;
+  const total = exteriorChains + interiorPartitions + unresolved;
+  const hasUnresolved = unresolved > 0;
+  
+  return (
+    <div className="absolute top-16 left-4 z-20 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-2 shadow-lg max-w-xs">
+      <div className="font-medium text-foreground border-b border-border pb-1 flex items-center gap-2">
+        <span className="inline-block w-3 h-3 rounded-full bg-green-500"></span>
+        Footprint Detection Stats
+      </div>
+      
+      <div className="space-y-1 text-muted-foreground">
+        <div className="flex justify-between">
+          <span>Loops encontrados:</span>
+          <span className="font-mono text-foreground">{chainsResult.footprint?.stats.exteriorChains ? 1 : 0}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>Área footprint:</span>
+          <span className="font-mono text-foreground">{areaM2.toFixed(2)} m²</span>
+        </div>
+      </div>
+      
+      <div className="border-t border-border pt-2 space-y-1">
+        <div className="font-medium text-foreground mb-1">Classificação Chains:</div>
+        <div className="flex justify-between">
+          <span className="text-blue-400">⬤ Exterior (perímetro):</span>
+          <span className="font-mono">{exteriorChains}/{total}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-purple-400">⬤ Partições (interior):</span>
+          <span className="font-mono">{interiorPartitions}/{total}</span>
+        </div>
+        {hasUnresolved && (
+          <div className="flex justify-between text-orange-400">
+            <span>⚠ Não resolvidas:</span>
+            <span className="font-mono">{unresolved}/{total}</span>
+          </div>
+        )}
+      </div>
+      
+      {hasUnresolved && (
+        <div className="border-t border-border pt-2 text-orange-400/80 text-[10px]">
+          Chains não resolvidas podem indicar geometria aberta ou segmentos fora do contorno.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DebugHelpers({ walls, settings }: { walls: WallSegment[]; settings: ViewerSettings }) {
   const bbox = useMemo(() => calculateWallsBoundingBox(walls, settings.maxRows), [walls, settings.maxRows]);
 
@@ -1474,6 +1574,7 @@ function Scene({
 
       {showSegmentsLayer && <DXFDebugLines walls={walls} />}
       {showLinesLayer && <ChainOverlay walls={walls} />}
+      {settings.showFootprint && <FootprintVisualization walls={walls} />}
       {settings.showHelpers && <DebugHelpers walls={walls} settings={settings} />}
 
       {settings.showGrid && (
@@ -1642,6 +1743,11 @@ export function ICFViewer3D({
           showTopos={settings.showTopos && (openings.length > 0 || (layoutStats?.toposPlaced || 0) > 0)}
           counts={panelCounts}
         />
+      )}
+
+      {/* Footprint Stats Overlay */}
+      {settings.showFootprintStats && walls.length > 0 && (
+        <FootprintStatsOverlay walls={walls} />
       )}
 
       <DiagnosticsHUD 

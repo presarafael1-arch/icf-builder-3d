@@ -321,6 +321,9 @@ export default function ProjectEditor() {
     showCornerNodes: true, // Corner nodes visible (labels + wires)
     showCornerNodeLabels: true,
     showCornerNodeWires: true,
+    // Footprint debug
+    showFootprint: false,
+    showFootprintStats: false,
   });
   
   // Corner node offsets (individual per nodeId)

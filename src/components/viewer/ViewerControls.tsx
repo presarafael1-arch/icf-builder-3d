@@ -1,4 +1,4 @@
-import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText } from 'lucide-react';
+import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
@@ -145,6 +145,41 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   id="show-dxf"
                   checked={settings.showDXFLines}
                   onCheckedChange={() => toggleSetting('showDXFLines')}
+                />
+              </div>
+
+              {/* Separator */}
+              <div className="border-t border-border my-1 pt-2">
+                <h5 className="text-xs font-medium text-muted-foreground mb-2">Debug Footprint</h5>
+              </div>
+
+              {/* Footprint toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Hexagon className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-footprint" className="text-sm cursor-pointer">
+                    Mostrar Footprint
+                  </Label>
+                </div>
+                <Switch
+                  id="show-footprint"
+                  checked={settings.showFootprint}
+                  onCheckedChange={() => toggleSetting('showFootprint')}
+                />
+              </div>
+
+              {/* Stats toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-stats" className="text-sm cursor-pointer">
+                    Stats Classificação
+                  </Label>
+                </div>
+                <Switch
+                  id="show-stats"
+                  checked={settings.showFootprintStats}
+                  onCheckedChange={() => toggleSetting('showFootprintStats')}
                 />
               </div>
             </div>

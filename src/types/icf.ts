@@ -266,6 +266,10 @@ export interface ViewerSettings {
   showCornerNodes: boolean;
   showCornerNodeLabels: boolean;
   showCornerNodeWires: boolean;
+  
+  // Footprint debug toggles
+  showFootprint: boolean;
+  showFootprintStats: boolean;
 }
 
 // Individual corner node offset (per nodeId)
