@@ -992,12 +992,12 @@ export function layoutPanelsForChainWithJunctions(
     const panelCenterOffsetTooth = wallHalfTooth - 0.5; // Subtract half of foam thickness (0.5 TOOTH)
     const panelCenterOffsetMm = panelCenterOffsetTooth * TOOTH;
     
-    if (effectiveSide === 'interior') {
-      // Interior panel: offset to the positive perpendicular side (inside of building)
+    if (effectiveSide === 'exterior') {
+      // Exterior panel: offset to the positive perpendicular side (outside of building)
       posX += perpX * panelCenterOffsetMm;
       posZ += perpZ * panelCenterOffsetMm;
     } else {
-      // Exterior panel: offset to the negative perpendicular side (outside of building)
+      // Interior panel: offset to the negative perpendicular side (inside of building)
       posX += perpX * (-panelCenterOffsetMm);
       posZ += perpZ * (-panelCenterOffsetMm);
     }
