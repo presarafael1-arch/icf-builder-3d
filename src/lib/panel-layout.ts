@@ -86,15 +86,28 @@ export interface TopoPlacement {
   widthMm: number; // Width of topo based on concrete thickness
 }
 
-// L-junction info
+// Corner node (intersection point of offset lines)
+// Each L-corner has TWO nodes: one for exterior offset lines, one for interior
+export interface CornerNode {
+  id: string;
+  x: number;          // World X position of the node
+  y: number;          // World Y position of the node (Z in 3D)
+  type: 'exterior' | 'interior';
+  lJunctionId: string; // Reference to parent L-junction
+}
+
+// L-junction info with computed nodes
 export interface LJunctionInfo {
   nodeId: string;
-  x: number;
+  x: number;  // DXF intersection point
   y: number;
   primaryChainId: string;
   secondaryChainId: string;
   primaryAngle: number;
   secondaryAngle: number;
+  // Computed corner nodes (intersection of offset lines)
+  exteriorNode?: CornerNode;
+  interiorNode?: CornerNode;
 }
 
 // T-junction info
@@ -127,12 +140,158 @@ interface EndpointInfo {
 }
 
 /**
+ * Compute the exterior and interior node positions for an L-corner.
+ * 
+ * The DXF centerlines intersect at (lj.x, lj.y).
+ * The exterior/interior OFFSET lines also intersect, but at different points.
+ * 
+ * For each arm of the L:
+ * - Exterior offset line is perpendicular outward (away from building interior)
+ * - Interior offset line is perpendicular inward (toward building interior)
+ * 
+ * The intersection of the two exterior offset lines = "nó externo"
+ * The intersection of the two interior offset lines = "nó interno"
+ */
+function computeCornerNodes(
+  lj: LJunctionInfo,
+  chains: WallChain[],
+  concreteThickness: ConcreteThickness = '150'
+): { exteriorNode: CornerNode; interiorNode: CornerNode } {
+  // Get the two chains meeting at this L-corner
+  const primaryChain = chains.find(c => c.id === lj.primaryChainId);
+  const secondaryChain = chains.find(c => c.id === lj.secondaryChainId);
+  
+  if (!primaryChain || !secondaryChain) {
+    // Fallback to DXF intersection point
+    return {
+      exteriorNode: { id: `${lj.nodeId}-ext`, x: lj.x, y: lj.y, type: 'exterior', lJunctionId: lj.nodeId },
+      interiorNode: { id: `${lj.nodeId}-int`, x: lj.x, y: lj.y, type: 'interior', lJunctionId: lj.nodeId },
+    };
+  }
+  
+  // Perpendicular offset distance from DXF centerline to exterior/interior panel centers
+  // 150mm wall: 1.5 TOOTH offset to panel center
+  // 220mm wall: 2 TOOTH offset to panel center
+  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
+  const panelCenterOffsetMm = (wallTotalTooth / 2 - 0.5) * TOOTH;
+  
+  // Get direction vectors for each arm (pointing AWAY from the junction)
+  // For primary arm: direction from junction toward chain endpoint (away from junction)
+  const primaryAtStart = Math.abs(primaryChain.startX - lj.x) < 300 && Math.abs(primaryChain.startY - lj.y) < 300;
+  const primaryDir = primaryAtStart 
+    ? { x: (primaryChain.endX - primaryChain.startX) / primaryChain.lengthMm, y: (primaryChain.endY - primaryChain.startY) / primaryChain.lengthMm }
+    : { x: (primaryChain.startX - primaryChain.endX) / primaryChain.lengthMm, y: (primaryChain.startY - primaryChain.endY) / primaryChain.lengthMm };
+  
+  const secondaryAtStart = Math.abs(secondaryChain.startX - lj.x) < 300 && Math.abs(secondaryChain.startY - lj.y) < 300;
+  const secondaryDir = secondaryAtStart
+    ? { x: (secondaryChain.endX - secondaryChain.startX) / secondaryChain.lengthMm, y: (secondaryChain.endY - secondaryChain.startY) / secondaryChain.lengthMm }
+    : { x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm, y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm };
+  
+  // Perpendicular directions (90° CW = "right" side when looking along wall)
+  // perp = (-dy, dx)
+  const primaryPerp = { x: -primaryDir.y, y: primaryDir.x };
+  const secondaryPerp = { x: -secondaryDir.y, y: secondaryDir.x };
+  
+  // Determine which perpendicular direction is "exterior" vs "interior"
+  // The EXTERIOR side of an L-corner is the convex (outside) angle
+  // Cross product of primary x secondary tells us the winding
+  const cross = primaryDir.x * secondaryDir.y - primaryDir.y * secondaryDir.x;
+  
+  // If cross > 0: CCW winding, so "right" side of primary faces EXTERIOR
+  // If cross < 0: CW winding, so "right" side of primary faces INTERIOR
+  const primaryExtSign = cross > 0 ? -1 : 1;  // -1 = left side, +1 = right side
+  const secondaryExtSign = cross > 0 ? -1 : 1;
+  
+  // Exterior offset lines:
+  // Primary arm exterior line passes through (lj.x + primaryPerp.x * offset * sign, lj.y + primaryPerp.y * offset * sign)
+  // with direction primaryDir
+  const primaryExtOffset = { 
+    x: lj.x + primaryPerp.x * panelCenterOffsetMm * primaryExtSign, 
+    y: lj.y + primaryPerp.y * panelCenterOffsetMm * primaryExtSign 
+  };
+  const secondaryExtOffset = { 
+    x: lj.x + secondaryPerp.x * panelCenterOffsetMm * secondaryExtSign, 
+    y: lj.y + secondaryPerp.y * panelCenterOffsetMm * secondaryExtSign 
+  };
+  
+  // Find intersection of the two exterior offset lines
+  // Line 1: P1 + t * D1 where P1 = primaryExtOffset, D1 = primaryDir
+  // Line 2: P2 + s * D2 where P2 = secondaryExtOffset, D2 = secondaryDir
+  // Solve: P1 + t*D1 = P2 + s*D2
+  const extIntersection = lineIntersection(
+    primaryExtOffset.x, primaryExtOffset.y, primaryDir.x, primaryDir.y,
+    secondaryExtOffset.x, secondaryExtOffset.y, secondaryDir.x, secondaryDir.y
+  );
+  
+  // Interior offset lines (opposite sign)
+  const primaryIntOffset = { 
+    x: lj.x + primaryPerp.x * panelCenterOffsetMm * (-primaryExtSign), 
+    y: lj.y + primaryPerp.y * panelCenterOffsetMm * (-primaryExtSign) 
+  };
+  const secondaryIntOffset = { 
+    x: lj.x + secondaryPerp.x * panelCenterOffsetMm * (-secondaryExtSign), 
+    y: lj.y + secondaryPerp.y * panelCenterOffsetMm * (-secondaryExtSign) 
+  };
+  
+  const intIntersection = lineIntersection(
+    primaryIntOffset.x, primaryIntOffset.y, primaryDir.x, primaryDir.y,
+    secondaryIntOffset.x, secondaryIntOffset.y, secondaryDir.x, secondaryDir.y
+  );
+  
+  console.log(`[CORNER NODES] L-junction ${lj.nodeId}:`, {
+    dxf: { x: lj.x.toFixed(1), y: lj.y.toFixed(1) },
+    exterior: { x: extIntersection.x.toFixed(1), y: extIntersection.y.toFixed(1) },
+    interior: { x: intIntersection.x.toFixed(1), y: intIntersection.y.toFixed(1) },
+    cross: cross.toFixed(3),
+    primaryExtSign,
+  });
+  
+  return {
+    exteriorNode: { id: `${lj.nodeId}-ext`, x: extIntersection.x, y: extIntersection.y, type: 'exterior', lJunctionId: lj.nodeId },
+    interiorNode: { id: `${lj.nodeId}-int`, x: intIntersection.x, y: intIntersection.y, type: 'interior', lJunctionId: lj.nodeId },
+  };
+}
+
+/**
+ * Find intersection of two 2D lines.
+ * Line 1: (px1, py1) + t * (dx1, dy1)
+ * Line 2: (px2, py2) + s * (dx2, dy2)
+ */
+function lineIntersection(
+  px1: number, py1: number, dx1: number, dy1: number,
+  px2: number, py2: number, dx2: number, dy2: number
+): { x: number; y: number } {
+  // Solve: px1 + t*dx1 = px2 + s*dx2
+  //        py1 + t*dy1 = py2 + s*dy2
+  // => t*dx1 - s*dx2 = px2 - px1
+  //    t*dy1 - s*dy2 = py2 - py1
+  // Using Cramer's rule:
+  const det = dx1 * (-dy2) - dy1 * (-dx2);  // dx1*(-dy2) - (-dx2)*dy1 = -dx1*dy2 + dx2*dy1
+  
+  if (Math.abs(det) < 0.0001) {
+    // Lines are parallel, return midpoint
+    return { x: (px1 + px2) / 2, y: (py1 + py2) / 2 };
+  }
+  
+  const dpx = px2 - px1;
+  const dpy = py2 - py1;
+  
+  // t = (dpx * (-dy2) - dpy * (-dx2)) / det = (-dpx*dy2 + dpy*dx2) / det
+  const t = (dpy * dx2 - dpx * dy2) / det;
+  
+  return {
+    x: px1 + t * dx1,
+    y: py1 + t * dy1,
+  };
+}
+
+/**
  * Detect L-junctions (exactly 2 chains meeting at ~90°)
  * Uses geometric winding to determine primary (exterior) vs secondary (interior):
  * - Primary arm is the one where counter-clockwise rotation reaches the secondary arm
  * - This corresponds to the "exterior" face of an L-corner in typical floor plans
  */
-export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
+export function detectLJunctions(chains: WallChain[], concreteThickness: ConcreteThickness = '150'): LJunctionInfo[] {
   const nodeMap = new Map<string, { x: number; y: number; chainIds: string[]; angles: number[]; isStarts: boolean[] }>();
   const TOLERANCE = 300; // mm - must be larger than wall thickness to group parallel wall endpoints
   
@@ -184,14 +343,6 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
     if (!isLShape) return;
     
     // GEOMETRIC WINDING: Determine primary (exterior) vs secondary (interior)
-    // 
-    // To ensure CONSISTENT results regardless of chain order in the node,
-    // we sort chains by their outward angle first, then apply the winding rule.
-    //
-    // L-CORNER EXTERIOR RULE:
-    // At an L-corner, the "exterior" arm is the one where the corner's convex 
-    // (outside) angle faces. This is determined by the signed angle between arms.
-    
     const angle0 = node.angles[0];
     const angle1 = node.angles[1];
     
@@ -212,21 +363,13 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
     // 2D cross product: dir0 × dir1 = dir0.x * dir1.y - dir0.y * dir1.x
     const cross = dir0.x * dir1.y - dir0.y * dir1.x;
     
-    // WINDING RULE (with sorted chains):
-    // For an L-corner, the EXTERIOR arm gets FULL panels in row 1.
-    // The exterior is the convex (outside) face of the corner.
-    // After sorting by angle, if cross > 0, the first (smaller angle) chain is exterior.
-    // If cross < 0, the second chain is exterior.
     let primarySortedIdx: number;
     
     if (Math.abs(cross) < 0.1) {
-      // Nearly parallel - fallback to first
       primarySortedIdx = 0;
     } else if (cross > 0) {
-      // CCW from dir0 to dir1: dir0 (first sorted) is exterior
       primarySortedIdx = 0;
     } else {
-      // CW: dir1 (second sorted) is exterior
       primarySortedIdx = 1;
     }
     
@@ -237,7 +380,7 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
     const primaryChainId = node.chainIds[primaryIdx];
     const secondaryChainId = node.chainIds[secondaryIdx];
     
-    lJunctions.push({
+    const lj: LJunctionInfo = {
       nodeId: key,
       x: node.x,
       y: node.y,
@@ -245,7 +388,14 @@ export function detectLJunctions(chains: WallChain[]): LJunctionInfo[] {
       secondaryChainId,
       primaryAngle: node.angles[primaryIdx],
       secondaryAngle: node.angles[secondaryIdx],
-    });
+    };
+    
+    // Compute corner nodes (exterior and interior intersection points)
+    const { exteriorNode, interiorNode } = computeCornerNodes(lj, chains, concreteThickness);
+    lj.exteriorNode = exteriorNode;
+    lj.interiorNode = interiorNode;
+    
+    lJunctions.push(lj);
   });
   
   return lJunctions;
@@ -1155,7 +1305,7 @@ export function generatePanelLayout(
     effectiveOffset: number;
   };
 } {
-  const lJunctions = detectLJunctions(chains);
+  const lJunctions = detectLJunctions(chains, concreteThickness);
   const tJunctions = detectTJunctions(chains);
   const xJunctions = detectXJunctions(chains);
   const freeEnds = detectFreeEnds(chains);

@@ -285,6 +285,7 @@ export default function ProjectEditor() {
     showLCornerOffsets: true, // Show offset labels on L-corner panels for calibration
     showLCornerBoundingBoxes: false, // Show bounding boxes of corner panels
     showWallDimensions: false, // Show wall dimensions in TOOTH units
+    showCornerNodes: true, // Show exterior/interior corner nodes
   });
   
   // Preview color for classification hover
