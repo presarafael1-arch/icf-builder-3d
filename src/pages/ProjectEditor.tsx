@@ -19,6 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useOpenings } from '@/hooks/useOpenings';
 import { usePanelSelection } from '@/hooks/usePanelSelection';
 import { usePanelOverrides } from '@/hooks/usePanelOverrides';
+import { useChainOverrides } from '@/hooks/useChainOverrides';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
 import { OpeningData, OpeningCandidate } from '@/types/openings';
 import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType, ThicknessDetectionResult } from '@/types/panel-selection';
@@ -235,6 +236,15 @@ export default function ProjectEditor() {
     deleteOpening,
     setOpenings 
   } = useOpenings(id);
+  
+  // Chain overrides (side flip)
+  const { 
+    isFlipped: isChainFlipped, 
+    toggleFlip: toggleChainFlip,
+    getFlippedChainIds 
+  } = useChainOverrides(id);
+  
+  const flippedChains = useMemo(() => getFlippedChainIds(), [getFlippedChainIds]);
   
   // New wall form
   const [newWall, setNewWall] = useState({
@@ -867,6 +877,7 @@ export default function ProjectEditor() {
             selectedCornerNode={selectedCornerNode}
             onSelectCornerNode={setSelectedCornerNode}
             cornerNodeOffsets={cornerNodeOffsets}
+            flippedChains={flippedChains}
           />
           <ViewerControls 
             settings={viewerSettings}
@@ -921,6 +932,8 @@ export default function ProjectEditor() {
         onPreviewColor={setPreviewColor}
         viewerSettings={viewerSettings}
         onViewerSettingsChange={setViewerSettings}
+        isChainFlipped={isChainFlipped}
+        onToggleChainFlip={toggleChainFlip}
       />
       
       {/* Corner Node Inspector */}

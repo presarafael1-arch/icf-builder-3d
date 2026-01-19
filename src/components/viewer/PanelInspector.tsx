@@ -49,6 +49,9 @@ interface PanelInspectorProps {
   // Corner node offset calibration
   viewerSettings?: ViewerSettings;
   onViewerSettingsChange?: (settings: ViewerSettings) => void;
+  // Chain side flip
+  isChainFlipped?: (chainId: string) => boolean;
+  onToggleChainFlip?: (chainId: string) => void;
 }
 
 // Panel classification options with colors
@@ -79,6 +82,8 @@ export function PanelInspector({
   onPreviewColor,
   viewerSettings,
   onViewerSettingsChange,
+  isChainFlipped,
+  onToggleChainFlip,
 }: PanelInspectorProps) {
   const [editType, setEditType] = useState<PanelType | 'auto'>('auto');
   const [editCut, setEditCut] = useState<string>('');
@@ -656,6 +661,31 @@ export function PanelInspector({
                 <Label className="text-xs text-muted-foreground">Seed Origin</Label>
                 <Badge variant="secondary">{panelData.seedOrigin}</Badge>
               </div>
+            </div>
+            
+            {/* Chain Side Flip Toggle */}
+            {onToggleChainFlip && panelData.chainId && (
+              <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">Inverter Lado EXT/INT</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Troca exterior ↔ interior para toda esta cadeia
+                    </p>
+                  </div>
+                  <Button
+                    variant={isChainFlipped?.(panelData.chainId) ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => onToggleChainFlip(panelData.chainId)}
+                    className={isChainFlipped?.(panelData.chainId) ? "bg-orange-500 hover:bg-orange-600" : ""}
+                  >
+                    {isChainFlipped?.(panelData.chainId) ? "Invertido" : "Normal"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            <div className="grid grid-cols-2 gap-3 text-sm">
               
               <div>
                 <Label className="text-xs text-muted-foreground">Nó Mais Próximo</Label>
