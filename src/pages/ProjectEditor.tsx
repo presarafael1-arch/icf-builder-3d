@@ -203,6 +203,9 @@ export default function ProjectEditor() {
   const [allPanelsData, setAllPanelsData] = useState<ClassifiedPanel[]>([]);
   const [selectedPanelData, setSelectedPanelData] = useState<ExtendedPanelData | null>(null);
   
+  // Corner node selection state (for calibration)
+  const [selectedCornerNode, setSelectedCornerNode] = useState<string | null>(null);
+  
   // Panel overrides management
   const { 
     overrides, 
@@ -826,6 +829,8 @@ export default function ProjectEditor() {
             onPanelClick={handlePanelClick}
             onPanelDataReady={handlePanelDataReady}
             className="w-full h-full"
+            selectedCornerNode={selectedCornerNode}
+            onSelectCornerNode={setSelectedCornerNode}
           />
           <ViewerControls 
             settings={viewerSettings}

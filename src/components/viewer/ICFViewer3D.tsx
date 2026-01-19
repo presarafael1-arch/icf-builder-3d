@@ -1352,6 +1352,9 @@ interface SceneProps {
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
+  // Corner node selection
+  selectedCornerNode?: string | null;
+  onSelectCornerNode?: (nodeId: string | null) => void;
 }
 
 function Scene({ 
@@ -1368,7 +1371,9 @@ function Scene({
   onPanelCountsChange, 
   onGeometrySourceChange, 
   onGeometryMetaChange, 
-  onLayoutStatsChange 
+  onLayoutStatsChange,
+  selectedCornerNode,
+  onSelectCornerNode,
 }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
@@ -1492,7 +1497,12 @@ function Scene({
       {settings.showGrids && <GridsInstances walls={walls} settings={settings} />}
 
       {/* Debug Visualizations */}
-      <DebugVisualizations chainsResult={chainsResult} settings={settings} />
+      <DebugVisualizations 
+        chainsResult={chainsResult} 
+        settings={settings} 
+        selectedCornerNode={selectedCornerNode}
+        onSelectCornerNode={onSelectCornerNode}
+      />
 
       <Environment preset="city" />
     </>
@@ -1510,6 +1520,9 @@ interface ICFViewer3DProps {
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   className?: string;
+  // Corner node selection
+  selectedCornerNode?: string | null;
+  onSelectCornerNode?: (nodeId: string | null) => void;
 }
 
 export function ICFViewer3D({ 
@@ -1522,7 +1535,9 @@ export function ICFViewer3D({
   previewColor,
   onPanelClick,
   onPanelDataReady,
-  className = '' 
+  className = '',
+  selectedCornerNode,
+  onSelectCornerNode,
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
@@ -1573,6 +1588,8 @@ export function ICFViewer3D({
             setInstancePosRangeM(instancePosRangeM);
           }}
           onLayoutStatsChange={setLayoutStats}
+          selectedCornerNode={selectedCornerNode}
+          onSelectCornerNode={onSelectCornerNode}
         />
       </Canvas>
 

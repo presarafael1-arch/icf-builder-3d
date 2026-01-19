@@ -49,6 +49,9 @@ const RUN_COLORS = [
 interface DebugVisualizationsProps {
   chainsResult: ChainsResult;
   settings: ViewerSettings;
+  onSettingsChange?: (settings: ViewerSettings) => void;
+  selectedCornerNode?: string | null; // 'ext' or 'int' or null
+  onSelectCornerNode?: (nodeId: string | null) => void;
 }
 
 // Seed markers at junction nodes
@@ -163,7 +166,7 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
 }
 
 // Corner nodes visualization - shows exterior and interior intersection points
-function CornerNodesVisualization({ chainsResult, settings }: DebugVisualizationsProps) {
+function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, onSelectCornerNode }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
   const showLabels = settings.showCornerNodeLabels ?? true;
   const showWires = settings.showCornerNodeWires ?? true;
@@ -184,6 +187,18 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
   const yTop = settings.maxRows * PANEL_HEIGHT * SCALE + 0.4;
   const yBase = 0.02;
 
+  const handleNodeClick = (nodeType: 'ext' | 'int', e: any) => {
+    e.stopPropagation();
+    if (onSelectCornerNode) {
+      // Toggle selection
+      if (selectedCornerNode === nodeType) {
+        onSelectCornerNode(null);
+      } else {
+        onSelectCornerNode(nodeType);
+      }
+    }
+  };
+
   return (
     <group>
       {lJunctions.map((lj) => {
@@ -201,6 +216,9 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
           y: lj.interiorNode.y + intOffsetY,
         };
         const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE] as [number, number, number];
+        
+        const isExtSelected = selectedCornerNode === 'ext';
+        const isIntSelected = selectedCornerNode === 'int';
 
         return (
           <group key={lj.nodeId}>
@@ -219,7 +237,7 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color="#FF0000" linewidth={2} />
+                  <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={isExtSelected ? 3 : 2} />
                 </line>
               )}
 
@@ -235,14 +253,31 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                     itemSize={3}
                   />
                 </bufferGeometry>
-                <lineBasicMaterial color="#FF0000" linewidth={2} />
+                <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} />
               </line>
 
               <group position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}>
-                <mesh>
-                  <sphereGeometry args={[0.12, 16, 16]} />
-                  <meshStandardMaterial color="#FF0000" emissive="#FF0000" emissiveIntensity={0.8} />
+                {/* Clickable sphere */}
+                <mesh 
+                  onClick={(e) => handleNodeClick('ext', e)}
+                  onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
+                  onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+                >
+                  <sphereGeometry args={[isExtSelected ? 0.18 : 0.12, 16, 16]} />
+                  <meshStandardMaterial 
+                    color={isExtSelected ? "#FFFFFF" : "#FF0000"} 
+                    emissive={isExtSelected ? "#FF0000" : "#FF0000"} 
+                    emissiveIntensity={isExtSelected ? 1.2 : 0.8} 
+                  />
                 </mesh>
+
+                {/* Selection ring */}
+                {isExtSelected && (
+                  <mesh rotation={[Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[0.22, 0.28, 32]} />
+                    <meshBasicMaterial color="#FFFFFF" side={2} />
+                  </mesh>
+                )}
 
                 <line>
                   <bufferGeometry>
@@ -256,7 +291,7 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color="#FF0000" linewidth={2} />
+                  <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} />
                 </line>
 
                 {showLabels && (
@@ -264,18 +299,21 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                     center
                     distanceFactor={8}
                     style={{
-                      color: '#FFF',
+                      color: isExtSelected ? '#FF0000' : '#FFF',
                       fontSize: '11px',
                       fontWeight: 'bold',
-                      background: '#FF0000',
+                      background: isExtSelected ? '#FFFFFF' : '#FF0000',
                       padding: '3px 8px',
                       borderRadius: '4px',
                       whiteSpace: 'nowrap',
-                      pointerEvents: 'none',
-                      border: '2px solid white',
+                      pointerEvents: 'auto',
+                      cursor: 'pointer',
+                      border: isExtSelected ? '3px solid #FF0000' : '2px solid white',
+                      boxShadow: isExtSelected ? '0 0 10px #FF0000' : 'none',
                     }}
+                    onClick={(e) => handleNodeClick('ext', e)}
                   >
-                    NÓ EXT
+                    NÓ EXT {isExtSelected && '✓'}
                   </Html>
                 )}
               </group>
@@ -296,7 +334,7 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color="#FFCC00" linewidth={2} />
+                  <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={isIntSelected ? 3 : 2} />
                 </line>
               )}
 
@@ -312,14 +350,31 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                     itemSize={3}
                   />
                 </bufferGeometry>
-                <lineBasicMaterial color="#FFCC00" linewidth={2} />
+                <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} />
               </line>
 
               <group position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}>
-                <mesh>
-                  <sphereGeometry args={[0.12, 16, 16]} />
-                  <meshStandardMaterial color="#FFCC00" emissive="#FFCC00" emissiveIntensity={0.8} />
+                {/* Clickable sphere */}
+                <mesh 
+                  onClick={(e) => handleNodeClick('int', e)}
+                  onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
+                  onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+                >
+                  <sphereGeometry args={[isIntSelected ? 0.18 : 0.12, 16, 16]} />
+                  <meshStandardMaterial 
+                    color={isIntSelected ? "#FFFFFF" : "#FFCC00"} 
+                    emissive={isIntSelected ? "#FFCC00" : "#FFCC00"} 
+                    emissiveIntensity={isIntSelected ? 1.2 : 0.8} 
+                  />
                 </mesh>
+
+                {/* Selection ring */}
+                {isIntSelected && (
+                  <mesh rotation={[Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[0.22, 0.28, 32]} />
+                    <meshBasicMaterial color="#FFFFFF" side={2} />
+                  </mesh>
+                )}
 
                 <line>
                   <bufferGeometry>
@@ -333,7 +388,7 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color="#FFCC00" linewidth={2} />
+                  <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} />
                 </line>
 
                 {showLabels && (
@@ -341,18 +396,21 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
                     center
                     distanceFactor={8}
                     style={{
-                      color: '#000',
+                      color: isIntSelected ? '#FFCC00' : '#000',
                       fontSize: '11px',
                       fontWeight: 'bold',
-                      background: '#FFCC00',
+                      background: isIntSelected ? '#FFFFFF' : '#FFCC00',
                       padding: '3px 8px',
                       borderRadius: '4px',
                       whiteSpace: 'nowrap',
-                      pointerEvents: 'none',
-                      border: '2px solid white',
+                      pointerEvents: 'auto',
+                      cursor: 'pointer',
+                      border: isIntSelected ? '3px solid #FFCC00' : '2px solid white',
+                      boxShadow: isIntSelected ? '0 0 10px #FFCC00' : 'none',
                     }}
+                    onClick={(e) => handleNodeClick('int', e)}
                   >
-                    NÓ INT
+                    NÓ INT {isIntSelected && '✓'}
                   </Html>
                 )}
               </group>
@@ -1173,7 +1231,7 @@ function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizat
 }
 
 // Main component that renders debug visualizations based on settings
-export function DebugVisualizations({ chainsResult, settings }: DebugVisualizationsProps) {
+export function DebugVisualizations({ chainsResult, settings, selectedCornerNode, onSelectCornerNode }: DebugVisualizationsProps) {
   return (
     <group>
       {settings.showSeeds && (
@@ -1209,7 +1267,12 @@ export function DebugVisualizations({ chainsResult, settings }: DebugVisualizati
       )}
       
       {settings.showCornerNodes && (
-        <CornerNodesVisualization chainsResult={chainsResult} settings={settings} />
+        <CornerNodesVisualization 
+          chainsResult={chainsResult} 
+          settings={settings} 
+          selectedCornerNode={selectedCornerNode}
+          onSelectCornerNode={onSelectCornerNode}
+        />
       )}
     </group>
   );
