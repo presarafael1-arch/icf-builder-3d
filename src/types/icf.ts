@@ -222,8 +222,10 @@ export interface ViewerSettings {
 
   // Core layers (always on or minimal toggles)
   showPanels: boolean;
-  showExteriorPanels: boolean; // Show exterior face panels
-  showInteriorPanels: boolean; // Show interior face panels
+  showExteriorPanels: boolean; // Show exterior face panels (PERIMETER EXT)
+  showInteriorPanels: boolean; // Show interior face panels (PERIMETER INT)
+  showPartitionPanels: boolean; // Show partition panels (BOTH_INT)
+  showUnknownPanels: boolean; // Show unresolved/unknown panels
   showTopos: boolean;
   showOpenings: boolean;
   showGrid: boolean; // Base grid
