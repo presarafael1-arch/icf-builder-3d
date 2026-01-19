@@ -1,6 +1,8 @@
 /**
  * Panel Layout Engine for ICF Walls
  * 
+ * SIMPLIFIED VERSION - ONLY FULL PANELS (for debugging offset/thickness logic)
+ * 
  * RULES:
  * - TOOTH = 1200/17 ≈ 70.588mm (minimum step for cuts/offsets)
  * - Standard panel = 1200mm x 400mm
@@ -8,41 +10,12 @@
  * 
  * COLORS:
  * - YELLOW (FULL): full panel 1200mm
- * - RED (CORNER_CUT): corner/node start cut (only at L/T nodes)
- * - ORANGE (CUT_DOUBLE): adjustment cut in the MIDDLE of run
+ * - RED (CORNER_CUT): corner/node cut (only at L/T nodes) - CUT ON ONE SIDE ONLY
  * - GREEN (TOPO): topo product (at T-junctions and free ends)
  * 
- * CRITICAL CORNER CLOSURE RULES (LEARNED FROM USER CORRECTIONS 2025-01-18):
- * =========================================================================
- * Corners MUST always close properly - panels unite both inside and outside.
- * 
- * L-CORNER (90° junction between 2 chains):
- *   Row 1 (index 0):
- *     - EXTERIOR: FULL (SEM CORTE!), apenas offset (0 ou 1T dependendo do braço)
- *     - INTERIOR: CORNER_CUT com corte = 4 TOOTH SEMPRE (~282mm)
- *                 + offset (0 ou 1T dependendo do braço)
- *   
- *   O corte de 4T no interior evita sobreposição com o painel perpendicular.
- *   O exterior não precisa de corte, apenas posicionamento.
- *   
- *   Row 2+ (alternating):
- *     - BOTH sides: FULL with alternating arm extension for interlocking
- *   
- * T-JUNCTION RULES:
- *   - "Costas" = continuous wall (main)
- *   - "Perna" = perpendicular branch
- *   - Row 1: COSTAS = TOPO at T + full panels; PERNA = full panels from T
- *   - Row 2: COSTAS = full panels; PERNA = CORNER_CUT + full panels
- *   
- * FREE ENDS (ponta livre):
- *   - Must have TOPO to close for concrete fill (ALWAYS)
- *   - Cut at end if length not multiple of 1200 (termination cut)
- *   
- * FILL STRATEGY:
- *   - Start from BOTH ends (from nodes)
- *   - Fill with full panels toward middle
- *   - Any adjustment cut (ORANGE) goes in the MIDDLE only
- *   - NEVER place orange cuts near corners/T/ends
+ * PERPENDICULAR OFFSET FROM DXF CENTERLINE:
+ * - 150mm concrete: wall = 4 TOOTH total → panel center at ±1.5T from centerline
+ * - 220mm concrete: wall = 5 TOOTH total → panel center at ±2T from centerline
  */
 
 import { WallChain, ChainNode } from './wall-chains';
@@ -63,8 +36,8 @@ const SCALE = 0.001;
 // Minimum cut length to place a panel (1 tooth)
 const MIN_CUT_MM = TOOTH;
 
-// Panel types
-export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT';
+// Panel types - SIMPLIFIED: removed CUT_DOUBLE (never cut both sides)
+export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT';
 
 // Side of the wall (for dual-panel layout)
 export type WallSide = 'exterior' | 'interior';
@@ -96,9 +69,9 @@ export interface ClassifiedPanel {
   ruleApplied?: string;
   
   // Debug: L-corner offset info
-  lCornerOffsetMm?: number; // Offset applied at L-corner (negative = extends past, positive = starts after)
-  isPrimaryArm?: boolean;   // True if this is the PRIMARY arm at an L-corner
-  isExtendingArm?: boolean; // True if this arm is the one extending past the corner for this row
+  lCornerOffsetMm?: number;
+  isPrimaryArm?: boolean;
+  isExtendingArm?: boolean;
 }
 
 // Topo placement for T-junctions and free ends
@@ -1096,9 +1069,9 @@ export function layoutPanelsForChainWithJunctions(
     else if (isAtStart) position = 'first_from_node';
     else if (isAtEnd) position = 'last_before_node';
     
-    // Calculate cuts (how much was removed from full panel width)
-    const cutLeftMm = type === 'CORNER_CUT' || type === 'CUT_DOUBLE' ? PANEL_WIDTH - width : 0;
-    const cutRightMm = type === 'CUT_DOUBLE' ? PANEL_WIDTH - width : 0;
+    // Calculate cuts (how much was removed from full panel width) - always ONE side only
+    const cutLeftMm = type === 'CORNER_CUT' ? PANEL_WIDTH - width : 0;
+    const cutRightMm = 0; // Never cut both sides
 
     return { 
       matrix, 
@@ -1230,7 +1203,7 @@ export function layoutPanelsForChainWithJunctions(
   if (effectiveLength <= PANEL_WIDTH && effectiveLength >= MIN_CUT_MM) {
     // Interval fits in one panel (possibly cut)
     const panelWidth = Math.min(effectiveLength, PANEL_WIDTH);
-    const type: PanelType = panelWidth < PANEL_WIDTH ? 'CUT_DOUBLE' : (isAtChainStart ? leftCap.type : 'FULL');
+    const type: PanelType = panelWidth < PANEL_WIDTH ? 'CORNER_CUT' : (isAtChainStart ? leftCap.type : 'FULL');
     const isCorner = isAtChainStart && leftCap.type === 'CORNER_CUT';
     panels.push(createPanel(effectiveStart, panelWidth, type, isCorner));
     
@@ -1318,7 +1291,7 @@ export function layoutPanelsForChainWithJunctions(
     if (fullPanelCount === 0 && remainder > 0) {
       // Only a cut piece in the middle
       if (remainder >= MIN_CUT_MM) {
-        panels.push(createPanel(leftEdge, remainder, 'CUT_DOUBLE', false));
+        panels.push(createPanel(leftEdge, remainder, 'CORNER_CUT', false));
       }
     } else {
       // Fill from BOTH ends toward middle
@@ -1334,10 +1307,9 @@ export function layoutPanelsForChainWithJunctions(
         cursor += PANEL_WIDTH;
       }
       
-      // Place MIDDLE cut piece (if any) - CUT_DOUBLE (ORANGE)
-      // This is the ONLY place where ORANGE cuts go!
+      // Place MIDDLE cut piece (if any) - single-side cut
       if (remainder >= MIN_CUT_MM) {
-        panels.push(createPanel(cursor, remainder, 'CUT_DOUBLE', false));
+        panels.push(createPanel(cursor, remainder, 'CORNER_CUT', false));
         cursor += remainder;
       }
       
@@ -1393,7 +1365,6 @@ export function generatePanelLayout(
   const panelsByType: Record<PanelType, ClassifiedPanel[]> = {
     FULL: [],
     CUT_SINGLE: [],
-    CUT_DOUBLE: [],
     CORNER_CUT: [],
     TOPO: [],
     END_CUT: [],
@@ -1457,7 +1428,6 @@ export function generatePanelLayout(
     panelsTotal: allPanels.length,
     FULL: panelsByType.FULL.length,
     CORNER_CUT: panelsByType.CORNER_CUT.length,
-    CUT_DOUBLE: panelsByType.CUT_DOUBLE.length,
     topos: allTopos.length
   });
   

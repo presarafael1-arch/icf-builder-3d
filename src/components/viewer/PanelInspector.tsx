@@ -49,15 +49,13 @@ interface PanelInspectorProps {
 // Panel classification options with colors
 const PANEL_CLASSIFICATION_OPTIONS = [
   { value: 'FULL', label: 'Inteiro', color: '#facc15' }, // Yellow
-  { value: 'CORNER_CUT', label: 'Corte no Nó', color: '#ef4444' }, // Red
-  { value: 'CUT_DOUBLE', label: 'Corte no Meio', color: '#f97316' }, // Orange
+  { value: 'CORNER_CUT', label: 'Corte', color: '#ef4444' }, // Red - cut on ONE side only
 ] as const;
 
 const PANEL_TYPE_LABELS: Record<PanelType, string> = {
   FULL: 'Inteiro (Amarelo)',
   CUT_SINGLE: 'Corte Simples (Verde)',
-  CUT_DOUBLE: 'Corte Meio (Laranja)',
-  CORNER_CUT: 'Corte no Nó (Vermelho)',
+  CORNER_CUT: 'Corte (Vermelho)',
   TOPO: 'Topo (Verde Escuro)',
   END_CUT: 'Corte Terminação (Laranja)',
 };

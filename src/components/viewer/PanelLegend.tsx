@@ -4,7 +4,7 @@
 import { Eye, EyeOff, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useState } from 'react';
 
-export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CUT_DOUBLE' | 'CORNER_CUT' | 'TOPO' | 'OPENING_VOID';
+export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CORNER_CUT' | 'TOPO' | 'OPENING_VOID';
 
 interface LegendItem {
   type: PanelType;
@@ -15,11 +15,10 @@ interface LegendItem {
 }
 
 // EXACT HEX COLORS - must match PANEL_COLORS in ICFViewer3D.tsx
+// SIMPLIFIED: Removed CUT_DOUBLE - cuts are always on ONE side only
 const LEGEND_ITEMS: LegendItem[] = [
   { type: 'FULL', label: 'Inteiro', color: '#E6D44A', description: 'Painel 1200mm completo' },
-  { type: 'CUT_SINGLE', label: 'Meio-corte', color: '#6FD36F', description: 'Corte num só lado' },
-  { type: 'CUT_DOUBLE', label: 'Corte', color: '#F2992E', description: 'Corte em ambos os lados' },
-  { type: 'CORNER_CUT', label: 'Canto/Ajuste', color: '#C83A3A', description: 'Canto desfasado/travamento' },
+  { type: 'CORNER_CUT', label: 'Corte', color: '#C83A3A', description: 'Corte num só lado (canto/ajuste)' },
   { type: 'TOPO', label: 'Topos', color: '#0F6B3E', description: 'Jambas/lintel/sill' },
   { type: 'OPENING_VOID', label: 'Vão/Candidato', color: '#FF4444', description: 'Abertura (translúcido)' },
 ];

@@ -53,7 +53,7 @@ export function usePanelRaycast(): UsePanelRaycastResult {
     const topoType = getTopoType(coreConcreteMm);
     
     // Process each mesh type separately (since each InstancedMesh has its own instanceId space)
-    const meshTypes: PanelType[] = ['FULL', 'CUT_SINGLE', 'CUT_DOUBLE', 'CORNER_CUT'];
+    const meshTypes: PanelType[] = ['FULL', 'CUT_SINGLE', 'CORNER_CUT'];
     
     meshTypes.forEach((meshType) => {
       const panels = panelsByType[meshType] || [];

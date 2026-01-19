@@ -18,7 +18,7 @@ interface DiagnosticsHUDProps {
   panelMeshBBoxSizeM?: { x: number; y: number; z: number };
   instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   layoutStats?: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number };
-  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CUT_DOUBLE: number; CORNER_CUT: number; TOPO?: number; END_CUT?: number };
+  panelCountsByType?: { FULL: number; CUT_SINGLE: number; CORNER_CUT: number; TOPO?: number; END_CUT?: number };
 }
 
 export function DiagnosticsHUD({
@@ -225,10 +225,6 @@ export function DiagnosticsHUD({
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">CORNER_CUT (verm):</span>
             <span className="text-red-400">{panelCountsByType.CORNER_CUT}</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">CUT_DOUBLE (laranja):</span>
-            <span className="text-orange-400">{panelCountsByType.CUT_DOUBLE}</span>
           </div>
           {panelCountsByType.CUT_SINGLE > 0 && (
             <div className="flex justify-between gap-4">

@@ -25,7 +25,6 @@ import { CoreConcreteMm, ExtendedPanelData, PanelOverride } from '@/types/panel-
 export interface PanelCounts {
   FULL: number;
   CUT_SINGLE: number;
-  CUT_DOUBLE: number;
   CORNER_CUT: number;
   TOPO: number;
   OPENING_VOID: number;
@@ -47,11 +46,10 @@ const SCALE = 0.001;
 // =============================================
 export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
   FULL: '#E6D44A',        // YELLOW - full panel (1200mm)
-  CUT_SINGLE: '#6FD36F',  // LIGHT GREEN - cut on ONE side only (meio-corte)
-  CUT_DOUBLE: '#F2992E',  // ORANGE - cut on BOTH sides (corte de acerto no meio)
-  CORNER_CUT: '#C83A3A',  // RED - corner/stagger adjustment panels (arranque canto)
+  CUT_SINGLE: '#6FD36F',  // LIGHT GREEN - cut on ONE side only
+  CORNER_CUT: '#C83A3A',  // RED - corner/adjustment cut (one side only)
   TOPO: '#0F6B3E',        // DARK GREEN - topos
-  END_CUT: '#F2992E',     // ORANGE - end termination cuts (same as CUT_DOUBLE)
+  END_CUT: '#F2992E',     // ORANGE - end termination cuts
   OPENING_VOID: '#FF4444', // RED translucent - opening voids and candidates
 };
 
@@ -297,7 +295,6 @@ function BatchedPanelInstances({
     console.log('[BatchedPanelInstances] Generated panels:', {
       FULL: result.panelsByType.FULL.length,
       CUT_SINGLE: result.panelsByType.CUT_SINGLE.length,
-      CUT_DOUBLE: result.panelsByType.CUT_DOUBLE.length,
       CORNER_CUT: result.panelsByType.CORNER_CUT.length,
       total: result.allPanels.length,
       topos: result.allTopos.length,
@@ -409,7 +406,6 @@ function BatchedPanelInstances({
     const regroupedByType: Record<PanelType, ClassifiedPanel[]> = {
       FULL: [],
       CUT_SINGLE: [],
-      CUT_DOUBLE: [],
       CORNER_CUT: [],
       TOPO: [],
       END_CUT: [],
@@ -476,7 +472,6 @@ function BatchedPanelInstances({
   const counts: PanelCounts = {
     FULL: panelsByType.FULL.length,
     CUT_SINGLE: panelsByType.CUT_SINGLE.length,
-    CUT_DOUBLE: panelsByType.CUT_DOUBLE.length,
     CORNER_CUT: panelsByType.CORNER_CUT.length,
     TOPO: allTopos.length,
     OPENING_VOID: 0,
@@ -486,7 +481,6 @@ function BatchedPanelInstances({
   const lookupTables = useMemo(() => {
     const fullLookup = new Map<number, string>();
     const cutSingleLookup = new Map<number, string>();
-    const cutDoubleLookup = new Map<number, string>();
     const cornerLookup = new Map<number, string>();
     const allPanelLookup = new Map<number, string>();
 
@@ -498,11 +492,6 @@ function BatchedPanelInstances({
     panelsByType.CUT_SINGLE.forEach((panel, idx) => {
       if (panel.panelId) {
         cutSingleLookup.set(idx, panel.panelId);
-      }
-    });
-    panelsByType.CUT_DOUBLE.forEach((panel, idx) => {
-      if (panel.panelId) {
-        cutDoubleLookup.set(idx, panel.panelId);
       }
     });
     panelsByType.CORNER_CUT.forEach((panel, idx) => {
@@ -518,7 +507,7 @@ function BatchedPanelInstances({
       }
     });
 
-    return { fullLookup, cutSingleLookup, cutDoubleLookup, cornerLookup, allPanelLookup };
+    return { fullLookup, cutSingleLookup, cornerLookup, allPanelLookup };
   }, [panelsByType, allPanels]);
 
   // Handle click on panel mesh
@@ -534,9 +523,6 @@ function BatchedPanelInstances({
         break;
       case 'CUT_SINGLE':
         panelId = lookupTables.cutSingleLookup.get(instanceId);
-        break;
-      case 'CUT_DOUBLE':
-        panelId = lookupTables.cutDoubleLookup.get(instanceId);
         break;
       case 'CORNER_CUT':
         panelId = lookupTables.cornerLookup.get(instanceId);
@@ -561,7 +547,7 @@ function BatchedPanelInstances({
       toposPlaced: layoutStats.toposPlaced,
       effectiveOffset: 'effectiveOffset' in layoutStats ? layoutStats.effectiveOffset : 600,
     });
-  }, [totalCount, counts.FULL, counts.CUT_SINGLE, counts.CUT_DOUBLE, counts.CORNER_CUT, counts.TOPO, layoutStats]);
+  }, [totalCount, counts.FULL, counts.CUT_SINGLE, counts.CORNER_CUT, counts.TOPO, layoutStats]);
 
   // Notify parent about panel data
   useEffect(() => {
@@ -603,15 +589,6 @@ function BatchedPanelInstances({
     });
     cutSingleMeshRef.current.instanceMatrix.needsUpdate = true;
   }, [panelsByType.CUT_SINGLE, panelGeometry]);
-
-  // Update CUT_DOUBLE panels mesh
-  useEffect(() => {
-    if (!cutDoubleMeshRef.current || panelsByType.CUT_DOUBLE.length === 0) return;
-    panelsByType.CUT_DOUBLE.forEach((panel, i) => {
-      cutDoubleMeshRef.current!.setMatrixAt(i, panel.matrix);
-    });
-    cutDoubleMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [panelsByType.CUT_DOUBLE, panelGeometry]);
 
   // Update CORNER_CUT panels mesh
   useEffect(() => {
@@ -695,25 +672,6 @@ function BatchedPanelInstances({
             metalness={0.1}
             wireframe={wireframe}
             emissive={PANEL_COLORS.CUT_SINGLE}
-            emissiveIntensity={0.15}
-          />
-        </instancedMesh>
-      )}
-
-      {/* CUT_DOUBLE panels - ORANGE */}
-      {panelsByType.CUT_DOUBLE.length > 0 && (
-        <instancedMesh 
-          ref={cutDoubleMeshRef} 
-          args={[panelGeometry, undefined, panelsByType.CUT_DOUBLE.length]} 
-          frustumCulled={false}
-          onClick={(e) => handlePanelClick('CUT_DOUBLE', e)}
-        >
-          <meshStandardMaterial 
-            color={PANEL_COLORS.CUT_DOUBLE}
-            roughness={0.4} 
-            metalness={0.1}
-            wireframe={wireframe}
-            emissive={PANEL_COLORS.CUT_DOUBLE}
             emissiveIntensity={0.15}
           />
         </instancedMesh>
@@ -1568,7 +1526,7 @@ export function ICFViewer3D({
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
-    FULL: 0, CUT_SINGLE: 0, CUT_DOUBLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
+    FULL: 0, CUT_SINGLE: 0, CORNER_CUT: 0, TOPO: 0, OPENING_VOID: 0
   });
   const [geometrySource, setGeometrySource] = useState<'glb' | 'step' | 'cache' | 'procedural' | 'simple'>('simple');
   const [geometryBBoxM, setGeometryBBoxM] = useState<{ x: number; y: number; z: number } | undefined>(undefined);
