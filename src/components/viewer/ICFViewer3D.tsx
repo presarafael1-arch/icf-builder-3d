@@ -2,7 +2,7 @@ import { useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { Canvas, useThree, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
-import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings, TOOTH } from '@/types/icf';
+import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings, TOOTH, ConcreteThickness } from '@/types/icf';
 import { OpeningData, OpeningCandidate, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, buildWallChainsAutoTuned, WallChain } from '@/lib/wall-chains';
@@ -18,6 +18,7 @@ import {
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
 import { DebugVisualizations } from './DebugVisualizations';
+import { SideStripeOverlays } from './SideStripeOverlays';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
 import { CoreConcreteMm, ExtendedPanelData, PanelOverride } from '@/types/panel-selection';
 
@@ -777,6 +778,12 @@ function BatchedPanelInstances({
           />
         </instancedMesh>
       )}
+
+      {/* EXT/INT side stripe overlays - Blue (exterior) and White (interior) */}
+      <SideStripeOverlays 
+        allPanels={allPanels} 
+        concreteThickness={settings.concreteThickness} 
+      />
     </>
   );
 }
