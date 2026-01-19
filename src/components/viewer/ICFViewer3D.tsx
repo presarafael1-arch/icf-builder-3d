@@ -431,7 +431,7 @@ function BatchedPanelInstances({
       allTopos: result.allTopos,
       layoutStats: result.stats,
     };
-  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, panelOverrides]);
+  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, panelOverrides, flippedChains]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;
