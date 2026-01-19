@@ -286,6 +286,8 @@ export default function ProjectEditor() {
     showLCornerBoundingBoxes: false, // Show bounding boxes of corner panels
     showWallDimensions: false, // Show wall dimensions in TOOTH units
     showCornerNodes: true, // Show exterior/interior corner nodes
+    showCornerNodeLabels: true, // Show labels on corner nodes
+    showCornerNodeWires: true, // Show vertical wires on corner nodes
   });
   
   // Preview color for classification hover
