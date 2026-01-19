@@ -895,8 +895,15 @@ export function layoutPanelsForChainWithJunctions(
   // Slot counter for stable IDs
   let slotCounter = 0;
   
-  // Side short code for IDs
-  const sideCode = side === 'exterior' ? 'ext' : 'int';
+  // Apply chain-level flip if this chain is in the flipped set
+  // This allows manual override of the exterior/interior classification
+  const isChainFlipped = flippedChains.has(chain.id);
+  const effectiveSide: WallSide = isChainFlipped 
+    ? (side === 'exterior' ? 'interior' : 'exterior')
+    : side;
+  
+  // Side short code for IDs - uses EFFECTIVE side (after flip)
+  const sideCode = effectiveSide === 'exterior' ? 'ext' : 'int';
   
   // Helper to determine seed origin
   const getSeedOrigin = (isStart: boolean, isEnd: boolean): ClassifiedPanel['seedOrigin'] => {
@@ -967,12 +974,7 @@ export function layoutPanelsForChainWithJunctions(
     const perpX = -dirY;
     const perpZ = dirX;
     
-    // Apply chain-level flip if this chain is in the flipped set
-    // This allows manual override of the exterior/interior classification
-    const isChainFlipped = flippedChains.has(chain.id);
-    const effectiveSide: WallSide = isChainFlipped 
-      ? (side === 'exterior' ? 'interior' : 'exterior')
-      : side;
+    // effectiveSide is already calculated above (at function level) with flip applied
     
     // Panel positioning perpendicular to wall:
     // Wall total thickness = 4 TOOTH (150mm) or 5 TOOTH (220mm)
@@ -1041,7 +1043,7 @@ export function layoutPanelsForChainWithJunctions(
       chainId: chain.id, 
       isCornerPiece: isCorner, 
       isEndPiece: isEnd,
-      side, // Include which side this panel is on
+      side: effectiveSide, // Include which side this panel is on (after flip)
       // Stable ID data
       panelId,
       slotIndex,
