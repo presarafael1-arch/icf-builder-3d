@@ -84,11 +84,11 @@ export function usePanelOverrides(projectId: string | undefined): UsePanelOverri
       }
     }
     
-    // Check orange at valid position (would need panel context)
+    // Check corner cut at valid position (would need panel context)
     // This is a placeholder - real validation needs panel position info
-    if (override.overrideType === 'CUT_DOUBLE' && override.anchorOverride) {
+    if (override.overrideType === 'CORNER_CUT' && override.anchorOverride) {
       if (override.anchorOverride !== 'center_on_node') {
-        // Orange cuts should only be in middle, not at nodes
+        // Corner cuts should be at nodes
         // But we can't fully validate without knowing the panel's position
       }
     }
