@@ -288,6 +288,12 @@ export default function ProjectEditor() {
     showCornerNodes: true, // Show exterior/interior corner nodes
     showCornerNodeLabels: true, // Show labels on corner nodes
     showCornerNodeWires: true, // Show vertical wires on corner nodes
+    
+    // Manual offset calibration for corner nodes (in TOOTH units)
+    cornerNodeExtOffsetX: 0,
+    cornerNodeExtOffsetY: 0,
+    cornerNodeIntOffsetX: 0,
+    cornerNodeIntOffsetY: 0,
   });
   
   // Preview color for classification hover
