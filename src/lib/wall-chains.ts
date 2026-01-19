@@ -12,6 +12,7 @@
 
 import { WallSegment, JunctionType, PANEL_WIDTH, PANEL_HEIGHT } from '@/types/icf';
 import { OpeningCandidate, generateCandidateLabel } from '@/types/openings';
+import { detectFootprintAndClassify, type SideClassification } from './footprint-detection';
 
 export interface WallChain {
   id: string;
@@ -24,6 +25,9 @@ export interface WallChain {
   endY: number;
   startNodeId: string | null;
   endNodeId: string | null;
+  // Side classification from footprint detection (AUTO)
+  // Determines which perpendicular direction is exterior vs interior
+  sideClassification?: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
 }
 
 export interface ChainNode {
@@ -51,6 +55,16 @@ export interface ChainsResult {
   chains: WallChain[];
   nodes: ChainNode[];
   candidates: OpeningCandidate[]; // Detected opening candidates from gaps
+  // Footprint detection results
+  footprint?: {
+    outerPolygon: Array<{ x: number; y: number }>;
+    outerAreaMm2: number;
+    stats: {
+      exteriorChains: number;
+      interiorPartitions: number;
+      unresolved: number;
+    };
+  };
   stats: {
     originalSegments: number;
     afterNoiseFilter: number;
@@ -1182,10 +1196,38 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     candidates: candidates.length,
   });
 
+  // Step: Detect footprint and classify chain sides (AUTO EXT/INT)
+  const footprintResult = detectFootprintAndClassify(chains, opts.snapTolMm);
+  
+  // Apply side classification to each chain
+  chains.forEach(chain => {
+    const sideInfo = footprintResult.chainSides.get(chain.id);
+    if (sideInfo) {
+      chain.sideClassification = sideInfo.classification;
+    }
+  });
+  
+  console.log('[WallChains] Footprint detection:', {
+    outerPolygonVertices: footprintResult.outerPolygon.length,
+    outerAreaM2: (footprintResult.outerArea / 1e6).toFixed(2),
+    exterior: footprintResult.stats.exteriorChains,
+    interiorPartitions: footprintResult.stats.interiorPartitions,
+    unresolved: footprintResult.stats.unresolved,
+  });
+
   return {
     chains,
     nodes,
     candidates,
+    footprint: {
+      outerPolygon: footprintResult.outerPolygon,
+      outerAreaMm2: footprintResult.outerArea,
+      stats: {
+        exteriorChains: footprintResult.stats.exteriorChains,
+        interiorPartitions: footprintResult.stats.interiorPartitions,
+        unresolved: footprintResult.stats.unresolved,
+      },
+    },
     stats,
     junctionCounts,
   };
