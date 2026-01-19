@@ -763,12 +763,16 @@ function getStartCap(
           console.log(`[L-EXT-START] FULL isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T)`);
         } else {
           // INTERIOR ROW 1: CORNER_CUT com corte = 4T sempre
-          // Regra corrigida pelo utilizador: interior leva corte de 4 TOOTH
+          // Regra: o corte é no LADO DO CANTO. Como a geometria é representada por “largura menor”,
+          // precisamos avançar o START do painel pelo valor do corte (para “remover” do lado do nó)
+          // e depois aplicar o offset adicional (0 ou 1T).
           const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.startL, isPrimaryArm);
           reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
-          startOffsetMm = offset;
-          console.log(`[L-INT-START] CORNER_CUT isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T) cut=4T (${cut.toFixed(1)}mm)`);
+          startOffsetMm = cut + offset;
+          console.log(
+            `[L-INT-START] CORNER_CUT isPrimary=${isPrimaryArm} startOffset=${startOffsetMm.toFixed(1)}mm (cut=${cut.toFixed(1)}mm + off=${offset.toFixed(1)}mm) width=${reservationMm.toFixed(1)}mm`
+          );
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
@@ -863,11 +867,14 @@ function getEndCap(
           console.log(`[L-EXT-END] FULL isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T)`);
         } else {
           // INTERIOR ROW 1: CORNER_CUT com corte = 4T sempre
+          // Corte tem de ser “no lado do canto” ⇒ recuar o END pelo cut, e aplicar offset extra.
           const { offset, cut } = calculateLCornerInteriorOffsetAndCut(concreteThickness, endpointInfo.endL, isPrimaryArm);
           reservationMm = PANEL_WIDTH - cut;
           type = 'CORNER_CUT';
-          startOffsetMm = offset;
-          console.log(`[L-INT-END] CORNER_CUT isPrimary=${isPrimaryArm} offset=${offset.toFixed(1)}mm (${(offset/TOOTH).toFixed(1)}T) cut=4T (${cut.toFixed(1)}mm)`);
+          startOffsetMm = cut + offset;
+          console.log(
+            `[L-INT-END] CORNER_CUT isPrimary=${isPrimaryArm} endOffset=${startOffsetMm.toFixed(1)}mm (cut=${cut.toFixed(1)}mm + off=${offset.toFixed(1)}mm) width=${reservationMm.toFixed(1)}mm`
+          );
         }
       } else {
         // Rows 2+: keep both as FULL, alternating who extends
