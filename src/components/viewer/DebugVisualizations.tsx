@@ -184,20 +184,13 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
 
   const handleNodeClick = (fullNodeId: string, e: any) => {
     e.stopPropagation();
-    console.log('[CornerNode] Click detected on:', fullNodeId);
-    console.log('[CornerNode] onSelectCornerNode available:', !!onSelectCornerNode);
-    console.log('[CornerNode] Current selectedCornerNode:', selectedCornerNode);
     if (onSelectCornerNode) {
       // Toggle selection using full node ID
       if (selectedCornerNode === fullNodeId) {
-        console.log('[CornerNode] Deselecting node');
         onSelectCornerNode(null);
       } else {
-        console.log('[CornerNode] Selecting node:', fullNodeId);
         onSelectCornerNode(fullNodeId);
       }
-    } else {
-      console.warn('[CornerNode] onSelectCornerNode is NOT defined!');
     }
   };
 
@@ -218,16 +211,15 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
         const intOffsetX = (intOffset?.offsetX ?? 0) * TOOTH;
         const intOffsetY = (intOffset?.offsetY ?? 0) * TOOTH;
 
-        // Apply individual offsets to node positions
+        // Base position is the DXF intersection point (lj.x, lj.y)
+        // Offsets are applied from this intersection point, NOT from the pre-calculated offset nodes
         const extNode = {
-          ...lj.exteriorNode,
-          x: lj.exteriorNode.x + extOffsetX,
-          y: lj.exteriorNode.y + extOffsetY,
+          x: lj.x + extOffsetX,
+          y: lj.y + extOffsetY,
         };
         const intNode = {
-          ...lj.interiorNode,
-          x: lj.interiorNode.x + intOffsetX,
-          y: lj.interiorNode.y + intOffsetY,
+          x: lj.x + intOffsetX,
+          y: lj.y + intOffsetY,
         };
         const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE] as [number, number, number];
         
