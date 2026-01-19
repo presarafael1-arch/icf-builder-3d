@@ -56,7 +56,7 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
   
   // Detect junctions
-  const lJunctions = useMemo(() => detectLJunctions(chains), [chains]);
+  const lJunctions = useMemo(() => detectLJunctions(chains, settings.concreteThickness), [chains, settings.concreteThickness]);
   const tJunctions = useMemo(() => detectTJunctions(chains), [chains]);
   
   // Combine all junction positions
@@ -162,10 +162,154 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
   );
 }
 
+// Corner nodes visualization - shows exterior and interior intersection points
+function CornerNodesVisualization({ chainsResult, settings }: DebugVisualizationsProps) {
+  const { chains } = chainsResult;
+  
+  // Detect L-junctions with computed corner nodes
+  const lJunctions = useMemo(() => detectLJunctions(chains, settings.concreteThickness), [chains, settings.concreteThickness]);
+  
+  // Collect all corner nodes
+  const cornerNodes = useMemo(() => {
+    const nodes: { x: number; y: number; type: 'exterior' | 'interior'; id: string; ljId: string }[] = [];
+    
+    lJunctions.forEach(lj => {
+      if (lj.exteriorNode) {
+        nodes.push({ 
+          x: lj.exteriorNode.x, 
+          y: lj.exteriorNode.y, 
+          type: 'exterior', 
+          id: lj.exteriorNode.id,
+          ljId: lj.nodeId
+        });
+      }
+      if (lj.interiorNode) {
+        nodes.push({ 
+          x: lj.interiorNode.x, 
+          y: lj.interiorNode.y, 
+          type: 'interior', 
+          id: lj.interiorNode.id,
+          ljId: lj.nodeId
+        });
+      }
+    });
+    
+    return nodes;
+  }, [lJunctions]);
+  
+  const y = settings.maxRows * PANEL_HEIGHT * SCALE + 0.4;
+  
+  return (
+    <group>
+      {cornerNodes.map((node) => (
+        <group key={node.id} position={[node.x * SCALE, y, node.y * SCALE]}>
+          {/* Marker sphere */}
+          <mesh>
+            <sphereGeometry args={[0.12, 16, 16]} />
+            <meshStandardMaterial 
+              color={node.type === 'exterior' ? '#FF0000' : '#FFCC00'} 
+              emissive={node.type === 'exterior' ? '#FF0000' : '#FFCC00'}
+              emissiveIntensity={0.8}
+            />
+          </mesh>
+          
+          {/* Crosshair lines */}
+          <line>
+            <bufferGeometry>
+              <bufferAttribute
+                attach="attributes-position"
+                count={4}
+                array={new Float32Array([
+                  -0.15, 0, 0,
+                  0.15, 0, 0,
+                  0, 0, -0.15,
+                  0, 0, 0.15,
+                ])}
+                itemSize={3}
+              />
+            </bufferGeometry>
+            <lineBasicMaterial color={node.type === 'exterior' ? '#FF0000' : '#FFCC00'} linewidth={2} />
+          </line>
+          
+          {/* Label */}
+          <Html
+            center
+            distanceFactor={8}
+            style={{
+              color: node.type === 'exterior' ? '#FFF' : '#000',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              background: node.type === 'exterior' ? '#FF0000' : '#FFCC00',
+              padding: '3px 8px',
+              borderRadius: '4px',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              border: '2px solid white',
+            }}
+          >
+            {node.type === 'exterior' ? 'NÓ EXT' : 'NÓ INT'}
+          </Html>
+        </group>
+      ))}
+      
+      {/* Draw lines from DXF intersection to corner nodes */}
+      {lJunctions.map(lj => {
+        if (!lj.exteriorNode || !lj.interiorNode) return null;
+        
+        const dxfPos = [lj.x * SCALE, y - 0.1, lj.y * SCALE];
+        const extPos = [lj.exteriorNode.x * SCALE, y, lj.exteriorNode.y * SCALE];
+        const intPos = [lj.interiorNode.x * SCALE, y, lj.interiorNode.y * SCALE];
+        
+        return (
+          <group key={`lines-${lj.nodeId}`}>
+            {/* Line from DXF to exterior node */}
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={2}
+                  array={new Float32Array([
+                    dxfPos[0], dxfPos[1], dxfPos[2],
+                    extPos[0], extPos[1], extPos[2],
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color="#FF0000" linewidth={2} />
+            </line>
+            
+            {/* Line from DXF to interior node */}
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={2}
+                  array={new Float32Array([
+                    dxfPos[0], dxfPos[1], dxfPos[2],
+                    intPos[0], intPos[1], intPos[2],
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color="#FFCC00" linewidth={2} />
+            </line>
+            
+            {/* DXF intersection marker (small white sphere) */}
+            <mesh position={dxfPos as [number, number, number]}>
+              <sphereGeometry args={[0.06, 8, 8]} />
+              <meshBasicMaterial color="#FFFFFF" />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 // L-junction arrows visualization - shows PRIMARY (exterior) vs SECONDARY (interior) arms
 function LJunctionArrows({ chainsResult, settings }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
-  const lJunctions = useMemo(() => detectLJunctions(chains), [chains]);
+  const lJunctions = useMemo(() => detectLJunctions(chains, settings.concreteThickness), [chains, settings.concreteThickness]);
   
   // Get chain by ID
   const chainMap = useMemo(() => {
@@ -998,6 +1142,10 @@ export function DebugVisualizations({ chainsResult, settings }: DebugVisualizati
       
       {settings.showWallDimensions && (
         <WallDimensionsVisualization chainsResult={chainsResult} settings={settings} />
+      )}
+      
+      {settings.showCornerNodes && (
+        <CornerNodesVisualization chainsResult={chainsResult} settings={settings} />
       )}
     </group>
   );
