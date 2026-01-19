@@ -624,27 +624,11 @@ function getStartCap(
   
   switch (endpointInfo.startType) {
     case 'L': {
-      // =============================================
-      // L-CORNER (chain START) - EXTERIOR FULL CORNER
-      // 
-      // User spec (from image):
-      // - PRIMARY ARM (exterior side): offset 1.5 TOOTH for OUTSIDE
-      // - SECONDARY ARM (interior side): offset 2.5 TOOTH for INSIDE
-      // 
-      // This ensures exterior panels meet perfectly at the corner vertex.
-      // =============================================
+      // L-CORNER: restart from the beginning (debug)
+      // Only apply the perpendicular wall offset elsewhere; no along-chain offsets here.
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-      
-      if (endpointInfo.isPrimaryAtStart) {
-        // PRIMARY ARM: offset 1.5 TOOTH para FORA (outward)
-        startOffsetMm = 1.5 * TOOTH;
-        console.log(`[L-START] chain=${chain.id.slice(0,8)} side=${side} row=${row} → PRIMARY offset=+1.5T (${startOffsetMm.toFixed(1)}mm)`);
-      } else {
-        // SECONDARY ARM: offset 2.5 TOOTH para DENTRO (inward, negative)
-        startOffsetMm = -2.5 * TOOTH;
-        console.log(`[L-START] chain=${chain.id.slice(0,8)} side=${side} row=${row} → SECONDARY offset=-2.5T (${startOffsetMm.toFixed(1)}mm)`);
-      }
+      startOffsetMm = 0;
       break;
     }
       
@@ -691,32 +675,11 @@ function getEndCap(
   
   switch (endpointInfo.endType) {
     case 'L': {
-      // =============================================
-      // L-CORNER (chain END) - apply offsets in a way that is CONSISTENT in world-space
-      // regardless of chain direction.
-      //
-      // Because this is the END of the chain, the chain parameter direction is opposite
-      // of the "outward from vertex" direction. So we INVERT the sign compared to START.
-      //
-      // Desired world behavior:
-      // - PRIMARY arm: +1.5T away from the vertex
-      // - SECONDARY arm: -2.5T toward/through the vertex
-      //
-      // Mapping to our end-cap math (rightEdge = intervalEnd - startOffsetMm):
-      // invert signs vs START.
-      // =============================================
+      // L-CORNER: restart from the beginning (debug)
+      // Only apply the perpendicular wall offset elsewhere; no along-chain offsets here.
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-
-      if (endpointInfo.isPrimaryAtEnd) {
-        // PRIMARY arm at END: invert (+1.5T at start) -> -1.5T here
-        startOffsetMm = -1.5 * TOOTH;
-        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → PRIMARY offset=-1.5T (${startOffsetMm.toFixed(1)}mm)`);
-      } else {
-        // SECONDARY arm at END: invert (-2.5T at start) -> +2.5T here
-        startOffsetMm = 2.5 * TOOTH;
-        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → SECONDARY offset=+2.5T (${startOffsetMm.toFixed(1)}mm)`);
-      }
+      startOffsetMm = 0;
       break;
     }
       
@@ -855,20 +818,9 @@ export function layoutPanelsForChainWithJunctions(
     const perpX = -dirY;
     const perpZ = dirX;
     
-    // Determine if we should flip the side for this panel at L-corners
-    // This corrects cases where "exterior" points toward the corner interior
-    const isNearStart = startPos <= PANEL_WIDTH; // First panel at chain start
-    const isNearEnd = endPos >= chain.lengthMm - PANEL_WIDTH; // Last panel at chain end
-    
-    let effectiveSide = side;
-    if (isNearStart && endpointInfo.startType === 'L' && endpointInfo.flipSideAtStart) {
-      effectiveSide = side === 'exterior' ? 'interior' : 'exterior';
-      console.log(`[FLIP-START] chain=${chain.id.slice(0,8)} side=${side}→${effectiveSide}`);
-    }
-    if (isNearEnd && endpointInfo.endType === 'L' && endpointInfo.flipSideAtEnd) {
-      effectiveSide = side === 'exterior' ? 'interior' : 'exterior';
-      console.log(`[FLIP-END] chain=${chain.id.slice(0,8)} side=${side}→${effectiveSide}`);
-    }
+    // NOTE: For this debugging pass we do NOT auto-flip exterior/interior at corners.
+    // The caller will generate only the exterior wall, so the side is stable.
+    const effectiveSide = side;
     
     // Panel positioning perpendicular to wall:
     // Wall total thickness = 4 TOOTH (150mm) or 5 TOOTH (220mm)
@@ -1242,8 +1194,8 @@ export function generatePanelLayout(
       for (let row = 0; row < Math.min(visibleRows, maxRows); row++) {
         const intervals = getIntervalsForRow(chain, row);
         
-        // Process BOTH sides: exterior and interior
-        const sides: WallSide[] = ['exterior', 'interior'];
+        // Debug mode: generate ONLY exterior wall panels
+        const sides: WallSide[] = ['exterior'];
         
         sides.forEach((side) => {
           intervals.forEach((interval) => {
@@ -1266,10 +1218,8 @@ export function generatePanelLayout(
               if (panel.isCornerPiece) cornerTemplatesApplied++;
             });
             
-            // Only add topos once (from exterior side) to avoid duplicates
-            if (side === 'exterior') {
-              allTopos.push(...topos);
-            }
+            // Only add topos once (exterior only anyway)
+            allTopos.push(...topos);
           });
         });
       }
