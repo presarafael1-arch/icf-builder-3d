@@ -625,17 +625,26 @@ function getStartCap(
   switch (endpointInfo.startType) {
     case 'L': {
       // =============================================
-      // L-CORNER (chain START) - SIMPLIFIED
+      // L-CORNER (chain START) - EXTERIOR FULL CORNER
       // 
-      // ALL panels start at the vertex (intersection point).
-      // No offset, no cut - just FULL panels from origin.
-      // Perpendicular offset handled in createPanel.
+      // User spec (from image):
+      // - PRIMARY ARM (exterior side): offset 1.5 TOOTH for OUTSIDE
+      // - SECONDARY ARM (interior side): offset 2.5 TOOTH for INSIDE
+      // 
+      // This ensures exterior panels meet perfectly at the corner vertex.
       // =============================================
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-      startOffsetMm = 0; // Start exactly at vertex
       
-      console.log(`[L-START] chain=${chain.id.slice(0,8)} side=${side} row=${row} → FULL from vertex (offset=0)`);
+      if (endpointInfo.isPrimaryAtStart) {
+        // PRIMARY ARM: offset 1.5 TOOTH para FORA (outward)
+        startOffsetMm = 1.5 * TOOTH;
+        console.log(`[L-START] chain=${chain.id.slice(0,8)} side=${side} row=${row} → PRIMARY offset=+1.5T (${startOffsetMm.toFixed(1)}mm)`);
+      } else {
+        // SECONDARY ARM: offset 2.5 TOOTH para DENTRO (inward, negative)
+        startOffsetMm = -2.5 * TOOTH;
+        console.log(`[L-START] chain=${chain.id.slice(0,8)} side=${side} row=${row} → SECONDARY offset=-2.5T (${startOffsetMm.toFixed(1)}mm)`);
+      }
       break;
     }
       
@@ -683,17 +692,28 @@ function getEndCap(
   switch (endpointInfo.endType) {
     case 'L': {
       // =============================================
-      // L-CORNER (chain END) - SIMPLIFIED
+      // L-CORNER (chain END) - EXTERIOR FULL CORNER
       // 
-      // ALL panels end at the vertex (intersection point).
-      // No offset, no cut - just FULL panels to origin.
-      // Perpendicular offset handled in createPanel.
+      // User spec (from image):
+      // - PRIMARY ARM (exterior side): offset 1.5 TOOTH for OUTSIDE
+      // - SECONDARY ARM (interior side): offset 2.5 TOOTH for INSIDE
+      // 
+      // For END, offset is applied from the END of the chain toward the vertex.
+      // Negative offset = panels extend past the vertex (toward corner).
+      // Positive offset = panels stop before the vertex.
       // =============================================
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-      startOffsetMm = 0; // End exactly at vertex
       
-      console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → FULL to vertex (offset=0)`);
+      if (endpointInfo.isPrimaryAtEnd) {
+        // PRIMARY ARM: offset 1.5 TOOTH para FORA (outward from vertex)
+        startOffsetMm = 1.5 * TOOTH;
+        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → PRIMARY offset=+1.5T (${startOffsetMm.toFixed(1)}mm)`);
+      } else {
+        // SECONDARY ARM: offset 2.5 TOOTH para DENTRO (inward, negative)
+        startOffsetMm = -2.5 * TOOTH;
+        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → SECONDARY offset=-2.5T (${startOffsetMm.toFixed(1)}mm)`);
+      }
       break;
     }
       
