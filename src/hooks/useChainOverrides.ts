@@ -78,7 +78,7 @@ export function useChainOverrides(projectId: string | undefined): UseChainOverri
       const next = new Map(prev);
       const existing = next.get(chainId);
       const now = new Date().toISOString();
-      
+
       if (existing) {
         if (!existing.flipSide) {
           // Turn on flip
@@ -96,6 +96,11 @@ export function useChainOverrides(projectId: string | undefined): UseChainOverri
           updatedAt: now,
         });
       }
+
+      // Debug
+      const isFlippedNow = next.get(chainId)?.flipSide ?? false;
+      console.log('[useChainOverrides] toggleFlip', { chainId, isFlippedNow, overridesCount: next.size });
+
       return next;
     });
   }, []);
