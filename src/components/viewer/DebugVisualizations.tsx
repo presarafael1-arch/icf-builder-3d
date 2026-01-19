@@ -211,15 +211,15 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
         const intOffsetX = (intOffset?.offsetX ?? 0) * TOOTH;
         const intOffsetY = (intOffset?.offsetY ?? 0) * TOOTH;
 
-        // Base position is the DXF intersection point (lj.x, lj.y)
-        // Offsets are applied from this intersection point, NOT from the pre-calculated offset nodes
+        // Base position is the pre-calculated corner node (exteriorNode/interiorNode)
+        // User offsets are applied from these calculated positions
         const extNode = {
-          x: lj.x + extOffsetX,
-          y: lj.y + extOffsetY,
+          x: lj.exteriorNode.x + extOffsetX,
+          y: lj.exteriorNode.y + extOffsetY,
         };
         const intNode = {
-          x: lj.x + intOffsetX,
-          y: lj.y + intOffsetY,
+          x: lj.interiorNode.x + intOffsetX,
+          y: lj.interiorNode.y + intOffsetY,
         };
         const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE] as [number, number, number];
         
