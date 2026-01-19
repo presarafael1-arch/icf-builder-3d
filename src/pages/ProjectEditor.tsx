@@ -7,6 +7,7 @@ import { ViewerControls } from '@/components/viewer/ViewerControls';
 import { DXFImportDialog } from '@/components/dxf/DXFImportDialog';
 import { OpeningsPanel } from '@/components/openings/OpeningsPanel';
 import { PanelInspector } from '@/components/viewer/PanelInspector';
+import { CornerNodeInspector } from '@/components/viewer/CornerNodeInspector';
 import { Button } from '@/components/ui/button';
 // Card components imported but conditionally used
 import { Input } from '@/components/ui/input';
@@ -291,13 +292,47 @@ export default function ProjectEditor() {
     showCornerNodes: true, // Show exterior/interior corner nodes
     showCornerNodeLabels: true, // Show labels on corner nodes
     showCornerNodeWires: true, // Show vertical wires on corner nodes
-    
-    // Manual offset calibration for corner nodes (in TOOTH units)
-    cornerNodeExtOffsetX: 0,
-    cornerNodeExtOffsetY: 0,
-    cornerNodeIntOffsetX: 0,
-    cornerNodeIntOffsetY: 0,
   });
+  
+  // Corner node offsets (individual per nodeId)
+  const [cornerNodeOffsets, setCornerNodeOffsets] = useState<Map<string, import('@/types/icf').CornerNodeOffset>>(() => {
+    try {
+      const stored = localStorage.getItem(`omni-icf-corner-offsets-${id}`);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Array<[string, import('@/types/icf').CornerNodeOffset]>;
+        return new Map(parsed);
+      }
+    } catch {}
+    return new Map();
+  });
+  
+  // Persist corner node offsets
+  useEffect(() => {
+    if (id && cornerNodeOffsets.size > 0) {
+      localStorage.setItem(
+        `omni-icf-corner-offsets-${id}`,
+        JSON.stringify(Array.from(cornerNodeOffsets.entries()))
+      );
+    }
+  }, [cornerNodeOffsets, id]);
+  
+  // Handler to update corner node offset
+  const handleUpdateCornerNodeOffset = useCallback((nodeId: string, offsetX: number, offsetY: number) => {
+    setCornerNodeOffsets(prev => {
+      const next = new Map(prev);
+      next.set(nodeId, { nodeId, offsetX, offsetY });
+      return next;
+    });
+  }, []);
+  
+  // Handler to reset corner node offset
+  const handleResetCornerNodeOffset = useCallback((nodeId: string) => {
+    setCornerNodeOffsets(prev => {
+      const next = new Map(prev);
+      next.delete(nodeId);
+      return next;
+    });
+  }, []);
   
   // Preview color for classification hover
   const [previewColor, setPreviewColor] = useState<string | null>(null);
@@ -831,6 +866,7 @@ export default function ProjectEditor() {
             className="w-full h-full"
             selectedCornerNode={selectedCornerNode}
             onSelectCornerNode={setSelectedCornerNode}
+            cornerNodeOffsets={cornerNodeOffsets}
           />
           <ViewerControls 
             settings={viewerSettings}
@@ -885,6 +921,16 @@ export default function ProjectEditor() {
         onPreviewColor={setPreviewColor}
         viewerSettings={viewerSettings}
         onViewerSettingsChange={setViewerSettings}
+      />
+      
+      {/* Corner Node Inspector */}
+      <CornerNodeInspector
+        isOpen={selectedCornerNode !== null}
+        onClose={() => setSelectedCornerNode(null)}
+        selectedNodeId={selectedCornerNode}
+        nodeOffsets={cornerNodeOffsets}
+        onUpdateOffset={handleUpdateCornerNodeOffset}
+        onResetOffset={handleResetCornerNodeOffset}
       />
     </MainLayout>
   );

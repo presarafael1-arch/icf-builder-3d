@@ -50,8 +50,9 @@ interface DebugVisualizationsProps {
   chainsResult: ChainsResult;
   settings: ViewerSettings;
   onSettingsChange?: (settings: ViewerSettings) => void;
-  selectedCornerNode?: string | null; // 'ext' or 'int' or null
+  selectedCornerNode?: string | null; // Full node ID: 'node-{junctionId}-ext' or 'node-{junctionId}-int'
   onSelectCornerNode?: (nodeId: string | null) => void;
+  cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>; // Individual offsets per node
 }
 
 // Seed markers at junction nodes
@@ -166,16 +167,10 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
 }
 
 // Corner nodes visualization - shows exterior and interior intersection points
-function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, onSelectCornerNode }: DebugVisualizationsProps) {
+function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, onSelectCornerNode, cornerNodeOffsets }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
   const showLabels = settings.showCornerNodeLabels ?? true;
   const showWires = settings.showCornerNodeWires ?? true;
-  
-  // Manual offset calibration (in TOOTH units, converted to mm)
-  const extOffsetX = (settings.cornerNodeExtOffsetX ?? 0) * TOOTH;
-  const extOffsetY = (settings.cornerNodeExtOffsetY ?? 0) * TOOTH;
-  const intOffsetX = (settings.cornerNodeIntOffsetX ?? 0) * TOOTH;
-  const intOffsetY = (settings.cornerNodeIntOffsetY ?? 0) * TOOTH;
 
   // Detect L-junctions with computed corner nodes
   const lJunctions = useMemo(
@@ -187,14 +182,14 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
   const yTop = settings.maxRows * PANEL_HEIGHT * SCALE + 0.4;
   const yBase = 0.02;
 
-  const handleNodeClick = (nodeType: 'ext' | 'int', e: any) => {
+  const handleNodeClick = (fullNodeId: string, e: any) => {
     e.stopPropagation();
     if (onSelectCornerNode) {
-      // Toggle selection
-      if (selectedCornerNode === nodeType) {
+      // Toggle selection using full node ID
+      if (selectedCornerNode === fullNodeId) {
         onSelectCornerNode(null);
       } else {
-        onSelectCornerNode(nodeType);
+        onSelectCornerNode(fullNodeId);
       }
     }
   };
@@ -204,7 +199,19 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
       {lJunctions.map((lj) => {
         if (!lj.exteriorNode || !lj.interiorNode) return null;
 
-        // Apply manual offsets to node positions
+        // Generate full node IDs
+        const extNodeId = `node-${lj.nodeId}-ext`;
+        const intNodeId = `node-${lj.nodeId}-int`;
+        
+        // Get individual offsets for each node (in TOOTH units, convert to mm)
+        const extOffset = cornerNodeOffsets?.get(extNodeId);
+        const intOffset = cornerNodeOffsets?.get(intNodeId);
+        const extOffsetX = (extOffset?.offsetX ?? 0) * TOOTH;
+        const extOffsetY = (extOffset?.offsetY ?? 0) * TOOTH;
+        const intOffsetX = (intOffset?.offsetX ?? 0) * TOOTH;
+        const intOffsetY = (intOffset?.offsetY ?? 0) * TOOTH;
+
+        // Apply individual offsets to node positions
         const extNode = {
           ...lj.exteriorNode,
           x: lj.exteriorNode.x + extOffsetX,
@@ -217,8 +224,8 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
         };
         const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE] as [number, number, number];
         
-        const isExtSelected = selectedCornerNode === 'ext';
-        const isIntSelected = selectedCornerNode === 'int';
+        const isExtSelected = selectedCornerNode === extNodeId;
+        const isIntSelected = selectedCornerNode === intNodeId;
 
         return (
           <group key={lj.nodeId}>
@@ -259,7 +266,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
               <group position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}>
                 {/* Clickable sphere */}
                 <mesh 
-                  onClick={(e) => handleNodeClick('ext', e)}
+                  onClick={(e) => handleNodeClick(extNodeId, e)}
                   onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
                   onPointerOut={() => { document.body.style.cursor = 'auto'; }}
                 >
@@ -311,7 +318,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                       border: isExtSelected ? '3px solid #FF0000' : '2px solid white',
                       boxShadow: isExtSelected ? '0 0 10px #FF0000' : 'none',
                     }}
-                    onClick={(e) => handleNodeClick('ext', e)}
+                    onClick={(e) => handleNodeClick(extNodeId, e)}
                   >
                     NÓ EXT {isExtSelected && '✓'}
                   </Html>
@@ -356,7 +363,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
               <group position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}>
                 {/* Clickable sphere */}
                 <mesh 
-                  onClick={(e) => handleNodeClick('int', e)}
+                  onClick={(e) => handleNodeClick(intNodeId, e)}
                   onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
                   onPointerOut={() => { document.body.style.cursor = 'auto'; }}
                 >
@@ -408,7 +415,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                       border: isIntSelected ? '3px solid #FFCC00' : '2px solid white',
                       boxShadow: isIntSelected ? '0 0 10px #FFCC00' : 'none',
                     }}
-                    onClick={(e) => handleNodeClick('int', e)}
+                    onClick={(e) => handleNodeClick(intNodeId, e)}
                   >
                     NÓ INT {isIntSelected && '✓'}
                   </Html>
@@ -1231,7 +1238,7 @@ function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizat
 }
 
 // Main component that renders debug visualizations based on settings
-export function DebugVisualizations({ chainsResult, settings, selectedCornerNode, onSelectCornerNode }: DebugVisualizationsProps) {
+export function DebugVisualizations({ chainsResult, settings, selectedCornerNode, onSelectCornerNode, cornerNodeOffsets }: DebugVisualizationsProps) {
   return (
     <group>
       {settings.showSeeds && (
@@ -1272,6 +1279,7 @@ export function DebugVisualizations({ chainsResult, settings, selectedCornerNode
           settings={settings} 
           selectedCornerNode={selectedCornerNode}
           onSelectCornerNode={onSelectCornerNode}
+          cornerNodeOffsets={cornerNodeOffsets}
         />
       )}
     </group>
