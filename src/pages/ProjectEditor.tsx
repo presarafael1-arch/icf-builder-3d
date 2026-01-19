@@ -241,10 +241,19 @@ export default function ProjectEditor() {
   const { 
     isFlipped: isChainFlipped, 
     toggleFlip: toggleChainFlip,
-    getFlippedChainIds 
+    overrides: chainOverrides 
   } = useChainOverrides(id);
   
-  const flippedChains = useMemo(() => getFlippedChainIds(), [getFlippedChainIds]);
+  // Memoize flippedChains based on the overrides Map content, not the function
+  const flippedChains = useMemo(() => {
+    const flipped = new Set<string>();
+    chainOverrides.forEach((override, chainId) => {
+      if (override.flipSide) {
+        flipped.add(chainId);
+      }
+    });
+    return flipped;
+  }, [chainOverrides]);
   
   // New wall form
   const [newWall, setNewWall] = useState({
