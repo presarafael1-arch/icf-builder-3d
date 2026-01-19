@@ -43,7 +43,7 @@ export function getHalfConcreteOffset(concreteThickness: ConcreteThickness): num
   return concreteThickness === '150' ? TOOTH : TOOTH * 1.5;
 }
 
-// Core thickness options
+// Core thickness options (only 150 and 220)
 export type ConcreteThickness = '150' | '220';
 
 // Corner modes
@@ -145,7 +145,7 @@ export interface WebPlacement {
   rotationY: number;
 }
 
-// Rebar spacing options (discrete: 20cm standard, 15cm +1 web, 10cm +2 webs)
+// Rebar spacing - kept for BOM compatibility but not exposed in UI
 export type RebarSpacing = 10 | 15 | 20;
 
 // View mode for 3D viewer
@@ -215,54 +215,54 @@ export interface BOMResult {
   roundingWasteMmPerFiada?: number; // waste per fiada from packing
 }
 
-// 3D Viewer settings
+// 3D Viewer settings - SIMPLIFIED (removed debug toggles)
 export interface ViewerSettings {
   // View mode
   viewMode: ViewMode; // 'lines' | 'panels' | 'both'
 
-  // Debug / sanity layers
-  showDXFLines: boolean; // Draw imported walls as line segments (gray, debug)
-  showChains: boolean; // Draw consolidated chains (cyan, thicker)
-  showHelpers: boolean; // Axes + bbox helpers (debug)
-
-  // Render layers
+  // Core layers (always on or minimal toggles)
   showPanels: boolean;
   showExteriorPanels: boolean; // Show exterior face panels
   showInteriorPanels: boolean; // Show interior face panels
   showTopos: boolean;
-  showWebs: boolean;
-  showTarugos: boolean;
   showOpenings: boolean;
-  showJunctions: boolean;
-  showGrid: boolean;
-  showGrids: boolean; // Stabilization grids
+  showGrid: boolean; // Base grid
 
   // View / params
   currentRow: number;
   maxRows: number;
-  wireframe: boolean;
-  rebarSpacing: RebarSpacing;
   concreteThickness: ConcreteThickness;
   
-  // Panel geometry mode
-  highFidelityPanels: boolean; // Use detailed/GLB geometry instead of simple boxes (default OFF)
-  showOutlines: boolean; // Show panel outlines (default ON)
+  // Rebar spacing - kept for backwards compatibility but not exposed in UI
+  rebarSpacing: RebarSpacing;
   
-  // Debug visualization options (panel inspection)
-  showSeeds: boolean; // Show seed markers at junction nodes
-  showNodeAxes: boolean; // Show T-junction axes
-  showRunSegments: boolean; // Different colors per run
-  showIndexFromSeed: boolean; // Overlay index numbers
-  showMiddleZone: boolean; // Zone where orange cuts are allowed
-  showThicknessDetection: boolean; // Show wall thickness detection info
-  showLJunctionArrows: boolean; // Show primary/secondary arrows at L-junctions
-  highlightCornerCuts: boolean; // Highlight CORNER_CUT panels with pulsing glow
-  showLCornerOffsets: boolean; // Show offset labels on L-corner panels for calibration
-  showLCornerBoundingBoxes: boolean; // Show bounding boxes of corner panels for collision debug
-  showWallDimensions: boolean; // Show wall dimensions in TOOTH units (exterior-to-exterior, panel thickness, concrete core)
-  showCornerNodes: boolean; // Show exterior/interior intersection nodes at L-corners
-  showCornerNodeLabels: boolean; // Show NÓ EXT / NÓ INT labels
-  showCornerNodeWires: boolean; // Show vertical "fio" lines at corner nodes
+  // Legacy flags kept for compatibility (always true/false defaults)
+  showChains: boolean;
+  showDXFLines: boolean;
+  showHelpers: boolean;
+  showWebs: boolean;
+  showTarugos: boolean;
+  showJunctions: boolean;
+  showGrids: boolean;
+  wireframe: boolean;
+  highFidelityPanels: boolean;
+  showOutlines: boolean;
+  
+  // Debug flags - all removed from UI but kept for type compatibility
+  showSeeds: boolean;
+  showNodeAxes: boolean;
+  showRunSegments: boolean;
+  showIndexFromSeed: boolean;
+  showMiddleZone: boolean;
+  showThicknessDetection: boolean;
+  showLJunctionArrows: boolean;
+  highlightCornerCuts: boolean;
+  showLCornerOffsets: boolean;
+  showLCornerBoundingBoxes: boolean;
+  showWallDimensions: boolean;
+  showCornerNodes: boolean;
+  showCornerNodeLabels: boolean;
+  showCornerNodeWires: boolean;
 }
 
 // Individual corner node offset (per nodeId)

@@ -263,40 +263,38 @@ export default function ProjectEditor() {
     endY: 0
   });
   
-  // Viewer settings
+  // Viewer settings - SIMPLIFIED (removed debug toggles from UI)
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
     // View mode
     viewMode: 'panels',
 
-    // Debug
-    showDXFLines: false, // Segments (gray)
-    showChains: true, // Chains (cyan)
-    showHelpers: false,
-
-    // Layers
+    // Core layers (always visible by default)
     showPanels: true,
     showExteriorPanels: true,
     showInteriorPanels: true,
     showTopos: true,
-    showWebs: false,
-    showTarugos: false,
     showOpenings: true,
-    showJunctions: true,
-    showGrid: true,
-    showGrids: true,
+    showGrid: true, // Base grid always visible
 
     // View / params
     currentRow: 1,
     maxRows: 7,
-    wireframe: false,
-    rebarSpacing: 20,
     concreteThickness: '150',
+    rebarSpacing: 20, // Kept for BOM but not in UI
     
-    // Panel geometry mode
-    highFidelityPanels: false, // Default OFF for performance
-    showOutlines: true, // Show panel outlines by default
+    // Legacy flags with fixed defaults (not exposed in simplified UI)
+    showDXFLines: false,
+    showChains: true,
+    showHelpers: false,
+    showWebs: false,
+    showTarugos: false,
+    showJunctions: true,
+    showGrids: false,
+    wireframe: false,
+    highFidelityPanels: false,
+    showOutlines: true, // Panel outlines always on
     
-    // Debug visualization (panel inspection)
+    // Debug flags - all OFF (removed from UI entirely)
     showSeeds: false,
     showNodeAxes: false,
     showRunSegments: false,
@@ -304,13 +302,13 @@ export default function ProjectEditor() {
     showMiddleZone: false,
     showThicknessDetection: false,
     showLJunctionArrows: false,
-    highlightCornerCuts: true, // Highlight CORNER_CUT panels by default for debugging
-    showLCornerOffsets: true, // Show offset labels on L-corner panels for calibration
-    showLCornerBoundingBoxes: false, // Show bounding boxes of corner panels
-    showWallDimensions: false, // Show wall dimensions in TOOTH units
-    showCornerNodes: true, // Show exterior/interior corner nodes
-    showCornerNodeLabels: true, // Show labels on corner nodes
-    showCornerNodeWires: true, // Show vertical wires on corner nodes
+    highlightCornerCuts: false,
+    showLCornerOffsets: false,
+    showLCornerBoundingBoxes: false,
+    showWallDimensions: false,
+    showCornerNodes: true, // Corner nodes visible (labels + wires)
+    showCornerNodeLabels: true,
+    showCornerNodeWires: true,
   });
   
   // Corner node offsets (individual per nodeId)
