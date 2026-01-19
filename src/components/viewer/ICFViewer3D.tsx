@@ -291,7 +291,9 @@ function BatchedPanelInstances({
     const getIntervalsForRow = (chain: WallChain, row: number) => {
       return getRemainingIntervalsForRow(chain, openings, row);
     };
-    
+
+    console.log('[BatchedPanelInstances] flippedChains', { size: flippedChains?.size ?? 0, ids: Array.from(flippedChains ?? []).slice(0, 10) });
+
     const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow, settings.concreteThickness, flippedChains);
 
     console.log('[BatchedPanelInstances] Generated panels:', {
