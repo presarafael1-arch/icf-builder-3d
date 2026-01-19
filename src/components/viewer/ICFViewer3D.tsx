@@ -43,6 +43,7 @@ const SCALE = 0.001;
 
 // =============================================
 // PANEL COLORS - FIXED HEX VALUES (ALWAYS VISIBLE)
+// EXT panels are rendered with a BLUE tint, INT panels with a PURPLE tint
 // =============================================
 export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
   FULL: '#E6D44A',        // YELLOW - full panel (1200mm)
@@ -51,6 +52,12 @@ export const PANEL_COLORS: Record<PanelType | 'OPENING_VOID', string> = {
   TOPO: '#0F6B3E',        // DARK GREEN - topos
   END_CUT: '#F2992E',     // ORANGE - end termination cuts
   OPENING_VOID: '#FF4444', // RED translucent - opening voids and candidates
+};
+
+// Side-specific color modifiers
+export const SIDE_COLORS = {
+  exterior: '#3B82F6',  // BLUE tint for exterior panels
+  interior: '#A855F7',  // PURPLE tint for interior panels
 };
 
 // Calculate bounding box of WALL SEGMENTS in 3D space
@@ -427,9 +434,15 @@ function BatchedPanelInstances({
     
     const filteredPanelsByType = regroupedByType;
     
+    // Separate panels by side for different coloring
+    const exteriorPanels = filteredPanels.filter(p => p.side === 'exterior');
+    const interiorPanels = filteredPanels.filter(p => p.side === 'interior');
+    
     return {
       panelsByType: filteredPanelsByType,
       allPanels: filteredPanels,
+      exteriorPanels,
+      interiorPanels,
       allTopos: result.allTopos,
       layoutStats: result.stats,
     };
