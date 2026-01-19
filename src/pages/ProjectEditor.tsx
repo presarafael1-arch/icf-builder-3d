@@ -216,7 +216,8 @@ export default function ProjectEditor() {
     removeOverride, 
     lockPanel, 
     unlockPanel, 
-    getOverride 
+    getOverride,
+    migrateOverridesOnChainFlip
   } = usePanelOverrides(id);
   
   // Core concrete thickness (from project settings)
@@ -240,9 +241,19 @@ export default function ProjectEditor() {
   // Chain overrides (side flip)
   const { 
     isFlipped: isChainFlipped, 
-    toggleFlip: toggleChainFlip,
+    toggleFlip: toggleChainFlipBase,
     overrides: chainOverrides 
   } = useChainOverrides(id);
+  
+  // Wrapped toggleChainFlip that also migrates panel overrides
+  // This ensures that when a chain is flipped, all panel overrides for that chain
+  // have their IDs swapped from :ext: to :int: and vice versa
+  const toggleChainFlip = useCallback((chainId: string) => {
+    // First migrate the panel overrides (swap :ext: <-> :int: in IDs)
+    migrateOverridesOnChainFlip(chainId);
+    // Then toggle the chain flip state
+    toggleChainFlipBase(chainId);
+  }, [migrateOverridesOnChainFlip, toggleChainFlipBase]);
   
   // Memoize flippedChains based on the overrides Map content, not the function
   const flippedChains = useMemo(() => {
