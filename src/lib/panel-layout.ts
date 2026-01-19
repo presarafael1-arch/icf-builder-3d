@@ -19,6 +19,7 @@
  */
 
 import { WallChain, ChainNode } from './wall-chains';
+import { getPanelSideFromClassification } from './footprint-detection';
 import * as THREE from 'three';
 import { 
   PANEL_WIDTH, 
@@ -155,7 +156,8 @@ interface EndpointInfo {
 function computeCornerNodes(
   lj: LJunctionInfo,
   chains: WallChain[],
-  concreteThickness: ConcreteThickness = '150'
+  concreteThickness: ConcreteThickness = '150',
+  outerPolygon?: Array<{ x: number; y: number }>
 ): { exteriorNode: CornerNode; interiorNode: CornerNode } {
   // Get the two chains meeting at this L-corner
   const primaryChain = chains.find(c => c.id === lj.primaryChainId);
@@ -170,13 +172,10 @@ function computeCornerNodes(
   }
   
   // Perpendicular offset distance from DXF centerline
-  // Exterior node: 3.5 TOOTH to one side of DXF line
-  // Interior node: 3.5 TOOTH to the OTHER side of DXF line
   const exteriorOffsetMm = 3.5 * TOOTH;
   const interiorOffsetMm = 3.5 * TOOTH;
   
   // Get direction vectors for each arm (pointing AWAY from the junction)
-  // For primary arm: direction from junction toward chain endpoint (away from junction)
   const primaryAtStart = Math.abs(primaryChain.startX - lj.x) < 300 && Math.abs(primaryChain.startY - lj.y) < 300;
   const primaryDir = primaryAtStart 
     ? { x: (primaryChain.endX - primaryChain.startX) / primaryChain.lengthMm, y: (primaryChain.endY - primaryChain.startY) / primaryChain.lengthMm }
@@ -188,21 +187,37 @@ function computeCornerNodes(
     : { x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm, y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm };
   
   // Perpendicular directions (90° CW = "right" side when looking along wall)
-  // perp = (-dy, dx)
   const primaryPerp = { x: -primaryDir.y, y: primaryDir.x };
   const secondaryPerp = { x: -secondaryDir.y, y: secondaryDir.x };
   
   // Determine which perpendicular direction is "exterior" vs "interior"
-  // The EXTERIOR side of an L-corner is the convex (outside) angle
-  // Cross product of primary x secondary tells us the winding
-  const cross = primaryDir.x * secondaryDir.y - primaryDir.y * secondaryDir.x;
+  // Use footprint-based classification if available, otherwise fall back to cross-product heuristic
+  let primaryExtSign = 1;  // +1 = right side, -1 = left side
+  let secondaryExtSign = 1;
   
-  // If cross > 0: CCW winding, so "right" side of primary faces EXTERIOR
-  // If cross < 0: CW winding, so "right" side of primary faces INTERIOR
-  const primaryExtSign = cross > 0 ? -1 : 1;  // -1 = left side, +1 = right side
-  const secondaryExtSign = cross > 0 ? -1 : 1;
+  if (outerPolygon && outerPolygon.length >= 3) {
+    // Use point-in-polygon test: the side that falls OUTSIDE the polygon is exterior
+    const EPS = 150;
+    
+    // Test primary chain: which side is outside?
+    const primaryRightX = lj.x + primaryPerp.x * EPS;
+    const primaryRightY = lj.y + primaryPerp.y * EPS;
+    const primaryRightInside = pointInPolygonSimple(primaryRightX, primaryRightY, outerPolygon);
+    primaryExtSign = primaryRightInside ? -1 : 1; // If right is inside, left is exterior (-1)
+    
+    // Test secondary chain
+    const secondaryRightX = lj.x + secondaryPerp.x * EPS;
+    const secondaryRightY = lj.y + secondaryPerp.y * EPS;
+    const secondaryRightInside = pointInPolygonSimple(secondaryRightX, secondaryRightY, outerPolygon);
+    secondaryExtSign = secondaryRightInside ? -1 : 1;
+  } else {
+    // Fallback: use cross-product based heuristic
+    const cross = primaryDir.x * secondaryDir.y - primaryDir.y * secondaryDir.x;
+    primaryExtSign = cross > 0 ? -1 : 1;
+    secondaryExtSign = cross > 0 ? -1 : 1;
+  }
   
-  // Exterior offset lines: 3.5 TOOTH to exterior side
+  // Exterior offset lines
   const primaryExtOffset = { 
     x: lj.x + primaryPerp.x * exteriorOffsetMm * primaryExtSign, 
     y: lj.y + primaryPerp.y * exteriorOffsetMm * primaryExtSign 
@@ -213,15 +228,12 @@ function computeCornerNodes(
   };
   
   // Find intersection of the two exterior offset lines
-  // Line 1: P1 + t * D1 where P1 = primaryExtOffset, D1 = primaryDir
-  // Line 2: P2 + s * D2 where P2 = secondaryExtOffset, D2 = secondaryDir
-  // Solve: P1 + t*D1 = P2 + s*D2
   const extIntersection = lineIntersection(
     primaryExtOffset.x, primaryExtOffset.y, primaryDir.x, primaryDir.y,
     secondaryExtOffset.x, secondaryExtOffset.y, secondaryDir.x, secondaryDir.y
   );
   
-  // Interior offset lines: 3.5 TOOTH to the OPPOSITE side (interior)
+  // Interior offset lines (opposite side)
   const primaryIntOffset = { 
     x: lj.x + primaryPerp.x * interiorOffsetMm * (-primaryExtSign), 
     y: lj.y + primaryPerp.y * interiorOffsetMm * (-primaryExtSign) 
@@ -240,14 +252,41 @@ function computeCornerNodes(
     dxf: { x: lj.x.toFixed(1), y: lj.y.toFixed(1) },
     exterior: { x: extIntersection.x.toFixed(1), y: extIntersection.y.toFixed(1) },
     interior: { x: intIntersection.x.toFixed(1), y: intIntersection.y.toFixed(1) },
-    cross: cross.toFixed(3),
     primaryExtSign,
+    secondaryExtSign,
+    usedFootprint: !!(outerPolygon && outerPolygon.length >= 3),
   });
   
   return {
     exteriorNode: { id: `${lj.nodeId}-ext`, x: extIntersection.x, y: extIntersection.y, type: 'exterior', lJunctionId: lj.nodeId },
     interiorNode: { id: `${lj.nodeId}-int`, x: intIntersection.x, y: intIntersection.y, type: 'interior', lJunctionId: lj.nodeId },
   };
+}
+
+/**
+ * Simple point-in-polygon test (ray casting)
+ */
+function pointInPolygonSimple(
+  px: number, 
+  py: number, 
+  polygon: Array<{ x: number; y: number }>
+): boolean {
+  if (polygon.length < 3) return false;
+  
+  let inside = false;
+  const n = polygon.length;
+  
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    
+    if (((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  
+  return inside;
 }
 
 /**
@@ -895,14 +934,52 @@ export function layoutPanelsForChainWithJunctions(
   // Slot counter for stable IDs
   let slotCounter = 0;
   
-  // Apply chain-level flip if this chain is in the flipped set
-  // This allows manual override of the exterior/interior classification
-  const isChainFlipped = flippedChains.has(chain.id);
-  const effectiveSide: WallSide = isChainFlipped 
-    ? (side === 'exterior' ? 'interior' : 'exterior')
-    : side;
+  // Determine the actual exterior/interior side based on:
+  // 1. Chain's footprint-based classification (AUTO)
+  // 2. Manual flip override (takes priority)
+  // 
+  // The 'side' parameter tells us which offset direction we're generating (positive or negative perp)
+  // We need to map this to actual exterior/interior based on the chain's classification
   
-  // Side short code for IDs - uses EFFECTIVE side (after flip)
+  const isChainFlipped = flippedChains.has(chain.id);
+  
+  // Determine if positive perpendicular offset means exterior or interior
+  // Based on chain.sideClassification from footprint detection:
+  // - LEFT_EXT: left side (negative perp) is exterior, right (positive perp) is interior
+  // - RIGHT_EXT: right side (positive perp) is exterior, left (negative perp) is interior
+  // - BOTH_INT / UNRESOLVED: default to positive = exterior (legacy behavior)
+  let positiveIsExterior = true; // Default: positive perpendicular = exterior
+  
+  if (chain.sideClassification === 'LEFT_EXT') {
+    positiveIsExterior = false; // Positive perp is INTERIOR (right side)
+  } else if (chain.sideClassification === 'RIGHT_EXT') {
+    positiveIsExterior = true; // Positive perp is EXTERIOR (right side)
+  }
+  // BOTH_INT and UNRESOLVED keep default
+  
+  // Apply manual flip override
+  if (isChainFlipped) {
+    positiveIsExterior = !positiveIsExterior;
+  }
+  
+  // Now determine the effectiveSide for this panel based on the 'side' parameter
+  // 'side' param: 'exterior' means we want to place panel on exterior, 'interior' for interior
+  // We need to translate this to actual offset direction (positive or negative perp)
+  // and determine the final effectiveSide for the ID
+  
+  // If we're asked to place an "exterior" panel:
+  // - If positiveIsExterior, we offset positive and it IS exterior
+  // - If !positiveIsExterior, we offset positive but it's actually interior
+  //   So we need to offset negative to get exterior
+  
+  // Actually, let's simplify: the 'side' parameter directly becomes effectiveSide,
+  // but we need to adjust which perpendicular direction to use in createPanel
+  const effectiveSide: WallSide = side; // Keep the requested side as-is
+  
+  // But we'll track whether we need to invert the offset direction
+  const invertOffset = !positiveIsExterior;
+  
+  // Side short code for IDs - uses the requested side
   const sideCode = effectiveSide === 'exterior' ? 'ext' : 'int';
   
   // Helper to determine seed origin
@@ -998,15 +1075,22 @@ export function layoutPanelsForChainWithJunctions(
     const panelCenterOffsetTooth = wallHalfTooth - 0.5; // Subtract half of foam thickness (0.5 TOOTH)
     const panelCenterOffsetMm = panelCenterOffsetTooth * TOOTH;
     
+    // Determine offset direction based on:
+    // - effectiveSide: which side (exterior/interior) we want to place the panel
+    // - invertOffset: whether the footprint classification says to invert the default direction
+    //
+    // Default convention: exterior = positive perp, interior = negative perp
+    // If invertOffset is true, we flip this: exterior = negative perp, interior = positive perp
+    
+    let offsetSign: number;
     if (effectiveSide === 'exterior') {
-      // Exterior panel: offset to the positive perpendicular side (outside of building)
-      posX += perpX * panelCenterOffsetMm;
-      posZ += perpZ * panelCenterOffsetMm;
+      offsetSign = invertOffset ? -1 : 1;
     } else {
-      // Interior panel: offset to the negative perpendicular side (inside of building)
-      posX += perpX * (-panelCenterOffsetMm);
-      posZ += perpZ * (-panelCenterOffsetMm);
+      offsetSign = invertOffset ? 1 : -1;
     }
+    
+    posX += perpX * panelCenterOffsetMm * offsetSign;
+    posZ += perpZ * panelCenterOffsetMm * offsetSign;
 
     const matrix = new THREE.Matrix4();
     matrix.compose(
