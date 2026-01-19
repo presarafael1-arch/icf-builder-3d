@@ -175,13 +175,13 @@ export function NewProjectForm() {
             </div>
             <Slider
               value={[formData.wallHeightMm]}
-              min={800}
+              min={0}
               max={4000}
-              step={100}
+              step={50}
               onValueChange={([value]) => setFormData({ ...formData, wallHeightMm: value })}
             />
             <div className="flex justify-between text-xs text-muted-foreground font-mono">
-              <span>800 mm</span>
+              <span>0 mm</span>
               <span>4000 mm</span>
             </div>
           </div>
