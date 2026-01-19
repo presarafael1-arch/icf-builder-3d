@@ -207,7 +207,8 @@ function BatchedPanelInstances({
   onGeometryMetaChange,
   onLayoutStatsChange,
   onPanelDataReady,
-}: { 
+  flippedChains = new Set(),
+}: {
   chains: WallChain[];
   settings: ViewerSettings; 
   openings: OpeningData[];
@@ -229,6 +230,7 @@ function BatchedPanelInstances({
   }) => void;
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
+  flippedChains?: Set<string>;
 }) {
   // Selection mesh ref for highlight
   const selectionMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -290,7 +292,7 @@ function BatchedPanelInstances({
       return getRemainingIntervalsForRow(chain, openings, row);
     };
     
-    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow, settings.concreteThickness);
+    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow, settings.concreteThickness, flippedChains);
 
     console.log('[BatchedPanelInstances] Generated panels:', {
       FULL: result.panelsByType.FULL.length,
@@ -1356,6 +1358,8 @@ interface SceneProps {
   selectedCornerNode?: string | null;
   onSelectCornerNode?: (nodeId: string | null) => void;
   cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>;
+  // Chain overrides (side flip)
+  flippedChains?: Set<string>;
 }
 
 function Scene({ 
@@ -1376,6 +1380,7 @@ function Scene({
   selectedCornerNode,
   onSelectCornerNode,
   cornerNodeOffsets,
+  flippedChains = new Set(),
 }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
@@ -1481,6 +1486,7 @@ function Scene({
           onGeometryMetaChange={onGeometryMetaChange}
           onLayoutStatsChange={onLayoutStatsChange}
           onPanelDataReady={onPanelDataReady}
+          flippedChains={flippedChains}
         />
       )}
 
@@ -1527,6 +1533,8 @@ interface ICFViewer3DProps {
   selectedCornerNode?: string | null;
   onSelectCornerNode?: (nodeId: string | null) => void;
   cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>;
+  // Chain overrides (side flip)
+  flippedChains?: Set<string>;
 }
 
 export function ICFViewer3D({ 
@@ -1543,6 +1551,7 @@ export function ICFViewer3D({
   selectedCornerNode,
   onSelectCornerNode,
   cornerNodeOffsets,
+  flippedChains = new Set(),
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
@@ -1596,6 +1605,7 @@ export function ICFViewer3D({
           selectedCornerNode={selectedCornerNode}
           onSelectCornerNode={onSelectCornerNode}
           cornerNodeOffsets={cornerNodeOffsets}
+          flippedChains={flippedChains}
         />
       </Canvas>
 

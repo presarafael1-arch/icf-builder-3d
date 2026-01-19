@@ -877,7 +877,8 @@ export function layoutPanelsForChainWithJunctions(
   tJunctions: TJunctionInfo[],
   freeEnds: EndpointInfo[],
   side: WallSide = 'exterior',
-  concreteThickness: ConcreteThickness = '150'
+  concreteThickness: ConcreteThickness = '150',
+  flippedChains: Set<string> = new Set()
 ): { panels: ClassifiedPanel[]; topos: TopoPlacement[] } {
   const panels: ClassifiedPanel[] = [];
   const topos: TopoPlacement[] = [];
@@ -966,9 +967,12 @@ export function layoutPanelsForChainWithJunctions(
     const perpX = -dirY;
     const perpZ = dirX;
     
-    // NOTE: For this debugging pass we do NOT auto-flip exterior/interior at corners.
-    // The caller will generate only the exterior wall, so the side is stable.
-    const effectiveSide = side;
+    // Apply chain-level flip if this chain is in the flipped set
+    // This allows manual override of the exterior/interior classification
+    const isChainFlipped = flippedChains.has(chain.id);
+    const effectiveSide: WallSide = isChainFlipped 
+      ? (side === 'exterior' ? 'interior' : 'exterior')
+      : side;
     
     // Panel positioning perpendicular to wall:
     // Wall total thickness = 4 TOOTH (150mm) or 5 TOOTH (220mm)
@@ -1288,7 +1292,8 @@ export function generatePanelLayout(
   visibleRows: number,
   maxRows: number,
   getIntervalsForRow: (chain: WallChain, row: number) => { start: number; end: number }[],
-  concreteThickness: ConcreteThickness = '150'
+  concreteThickness: ConcreteThickness = '150',
+  flippedChains: Set<string> = new Set()
 ): {
   panelsByType: Record<PanelType, ClassifiedPanel[]>;
   allPanels: ClassifiedPanel[];
@@ -1357,7 +1362,8 @@ export function generatePanelLayout(
               tJunctions,
               freeEnds,
               side,
-              concreteThickness
+              concreteThickness,
+              flippedChains
             );
             
             panels.forEach(panel => {
