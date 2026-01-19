@@ -263,12 +263,13 @@ export interface ViewerSettings {
   showCornerNodes: boolean; // Show exterior/interior intersection nodes at L-corners
   showCornerNodeLabels: boolean; // Show NÓ EXT / NÓ INT labels
   showCornerNodeWires: boolean; // Show vertical "fio" lines at corner nodes
-  
-  // Manual offset calibration for corner nodes (in TOOTH units)
-  cornerNodeExtOffsetX: number; // Exterior node X offset (TOOTH)
-  cornerNodeExtOffsetY: number; // Exterior node Y offset (TOOTH)  
-  cornerNodeIntOffsetX: number; // Interior node X offset (TOOTH)
-  cornerNodeIntOffsetY: number; // Interior node Y offset (TOOTH)
+}
+
+// Individual corner node offset (per nodeId)
+export interface CornerNodeOffset {
+  nodeId: string;       // Full node ID: e.g. "node-abc123-ext" or "node-abc123-int"
+  offsetX: number;      // X offset in TOOTH units (0.5 step)
+  offsetY: number;      // Y offset in TOOTH units (0.5 step)
 }
 
 // DXF parsing result

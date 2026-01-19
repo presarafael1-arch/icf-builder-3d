@@ -1352,9 +1352,10 @@ interface SceneProps {
     instancePosRangeM?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
   }) => void;
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
-  // Corner node selection
+  // Corner node selection and offsets
   selectedCornerNode?: string | null;
   onSelectCornerNode?: (nodeId: string | null) => void;
+  cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>;
 }
 
 function Scene({ 
@@ -1374,6 +1375,7 @@ function Scene({
   onLayoutStatsChange,
   selectedCornerNode,
   onSelectCornerNode,
+  cornerNodeOffsets,
 }: SceneProps) {
   const controlsRef = useRef<any>(null);
 
@@ -1502,6 +1504,7 @@ function Scene({
         settings={settings} 
         selectedCornerNode={selectedCornerNode}
         onSelectCornerNode={onSelectCornerNode}
+        cornerNodeOffsets={cornerNodeOffsets}
       />
 
       <Environment preset="city" />
@@ -1520,9 +1523,10 @@ interface ICFViewer3DProps {
   onPanelClick?: (meshType: string, instanceId: number, panelId: string) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   className?: string;
-  // Corner node selection
+  // Corner node selection and offsets
   selectedCornerNode?: string | null;
   onSelectCornerNode?: (nodeId: string | null) => void;
+  cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>;
 }
 
 export function ICFViewer3D({ 
@@ -1538,6 +1542,7 @@ export function ICFViewer3D({
   className = '',
   selectedCornerNode,
   onSelectCornerNode,
+  cornerNodeOffsets,
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
@@ -1590,6 +1595,7 @@ export function ICFViewer3D({
           onLayoutStatsChange={setLayoutStats}
           selectedCornerNode={selectedCornerNode}
           onSelectCornerNode={onSelectCornerNode}
+          cornerNodeOffsets={cornerNodeOffsets}
         />
       </Canvas>
 

@@ -96,12 +96,6 @@ export default function ProjectEstimate() {
     showCornerNodes: false,
     showCornerNodeLabels: false,
     showCornerNodeWires: false,
-    
-    // Manual offset calibration for corner nodes (in TOOTH units)
-    cornerNodeExtOffsetX: 0,
-    cornerNodeExtOffsetY: 0,
-    cornerNodeIntOffsetX: 0,
-    cornerNodeIntOffsetY: 0,
   });
   
   useEffect(() => {
