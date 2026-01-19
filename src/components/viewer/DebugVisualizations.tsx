@@ -264,12 +264,18 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
               </line>
 
               <group position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}>
-                {/* Clickable sphere */}
+                {/* Invisible larger hitbox for easier clicking */}
                 <mesh 
-                  onClick={(e) => handleNodeClick(extNodeId, e)}
+                  onClick={(e) => { e.stopPropagation(); handleNodeClick(extNodeId, e); }}
                   onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
-                  onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+                  onPointerOut={(e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; }}
                 >
+                  <sphereGeometry args={[0.25, 16, 16]} />
+                  <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+                </mesh>
+                
+                {/* Visible sphere */}
+                <mesh>
                   <sphereGeometry args={[isExtSelected ? 0.18 : 0.12, 16, 16]} />
                   <meshStandardMaterial 
                     color={isExtSelected ? "#FFFFFF" : "#FF0000"} 
@@ -361,12 +367,18 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
               </line>
 
               <group position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}>
-                {/* Clickable sphere */}
+                {/* Invisible larger hitbox for easier clicking */}
                 <mesh 
-                  onClick={(e) => handleNodeClick(intNodeId, e)}
+                  onClick={(e) => { e.stopPropagation(); handleNodeClick(intNodeId, e); }}
                   onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
-                  onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+                  onPointerOut={(e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; }}
                 >
+                  <sphereGeometry args={[0.25, 16, 16]} />
+                  <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+                </mesh>
+                
+                {/* Visible sphere */}
+                <mesh>
                   <sphereGeometry args={[isIntSelected ? 0.18 : 0.12, 16, 16]} />
                   <meshStandardMaterial 
                     color={isIntSelected ? "#FFFFFF" : "#FFCC00"} 
