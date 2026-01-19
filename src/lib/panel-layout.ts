@@ -692,27 +692,30 @@ function getEndCap(
   switch (endpointInfo.endType) {
     case 'L': {
       // =============================================
-      // L-CORNER (chain END) - EXTERIOR FULL CORNER
-      // 
-      // User spec (from image):
-      // - PRIMARY ARM (exterior side): offset 1.5 TOOTH for OUTSIDE
-      // - SECONDARY ARM (interior side): offset 2.5 TOOTH for INSIDE
-      // 
-      // For END, offset is applied from the END of the chain toward the vertex.
-      // Negative offset = panels extend past the vertex (toward corner).
-      // Positive offset = panels stop before the vertex.
+      // L-CORNER (chain END) - apply offsets in a way that is CONSISTENT in world-space
+      // regardless of chain direction.
+      //
+      // Because this is the END of the chain, the chain parameter direction is opposite
+      // of the "outward from vertex" direction. So we INVERT the sign compared to START.
+      //
+      // Desired world behavior:
+      // - PRIMARY arm: +1.5T away from the vertex
+      // - SECONDARY arm: -2.5T toward/through the vertex
+      //
+      // Mapping to our end-cap math (rightEdge = intervalEnd - startOffsetMm):
+      // invert signs vs START.
       // =============================================
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-      
+
       if (endpointInfo.isPrimaryAtEnd) {
-        // PRIMARY ARM: offset 1.5 TOOTH para FORA (outward from vertex)
-        startOffsetMm = 1.5 * TOOTH;
-        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → PRIMARY offset=+1.5T (${startOffsetMm.toFixed(1)}mm)`);
+        // PRIMARY arm at END: invert (+1.5T at start) -> -1.5T here
+        startOffsetMm = -1.5 * TOOTH;
+        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → PRIMARY offset=-1.5T (${startOffsetMm.toFixed(1)}mm)`);
       } else {
-        // SECONDARY ARM: offset 2.5 TOOTH para DENTRO (inward, negative)
-        startOffsetMm = -2.5 * TOOTH;
-        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → SECONDARY offset=-2.5T (${startOffsetMm.toFixed(1)}mm)`);
+        // SECONDARY arm at END: invert (-2.5T at start) -> +2.5T here
+        startOffsetMm = 2.5 * TOOTH;
+        console.log(`[L-END] chain=${chain.id.slice(0,8)} side=${side} row=${row} → SECONDARY offset=+2.5T (${startOffsetMm.toFixed(1)}mm)`);
       }
       break;
     }
