@@ -169,11 +169,11 @@ function computeCornerNodes(
     };
   }
   
-  // Perpendicular offset distance from DXF centerline to exterior/interior panel centers
-  // 150mm wall: 1.5 TOOTH offset to panel center
-  // 220mm wall: 2 TOOTH offset to panel center
-  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
-  const panelCenterOffsetMm = (wallTotalTooth / 2 - 0.5) * TOOTH;
+  // Perpendicular offset distance from DXF centerline
+  // Exterior node: 3.5 TOOTH to one side of DXF line
+  // Interior node: 3.5 TOOTH to the OTHER side of DXF line
+  const exteriorOffsetMm = 3.5 * TOOTH;
+  const interiorOffsetMm = 3.5 * TOOTH;
   
   // Get direction vectors for each arm (pointing AWAY from the junction)
   // For primary arm: direction from junction toward chain endpoint (away from junction)
@@ -202,16 +202,14 @@ function computeCornerNodes(
   const primaryExtSign = cross > 0 ? -1 : 1;  // -1 = left side, +1 = right side
   const secondaryExtSign = cross > 0 ? -1 : 1;
   
-  // Exterior offset lines:
-  // Primary arm exterior line passes through (lj.x + primaryPerp.x * offset * sign, lj.y + primaryPerp.y * offset * sign)
-  // with direction primaryDir
+  // Exterior offset lines: 3.5 TOOTH to exterior side
   const primaryExtOffset = { 
-    x: lj.x + primaryPerp.x * panelCenterOffsetMm * primaryExtSign, 
-    y: lj.y + primaryPerp.y * panelCenterOffsetMm * primaryExtSign 
+    x: lj.x + primaryPerp.x * exteriorOffsetMm * primaryExtSign, 
+    y: lj.y + primaryPerp.y * exteriorOffsetMm * primaryExtSign 
   };
   const secondaryExtOffset = { 
-    x: lj.x + secondaryPerp.x * panelCenterOffsetMm * secondaryExtSign, 
-    y: lj.y + secondaryPerp.y * panelCenterOffsetMm * secondaryExtSign 
+    x: lj.x + secondaryPerp.x * exteriorOffsetMm * secondaryExtSign, 
+    y: lj.y + secondaryPerp.y * exteriorOffsetMm * secondaryExtSign 
   };
   
   // Find intersection of the two exterior offset lines
@@ -223,14 +221,14 @@ function computeCornerNodes(
     secondaryExtOffset.x, secondaryExtOffset.y, secondaryDir.x, secondaryDir.y
   );
   
-  // Interior offset lines (opposite sign)
+  // Interior offset lines: 3.5 TOOTH to the OPPOSITE side (interior)
   const primaryIntOffset = { 
-    x: lj.x + primaryPerp.x * panelCenterOffsetMm * (-primaryExtSign), 
-    y: lj.y + primaryPerp.y * panelCenterOffsetMm * (-primaryExtSign) 
+    x: lj.x + primaryPerp.x * interiorOffsetMm * (-primaryExtSign), 
+    y: lj.y + primaryPerp.y * interiorOffsetMm * (-primaryExtSign) 
   };
   const secondaryIntOffset = { 
-    x: lj.x + secondaryPerp.x * panelCenterOffsetMm * (-secondaryExtSign), 
-    y: lj.y + secondaryPerp.y * panelCenterOffsetMm * (-secondaryExtSign) 
+    x: lj.x + secondaryPerp.x * interiorOffsetMm * (-secondaryExtSign), 
+    y: lj.y + secondaryPerp.y * interiorOffsetMm * (-secondaryExtSign) 
   };
   
   const intIntersection = lineIntersection(
