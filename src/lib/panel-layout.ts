@@ -196,7 +196,16 @@ function computeCornerNodes(
   
   // Determine which perpendicular direction is "exterior" vs "interior"
   // Use footprint-based classification if available, otherwise fall back to cross-product heuristic
-  let primaryExtSign = 1;  // +1 = right side, -1 = left side
+  // 
+  // NOTE: Our perpendicular convention is (-dirY, dirX) which rotates 90° CCW from the direction.
+  // This is the "LEFT" side when looking along the wall direction.
+  // Footprint detection uses: Left = (-dirY, dirX), Right = (dirY, -dirX)
+  // So our primaryPerp is equivalent to footprint's "LEFT" direction.
+  //
+  // When footprint says LEFT_EXT, our perpendicular points to exterior (+1)
+  // When footprint says RIGHT_EXT, our perpendicular points to interior (-1 for exterior)
+  
+  let primaryExtSign = 1;  // +1 = our perpendicular direction, -1 = opposite direction
   let secondaryExtSign = 1;
   
   if (outerPolygon && outerPolygon.length >= 3) {
@@ -204,16 +213,19 @@ function computeCornerNodes(
     const EPS = 150;
     
     // Test primary chain: which side is outside?
-    const primaryRightX = lj.x + primaryPerp.x * EPS;
-    const primaryRightY = lj.y + primaryPerp.y * EPS;
-    const primaryRightInside = pointInPolygonSimple(primaryRightX, primaryRightY, outerPolygon);
-    primaryExtSign = primaryRightInside ? -1 : 1; // If right is inside, left is exterior (-1)
+    // Our perpendicular is "left" side in footprint terms
+    const primaryLeftX = lj.x + primaryPerp.x * EPS;
+    const primaryLeftY = lj.y + primaryPerp.y * EPS;
+    const primaryLeftInside = pointInPolygonSimple(primaryLeftX, primaryLeftY, outerPolygon);
+    // If left is inside (interior), exterior is opposite direction (-1)
+    // If left is outside (exterior), use positive direction (+1)
+    primaryExtSign = primaryLeftInside ? -1 : 1;
     
     // Test secondary chain
-    const secondaryRightX = lj.x + secondaryPerp.x * EPS;
-    const secondaryRightY = lj.y + secondaryPerp.y * EPS;
-    const secondaryRightInside = pointInPolygonSimple(secondaryRightX, secondaryRightY, outerPolygon);
-    secondaryExtSign = secondaryRightInside ? -1 : 1;
+    const secondaryLeftX = lj.x + secondaryPerp.x * EPS;
+    const secondaryLeftY = lj.y + secondaryPerp.y * EPS;
+    const secondaryLeftInside = pointInPolygonSimple(secondaryLeftX, secondaryLeftY, outerPolygon);
+    secondaryExtSign = secondaryLeftInside ? -1 : 1;
   } else {
     // Fallback: use cross-product based heuristic
     const cross = primaryDir.x * secondaryDir.y - primaryDir.y * secondaryDir.x;
@@ -952,12 +964,24 @@ export function layoutPanelsForChainWithJunctions(
   // - LEFT_EXT: left side (negative perp) is exterior, right (positive perp) is interior
   // - RIGHT_EXT: right side (positive perp) is exterior, left (negative perp) is interior
   // - BOTH_INT / UNRESOLVED: default to positive = exterior (legacy behavior)
+  // CRITICAL: Footprint detection uses a different perpendicular convention than panel placement!
+  // Footprint detection: Right = (dirY, -dirX), Left = (-dirY, dirX)
+  // Panel placement: perpX/perpZ = (-dirY, dirX) which is actually LEFT in footprint terms
+  //
+  // So when footprint says RIGHT_EXT (right side is exterior), our "positive" perp is actually LEFT,
+  // which means our positive perp goes to INTERIOR.
+  // When footprint says LEFT_EXT (left side is exterior), our "positive" perp IS left = exterior.
+  //
+  // This is the INVERSION that was causing blue stripes on interior and white on exterior!
+  
   let positiveIsExterior = true; // Default: positive perpendicular = exterior
   
   if (chain.sideClassification === 'LEFT_EXT') {
-    positiveIsExterior = false; // Positive perp is INTERIOR (right side)
+    // Left side is exterior - our perpendicular (-dirY, dirX) IS the left side = exterior
+    positiveIsExterior = true; // Our positive perp points to exterior
   } else if (chain.sideClassification === 'RIGHT_EXT') {
-    positiveIsExterior = true; // Positive perp is EXTERIOR (right side)
+    // Right side is exterior - our perpendicular (-dirY, dirX) is left = interior
+    positiveIsExterior = false; // Our positive perp points to interior
   }
   // BOTH_INT and UNRESOLVED keep default
   
