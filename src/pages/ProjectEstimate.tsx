@@ -102,6 +102,7 @@ export default function ProjectEstimate() {
     // Footprint debug
     showFootprint: false,
     showFootprintStats: false,
+    highlightUnresolved: false, // Highlight unresolved chains
   });
   
   useEffect(() => {

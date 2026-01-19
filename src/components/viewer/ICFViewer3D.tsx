@@ -225,6 +225,70 @@ function FootprintVisualization({ walls }: { walls: WallSegment[] }) {
   );
 }
 
+// Highlight UNRESOLVED panels with a magenta glow overlay
+interface UnresolvedHighlightsProps {
+  allPanels: ClassifiedPanel[];
+  concreteThickness: ConcreteThickness;
+  visible?: boolean;
+}
+
+function UnresolvedHighlights({ allPanels, concreteThickness, visible = true }: UnresolvedHighlightsProps) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  
+  // Filter only UNRESOLVED panels
+  const unresolvedPanels = useMemo(() => 
+    allPanels.filter(p => p.chainClassification === 'UNRESOLVED'),
+  [allPanels]);
+  
+  // Create matrices with slight scale-up for glow effect
+  const matrices = useMemo(() => {
+    return unresolvedPanels.map(panel => {
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      panel.matrix.decompose(pos, quat, scale);
+      // Scale up slightly for highlight visibility
+      scale.multiplyScalar(1.02);
+      const matrix = new THREE.Matrix4();
+      matrix.compose(pos, quat, scale);
+      return matrix;
+    });
+  }, [unresolvedPanels]);
+  
+  useEffect(() => {
+    if (!meshRef.current || matrices.length === 0) return;
+    matrices.forEach((matrix, i) => {
+      meshRef.current!.setMatrixAt(i, matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [matrices]);
+  
+  if (!visible || unresolvedPanels.length === 0) return null;
+  
+  const glowGeometry = useMemo(() => 
+    new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE),
+  []);
+  
+  return (
+    <instancedMesh 
+      ref={meshRef} 
+      args={[glowGeometry, undefined, unresolvedPanels.length]} 
+      frustumCulled={false}
+      raycast={() => null} // Non-interactive
+    >
+      <meshStandardMaterial 
+        color="#FF00FF"
+        opacity={0.5} 
+        transparent 
+        side={THREE.DoubleSide}
+        depthWrite={false}
+        emissive="#FF00FF"
+        emissiveIntensity={0.8}
+      />
+    </instancedMesh>
+  );
+}
+
 // Footprint stats overlay component (HTML overlay)
 interface FootprintStatsOverlayProps {
   walls: WallSegment[];
@@ -240,6 +304,7 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   const { exteriorChains, interiorPartitions, unresolved } = footprint.stats;
   const total = exteriorChains + interiorPartitions + unresolved;
   const hasUnresolved = unresolved > 0;
+  const unresolvedIds = footprint.unresolvedChainIds || [];
   
   return (
     <div className="absolute top-16 left-4 z-20 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-2 shadow-lg max-w-xs">
@@ -262,24 +327,32 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
       <div className="border-t border-border pt-2 space-y-1">
         <div className="font-medium text-foreground mb-1">Classificação Chains:</div>
         <div className="flex justify-between">
-          <span className="text-blue-400">⬤ Exterior (perímetro):</span>
+          <span className="text-blue-400">⬤ Perímetro (EXT/INT):</span>
           <span className="font-mono">{exteriorChains}/{total}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-purple-400">⬤ Partições (interior):</span>
+          <span className="text-purple-400">⬤ Partições (INT/INT):</span>
           <span className="font-mono">{interiorPartitions}/{total}</span>
         </div>
-        {hasUnresolved && (
-          <div className="flex justify-between text-orange-400">
-            <span>⚠ Não resolvidas:</span>
-            <span className="font-mono">{unresolved}/{total}</span>
-          </div>
-        )}
+        <div className={`flex justify-between ${hasUnresolved ? 'text-orange-400' : 'text-muted-foreground'}`}>
+          <span>{hasUnresolved ? '⚠' : '⬤'} Não resolvidas:</span>
+          <span className="font-mono">{unresolved}/{total}</span>
+        </div>
       </div>
       
       {hasUnresolved && (
-        <div className="border-t border-border pt-2 text-orange-400/80 text-[10px]">
-          Chains não resolvidas podem indicar geometria aberta ou segmentos fora do contorno.
+        <div className="border-t border-border pt-2 space-y-1">
+          <div className="text-orange-400 text-[11px] font-medium">Chains não resolvidas:</div>
+          <div className="flex flex-wrap gap-1">
+            {unresolvedIds.map(id => (
+              <span key={id} className="bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                {id}
+              </span>
+            ))}
+          </div>
+          <div className="text-orange-400/70 text-[10px] mt-1">
+            Desligar "Não resolvidas" na Visibilidade para localizar.
+          </div>
         </div>
       )}
     </div>
@@ -911,6 +984,13 @@ function BatchedPanelInstances({
         allPanels={allPanels} 
         concreteThickness={settings.concreteThickness}
         visible={settings.showSideStripes}
+      />
+
+      {/* Highlight UNRESOLVED panels when toggle is on (magenta glow overlay) */}
+      <UnresolvedHighlights 
+        allPanels={allPanels} 
+        concreteThickness={settings.concreteThickness}
+        visible={settings.highlightUnresolved}
       />
     </>
   );
