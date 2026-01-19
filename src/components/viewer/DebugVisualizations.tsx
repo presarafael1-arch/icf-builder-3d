@@ -3,13 +3,14 @@
  * 
  * Shows ONLY:
  * - Corner nodes (L-junction nodes) with Labels and Wires
+ * - Nodes are rotated 90° relative to the DXF intersection axis (local wall axis)
  */
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { ChainsResult } from '@/lib/wall-chains';
-import { detectLJunctions } from '@/lib/panel-layout';
+import { detectLJunctions, LJunctionInfo } from '@/lib/panel-layout';
 import { PANEL_HEIGHT, ViewerSettings, TOOTH } from '@/types/icf';
 
 // Scale factor: mm to meters
@@ -22,6 +23,41 @@ interface DebugVisualizationsProps {
   onSelectCornerNode?: (nodeId: string | null) => void;
   cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>;
   flippedChains?: Set<string>;
+}
+
+/**
+ * Calculate the reference direction at an L-junction for rotating the node marker group.
+ * Uses the average direction of the two wall arms meeting at the junction.
+ */
+function calculateNodeRotation(lj: LJunctionInfo, chains: ChainsResult['chains']): number {
+  // Get the two chains meeting at this L-corner
+  const primaryChain = chains.find(c => c.id === lj.primaryChainId);
+  const secondaryChain = chains.find(c => c.id === lj.secondaryChainId);
+  
+  if (!primaryChain || !secondaryChain) {
+    return 0;
+  }
+  
+  // Get direction vectors pointing AWAY from the junction for each arm
+  const primaryAtStart = Math.abs(primaryChain.startX - lj.x) < 300 && Math.abs(primaryChain.startY - lj.y) < 300;
+  const primaryDir = primaryAtStart 
+    ? { x: (primaryChain.endX - primaryChain.startX) / primaryChain.lengthMm, y: (primaryChain.endY - primaryChain.startY) / primaryChain.lengthMm }
+    : { x: (primaryChain.startX - primaryChain.endX) / primaryChain.lengthMm, y: (primaryChain.startY - primaryChain.endY) / primaryChain.lengthMm };
+  
+  const secondaryAtStart = Math.abs(secondaryChain.startX - lj.x) < 300 && Math.abs(secondaryChain.startY - lj.y) < 300;
+  const secondaryDir = secondaryAtStart
+    ? { x: (secondaryChain.endX - secondaryChain.startX) / secondaryChain.lengthMm, y: (secondaryChain.endY - secondaryChain.startY) / secondaryChain.lengthMm }
+    : { x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm, y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm };
+  
+  // Use the longer chain's direction as the reference axis
+  const primaryLen = primaryChain.lengthMm;
+  const secondaryLen = secondaryChain.lengthMm;
+  
+  const refDir = primaryLen >= secondaryLen ? primaryDir : secondaryDir;
+  
+  // Calculate angle and add 90° to rotate the group perpendicular to the wall axis
+  const angle = Math.atan2(refDir.y, refDir.x);
+  return angle + Math.PI / 2;
 }
 
 // Corner nodes visualization - shows exterior and interior intersection points
@@ -79,10 +115,16 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
         const isExtSelected = selectedCornerNode === extNodeId;
         const isIntSelected = selectedCornerNode === intNodeId;
 
+        // Calculate rotation for the entire node marker group (90° perpendicular to wall axis)
+        const groupRotation = calculateNodeRotation(lj, chains);
+
         return (
           <group key={lj.nodeId}>
-            {/* EXTERIOR node */}
-            <group>
+            {/* EXTERIOR node - entire group rotated relative to wall axis */}
+            <group 
+              position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}
+              rotation={[0, -groupRotation, 0]}
+            >
               {showWires && (
                 <line key={`ext-wire-${lj.nodeId}-${extNode.x}-${extNode.y}`}>
                   <bufferGeometry>
@@ -90,8 +132,8 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                       attach="attributes-position"
                       count={2}
                       array={new Float32Array([
-                        extNode.x * SCALE, yBase, extNode.y * SCALE,
-                        extNode.x * SCALE, yTop, extNode.y * SCALE,
+                        0, -(yTop - yBase), 0,
+                        0, 0, 0,
                       ])}
                       itemSize={3}
                     />
@@ -104,89 +146,93 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                 </line>
               )}
 
-              <line key={`ext-conn-${lj.nodeId}-${extNode.x}-${extNode.y}`}>
-                <bufferGeometry>
-                  <bufferAttribute
-                    attach="attributes-position"
-                    count={2}
-                    array={new Float32Array([
-                      dxfPos[0], dxfPos[1], dxfPos[2],
-                      extNode.x * SCALE, yBase, extNode.y * SCALE,
-                    ])}
-                    itemSize={3}
-                  />
-                </bufferGeometry>
-                <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} depthTest={false} />
-              </line>
-
-              <group position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}>
-                <mesh 
-                  onClick={(e) => { e.stopPropagation(); handleNodeClick(extNodeId, e); }}
-                  onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
-                  onPointerOut={(e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; }}
-                >
-                  <sphereGeometry args={[0.25, 16, 16]} />
-                  <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-                </mesh>
-                
-                <mesh>
-                  <sphereGeometry args={[isExtSelected ? 0.18 : 0.12, 16, 16]} />
-                  <meshStandardMaterial 
-                    color={isExtSelected ? "#FFFFFF" : "#FF0000"} 
-                    emissive={isExtSelected ? "#FF0000" : "#FF0000"} 
-                    emissiveIntensity={isExtSelected ? 1.2 : 0.8} 
-                  />
-                </mesh>
-
-                {isExtSelected && (
-                  <mesh rotation={[Math.PI / 2, 0, 0]}>
-                    <ringGeometry args={[0.22, 0.28, 32]} />
-                    <meshBasicMaterial color="#FFFFFF" side={2} />
-                  </mesh>
-                )}
-
-                <line>
+              {/* Connection line to DXF intersection (in world space, not affected by rotation) */}
+              <group rotation={[0, groupRotation, 0]}>
+                <line key={`ext-conn-${lj.nodeId}`}>
                   <bufferGeometry>
                     <bufferAttribute
                       attach="attributes-position"
-                      count={4}
+                      count={2}
                       array={new Float32Array([
-                        -0.15, 0, 0, 0.15, 0, 0,
-                        0, 0, -0.15, 0, 0, 0.15,
+                        (dxfPos[0] - extNode.x * SCALE), dxfPos[1] - yTop, (dxfPos[2] - extNode.y * SCALE),
+                        0, 0, 0,
                       ])}
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} />
+                  <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} depthTest={false} />
                 </line>
-
-                {showLabels && (
-                  <Html
-                    center
-                    distanceFactor={8}
-                    style={{
-                      color: isExtSelected ? '#FF0000' : '#FFF',
-                      fontSize: '11px',
-                      fontWeight: 'bold',
-                      background: isExtSelected ? '#FFFFFF' : '#FF0000',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      whiteSpace: 'nowrap',
-                      pointerEvents: 'auto',
-                      cursor: 'pointer',
-                      border: isExtSelected ? '3px solid #FF0000' : '2px solid white',
-                      boxShadow: isExtSelected ? '0 0 10px #FF0000' : 'none',
-                    }}
-                    onClick={(e) => handleNodeClick(extNodeId, e)}
-                  >
-                    NÓ EXT {isExtSelected && '✓'}
-                  </Html>
-                )}
               </group>
+
+              <mesh 
+                onClick={(e) => { e.stopPropagation(); handleNodeClick(extNodeId, e); }}
+                onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
+                onPointerOut={(e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; }}
+              >
+                <sphereGeometry args={[0.25, 16, 16]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+              
+              <mesh>
+                <sphereGeometry args={[isExtSelected ? 0.18 : 0.12, 16, 16]} />
+                <meshStandardMaterial 
+                  color={isExtSelected ? "#FFFFFF" : "#FF0000"} 
+                  emissive={isExtSelected ? "#FF0000" : "#FF0000"} 
+                  emissiveIntensity={isExtSelected ? 1.2 : 0.8} 
+                />
+              </mesh>
+
+              {isExtSelected && (
+                <mesh rotation={[Math.PI / 2, 0, 0]}>
+                  <ringGeometry args={[0.22, 0.28, 32]} />
+                  <meshBasicMaterial color="#FFFFFF" side={2} />
+                </mesh>
+              )}
+
+              <line>
+                <bufferGeometry>
+                  <bufferAttribute
+                    attach="attributes-position"
+                    count={4}
+                    array={new Float32Array([
+                      -0.15, 0, 0, 0.15, 0, 0,
+                      0, 0, -0.15, 0, 0, 0.15,
+                    ])}
+                    itemSize={3}
+                  />
+                </bufferGeometry>
+                <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} />
+              </line>
+
+              {showLabels && (
+                <Html
+                  center
+                  distanceFactor={8}
+                  style={{
+                    color: isExtSelected ? '#FF0000' : '#FFF',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    background: isExtSelected ? '#FFFFFF' : '#FF0000',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'auto',
+                    cursor: 'pointer',
+                    border: isExtSelected ? '3px solid #FF0000' : '2px solid white',
+                    boxShadow: isExtSelected ? '0 0 10px #FF0000' : 'none',
+                  }}
+                  onClick={(e) => handleNodeClick(extNodeId, e)}
+                >
+                  NÓ EXT {isExtSelected && '✓'}
+                </Html>
+              )}
             </group>
 
-            {/* INTERIOR node */}
-            <group>
+            {/* INTERIOR node - entire group rotated relative to wall axis */}
+            <group 
+              position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}
+              rotation={[0, -groupRotation, 0]}
+            >
               {showWires && (
                 <line key={`int-wire-${lj.nodeId}-${intNode.x}-${intNode.y}`}>
                   <bufferGeometry>
@@ -194,8 +240,8 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                       attach="attributes-position"
                       count={2}
                       array={new Float32Array([
-                        intNode.x * SCALE, yBase, intNode.y * SCALE,
-                        intNode.x * SCALE, yTop, intNode.y * SCALE,
+                        0, -(yTop - yBase), 0,
+                        0, 0, 0,
                       ])}
                       itemSize={3}
                     />
@@ -208,85 +254,86 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                 </line>
               )}
 
-              <line key={`int-conn-${lj.nodeId}-${intNode.x}-${intNode.y}`}>
-                <bufferGeometry>
-                  <bufferAttribute
-                    attach="attributes-position"
-                    count={2}
-                    array={new Float32Array([
-                      dxfPos[0], dxfPos[1], dxfPos[2],
-                      intNode.x * SCALE, yBase, intNode.y * SCALE,
-                    ])}
-                    itemSize={3}
-                  />
-                </bufferGeometry>
-                <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} depthTest={false} />
-              </line>
-
-              <group position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}>
-                <mesh 
-                  onClick={(e) => { e.stopPropagation(); handleNodeClick(intNodeId, e); }}
-                  onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
-                  onPointerOut={(e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; }}
-                >
-                  <sphereGeometry args={[0.25, 16, 16]} />
-                  <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-                </mesh>
-                
-                <mesh>
-                  <sphereGeometry args={[isIntSelected ? 0.18 : 0.12, 16, 16]} />
-                  <meshStandardMaterial 
-                    color={isIntSelected ? "#FFFFFF" : "#FFCC00"} 
-                    emissive={isIntSelected ? "#FFCC00" : "#FFCC00"} 
-                    emissiveIntensity={isIntSelected ? 1.2 : 0.8} 
-                  />
-                </mesh>
-
-                {isIntSelected && (
-                  <mesh rotation={[Math.PI / 2, 0, 0]}>
-                    <ringGeometry args={[0.22, 0.28, 32]} />
-                    <meshBasicMaterial color="#FFFFFF" side={2} />
-                  </mesh>
-                )}
-
-                <line>
+              {/* Connection line to DXF intersection (in world space, not affected by rotation) */}
+              <group rotation={[0, groupRotation, 0]}>
+                <line key={`int-conn-${lj.nodeId}`}>
                   <bufferGeometry>
                     <bufferAttribute
                       attach="attributes-position"
-                      count={4}
+                      count={2}
                       array={new Float32Array([
-                        -0.15, 0, 0, 0.15, 0, 0,
-                        0, 0, -0.15, 0, 0, 0.15,
+                        (dxfPos[0] - intNode.x * SCALE), dxfPos[1] - yTop, (dxfPos[2] - intNode.y * SCALE),
+                        0, 0, 0,
                       ])}
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} />
+                  <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} depthTest={false} />
                 </line>
-
-                {showLabels && (
-                  <Html
-                    center
-                    distanceFactor={8}
-                    style={{
-                      color: isIntSelected ? '#FFCC00' : '#000',
-                      fontSize: '11px',
-                      fontWeight: 'bold',
-                      background: isIntSelected ? '#FFFFFF' : '#FFCC00',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      whiteSpace: 'nowrap',
-                      pointerEvents: 'auto',
-                      cursor: 'pointer',
-                      border: isIntSelected ? '3px solid #FFCC00' : '2px solid white',
-                      boxShadow: isIntSelected ? '0 0 10px #FFCC00' : 'none',
-                    }}
-                    onClick={(e) => handleNodeClick(intNodeId, e)}
-                  >
-                    NÓ INT {isIntSelected && '✓'}
-                  </Html>
-                )}
               </group>
+
+              <mesh 
+                onClick={(e) => { e.stopPropagation(); handleNodeClick(intNodeId, e); }}
+                onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
+                onPointerOut={(e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; }}
+              >
+                <sphereGeometry args={[0.25, 16, 16]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+              
+              <mesh>
+                <sphereGeometry args={[isIntSelected ? 0.18 : 0.12, 16, 16]} />
+                <meshStandardMaterial 
+                  color={isIntSelected ? "#FFFFFF" : "#FFCC00"} 
+                  emissive={isIntSelected ? "#FFCC00" : "#FFCC00"} 
+                  emissiveIntensity={isIntSelected ? 1.2 : 0.8} 
+                />
+              </mesh>
+
+              {isIntSelected && (
+                <mesh rotation={[Math.PI / 2, 0, 0]}>
+                  <ringGeometry args={[0.22, 0.28, 32]} />
+                  <meshBasicMaterial color="#FFFFFF" side={2} />
+                </mesh>
+              )}
+
+              <line>
+                <bufferGeometry>
+                  <bufferAttribute
+                    attach="attributes-position"
+                    count={4}
+                    array={new Float32Array([
+                      -0.15, 0, 0, 0.15, 0, 0,
+                      0, 0, -0.15, 0, 0, 0.15,
+                    ])}
+                    itemSize={3}
+                  />
+                </bufferGeometry>
+                <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} />
+              </line>
+
+              {showLabels && (
+                <Html
+                  center
+                  distanceFactor={8}
+                  style={{
+                    color: isIntSelected ? '#FFCC00' : '#000',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    background: isIntSelected ? '#FFFFFF' : '#FFCC00',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'auto',
+                    cursor: 'pointer',
+                    border: isIntSelected ? '3px solid #FFCC00' : '2px solid white',
+                    boxShadow: isIntSelected ? '0 0 10px #FFCC00' : 'none',
+                  }}
+                  onClick={(e) => handleNodeClick(intNodeId, e)}
+                >
+                  NÓ INT {isIntSelected && '✓'}
+                </Html>
+              )}
             </group>
 
             {/* DXF intersection marker */}
