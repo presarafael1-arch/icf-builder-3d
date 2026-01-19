@@ -28,14 +28,16 @@ export interface ChainSideInfo {
   chainId: string;
   classification: SideClassification;
   // Whether the positive perpendicular direction points outside (true) or inside (false)
-  // This is the "outsideIsLeft" equivalent - but expressed as "outsideIsRight" (positive perp)
+  // Positive perp direction is (-dirY, dirX) which matches panel-layout.ts convention
   outsideIsPositivePerp: boolean;
   // The outward normal direction (pointing to exterior)
   // null if classification is BOTH_INT or UNRESOLVED
   outwardNormalAngle: number | null;
-  // Debug info
-  leftInside: boolean;
-  rightInside: boolean;
+  // Debug info: which sides are inside the footprint polygon
+  leftInside: boolean;  // Left = negative perpendicular direction
+  rightInside: boolean; // Right = positive perpendicular direction
+  // Reason for UNRESOLVED classification (for diagnostics)
+  unresolvedReason?: 'BOTH_OUTSIDE' | 'ZERO_LENGTH' | 'NO_POLYGON';
   // Segment-level stats for debug
   segmentStats?: {
     totalSegments: number;
@@ -322,7 +324,9 @@ export function detectFootprintAndClassify(
   
   console.log('[FootprintDetection] Outer polygon:', outerPolygon.length, 'vertices, area:', (outerArea / 1e6).toFixed(2), 'm²');
   
-  // Step 3: Classify each chain
+  // Step 3: Classify each chain using SAME perpendicular convention as panel-layout
+  // panel-layout uses: perpX = -dirY, perpZ = dirX (90° CW from direction)
+  // This is what we call "positive perpendicular" direction
   const chainSides = new Map<string, ChainSideInfo>();
   let exteriorChains = 0;
   let interiorPartitions = 0;
@@ -348,6 +352,23 @@ export function detectFootprintAndClassify(
         outwardNormalAngle: null,
         leftInside: false,
         rightInside: false,
+        unresolvedReason: 'ZERO_LENGTH',
+      });
+      unresolved++;
+      unresolvedChainIds.push(chain.id);
+      return;
+    }
+    
+    // Check if we have a valid outer polygon
+    if (outerPolygon.length < 3) {
+      chainSides.set(chain.id, {
+        chainId: chain.id,
+        classification: 'UNRESOLVED',
+        outsideIsPositivePerp: true,
+        outwardNormalAngle: null,
+        leftInside: false,
+        rightInside: false,
+        unresolvedReason: 'NO_POLYGON',
       });
       unresolved++;
       unresolvedChainIds.push(chain.id);
@@ -357,35 +378,44 @@ export function detectFootprintAndClassify(
     const dirX = dx / len;
     const dirY = dy / len;
     
-    // Perpendicular: rotate 90° CCW for "left" side
-    // Left = (-dirY, dirX), Right = (dirY, -dirX)
-    // "Positive perpendicular" = Right side = (dirY, -dirX)
-    const leftX = midX - dirY * EPS;
-    const leftY = midY + dirX * EPS;
-    const rightX = midX + dirY * EPS;
-    const rightY = midY - dirX * EPS;
+    // CRITICAL: Use SAME perpendicular convention as panel-layout.ts
+    // panel-layout uses: perpX = -dirY, perpZ = dirX (which is 90° CCW from direction in XZ plane)
+    // In 2D (XY plane): positive perp = (-dirY, dirX)
+    // This matches panel-layout's "positive perpendicular" direction
+    const positivePerpX = -dirY;
+    const positivePerpY = dirX;
+    
+    // Test point on positive perpendicular side (where panel-layout places "positive side" panels)
+    const posSideX = midX + positivePerpX * EPS;
+    const posSideY = midY + positivePerpY * EPS;
+    
+    // Test point on negative perpendicular side
+    const negSideX = midX - positivePerpX * EPS;
+    const negSideY = midY - positivePerpY * EPS;
     
     // Test both sides against outer polygon
-    const leftInside = pointInPolygon(leftX, leftY, outerPolygon);
-    const rightInside = pointInPolygon(rightX, rightY, outerPolygon);
+    const positiveSideInside = pointInPolygon(posSideX, posSideY, outerPolygon);
+    const negativeSideInside = pointInPolygon(negSideX, negSideY, outerPolygon);
     
     let classification: SideClassification;
     let outwardNormalAngle: number | null = null;
-    let outsideIsPositivePerp = true; // Default: positive perp (right) is outside
+    let outsideIsPositivePerp = true; // Default: positive perp is outside
+    let unresolvedReason: ChainSideInfo['unresolvedReason'] = undefined;
     
-    if (leftInside && !rightInside) {
-      // Left is inside, right is outside => Right is EXT
-      classification = 'RIGHT_EXT';
-      outwardNormalAngle = Math.atan2(-dirX, dirY); // Normal pointing right
-      outsideIsPositivePerp = true; // Positive perp points to exterior
+    if (positiveSideInside && !negativeSideInside) {
+      // Positive side is inside, negative side is outside => negative side is EXT
+      // So positive perpendicular points INTERIOR, NOT exterior
+      classification = 'LEFT_EXT'; // Negative perp (left) is exterior
+      outwardNormalAngle = Math.atan2(-positivePerpY, -positivePerpX);
+      outsideIsPositivePerp = false; // Exterior is NEGATIVE perpendicular
       exteriorChains++;
-    } else if (!leftInside && rightInside) {
-      // Right is inside, left is outside => Left is EXT
-      classification = 'LEFT_EXT';
-      outwardNormalAngle = Math.atan2(dirX, -dirY); // Normal pointing left
-      outsideIsPositivePerp = false; // Negative perp points to exterior
+    } else if (!positiveSideInside && negativeSideInside) {
+      // Positive side is outside, negative side is inside => positive side is EXT
+      classification = 'RIGHT_EXT'; // Positive perp (right) is exterior
+      outwardNormalAngle = Math.atan2(positivePerpY, positivePerpX);
+      outsideIsPositivePerp = true; // Exterior is POSITIVE perpendicular
       exteriorChains++;
-    } else if (leftInside && rightInside) {
+    } else if (positiveSideInside && negativeSideInside) {
       // Both inside => interior partition wall
       classification = 'BOTH_INT';
       outsideIsPositivePerp = true; // Arbitrary for partitions
@@ -393,17 +423,21 @@ export function detectFootprintAndClassify(
     } else {
       // Both outside => unresolved (wall outside footprint?)
       classification = 'UNRESOLVED';
+      unresolvedReason = 'BOTH_OUTSIDE';
       unresolved++;
       unresolvedChainIds.push(chain.id);
     }
     
+    // Store debug info with consistent naming
+    // leftInside/rightInside now maps to negativeSideInside/positiveSideInside
     chainSides.set(chain.id, {
       chainId: chain.id,
       classification,
       outsideIsPositivePerp,
       outwardNormalAngle,
-      leftInside,
-      rightInside,
+      leftInside: negativeSideInside,  // "left" = negative perp direction
+      rightInside: positiveSideInside, // "right" = positive perp direction
+      unresolvedReason,
     });
   });
   
