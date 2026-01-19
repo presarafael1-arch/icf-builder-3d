@@ -1342,8 +1342,8 @@ export function generatePanelLayout(
       for (let row = 0; row < Math.min(visibleRows, maxRows); row++) {
         const intervals = getIntervalsForRow(chain, row);
         
-        // Debug mode: generate ONLY exterior wall panels
-        const sides: WallSide[] = ['exterior'];
+        // Generate BOTH exterior and interior wall panels
+        const sides: WallSide[] = ['exterior', 'interior'];
         
         sides.forEach((side) => {
           intervals.forEach((interval) => {
