@@ -184,13 +184,20 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
 
   const handleNodeClick = (fullNodeId: string, e: any) => {
     e.stopPropagation();
+    console.log('[CornerNode] Click detected on:', fullNodeId);
+    console.log('[CornerNode] onSelectCornerNode available:', !!onSelectCornerNode);
+    console.log('[CornerNode] Current selectedCornerNode:', selectedCornerNode);
     if (onSelectCornerNode) {
       // Toggle selection using full node ID
       if (selectedCornerNode === fullNodeId) {
+        console.log('[CornerNode] Deselecting node');
         onSelectCornerNode(null);
       } else {
+        console.log('[CornerNode] Selecting node:', fullNodeId);
         onSelectCornerNode(fullNodeId);
       }
+    } else {
+      console.warn('[CornerNode] onSelectCornerNode is NOT defined!');
     }
   };
 
