@@ -231,7 +231,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
             {/* EXTERIOR node */}
             <group>
               {showWires && (
-                <line>
+                <line key={`ext-wire-${lj.nodeId}-${extNode.x}-${extNode.y}`}>
                   <bufferGeometry>
                     <bufferAttribute
                       attach="attributes-position"
@@ -251,7 +251,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                 </line>
               )}
 
-              <line>
+              <line key={`ext-conn-${lj.nodeId}-${extNode.x}-${extNode.y}`}>
                 <bufferGeometry>
                   <bufferAttribute
                     attach="attributes-position"
@@ -338,7 +338,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
             {/* INTERIOR node */}
             <group>
               {showWires && (
-                <line>
+                <line key={`int-wire-${lj.nodeId}-${intNode.x}-${intNode.y}`}>
                   <bufferGeometry>
                     <bufferAttribute
                       attach="attributes-position"
@@ -358,7 +358,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                 </line>
               )}
 
-              <line>
+              <line key={`int-conn-${lj.nodeId}-${intNode.x}-${intNode.y}`}>
                 <bufferGeometry>
                   <bufferAttribute
                     attach="attributes-position"
