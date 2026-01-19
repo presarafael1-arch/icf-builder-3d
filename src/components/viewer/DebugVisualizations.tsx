@@ -165,104 +165,129 @@ function SeedMarkers({ chainsResult, settings }: DebugVisualizationsProps) {
 // Corner nodes visualization - shows exterior and interior intersection points
 function CornerNodesVisualization({ chainsResult, settings }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
-  
+
   // Detect L-junctions with computed corner nodes
-  const lJunctions = useMemo(() => detectLJunctions(chains, settings.concreteThickness), [chains, settings.concreteThickness]);
-  
+  const lJunctions = useMemo(
+    () => detectLJunctions(chains, settings.concreteThickness),
+    [chains, settings.concreteThickness]
+  );
+
   // Collect all corner nodes
   const cornerNodes = useMemo(() => {
     const nodes: { x: number; y: number; type: 'exterior' | 'interior'; id: string; ljId: string }[] = [];
-    
-    lJunctions.forEach(lj => {
+
+    lJunctions.forEach((lj) => {
       if (lj.exteriorNode) {
-        nodes.push({ 
-          x: lj.exteriorNode.x, 
-          y: lj.exteriorNode.y, 
-          type: 'exterior', 
+        nodes.push({
+          x: lj.exteriorNode.x,
+          y: lj.exteriorNode.y,
+          type: 'exterior',
           id: lj.exteriorNode.id,
-          ljId: lj.nodeId
+          ljId: lj.nodeId,
         });
       }
       if (lj.interiorNode) {
-        nodes.push({ 
-          x: lj.interiorNode.x, 
-          y: lj.interiorNode.y, 
-          type: 'interior', 
+        nodes.push({
+          x: lj.interiorNode.x,
+          y: lj.interiorNode.y,
+          type: 'interior',
           id: lj.interiorNode.id,
-          ljId: lj.nodeId
+          ljId: lj.nodeId,
         });
       }
     });
-    
+
     return nodes;
   }, [lJunctions]);
-  
-  const y = settings.maxRows * PANEL_HEIGHT * SCALE + 0.4;
-  
+
+  // Vertical reference line (“fio”) so you can see where the node is in plan
+  const yTop = settings.maxRows * PANEL_HEIGHT * SCALE + 0.4;
+  const yBase = 0.02; // slightly above ground
+
   return (
     <group>
-      {cornerNodes.map((node) => (
-        <group key={node.id} position={[node.x * SCALE, y, node.y * SCALE]}>
-          {/* Marker sphere */}
-          <mesh>
-            <sphereGeometry args={[0.12, 16, 16]} />
-            <meshStandardMaterial 
-              color={node.type === 'exterior' ? '#FF0000' : '#FFCC00'} 
-              emissive={node.type === 'exterior' ? '#FF0000' : '#FFCC00'}
-              emissiveIntensity={0.8}
-            />
-          </mesh>
-          
-          {/* Crosshair lines */}
-          <line>
-            <bufferGeometry>
-              <bufferAttribute
-                attach="attributes-position"
-                count={4}
-                array={new Float32Array([
-                  -0.15, 0, 0,
-                  0.15, 0, 0,
-                  0, 0, -0.15,
-                  0, 0, 0.15,
-                ])}
-                itemSize={3}
-              />
-            </bufferGeometry>
-            <lineBasicMaterial color={node.type === 'exterior' ? '#FF0000' : '#FFCC00'} linewidth={2} />
-          </line>
-          
-          {/* Label */}
-          <Html
-            center
-            distanceFactor={8}
-            style={{
-              color: node.type === 'exterior' ? '#FFF' : '#000',
-              fontSize: '11px',
-              fontWeight: 'bold',
-              background: node.type === 'exterior' ? '#FF0000' : '#FFCC00',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              whiteSpace: 'nowrap',
-              pointerEvents: 'none',
-              border: '2px solid white',
-            }}
-          >
-            {node.type === 'exterior' ? 'NÓ EXT' : 'NÓ INT'}
-          </Html>
-        </group>
-      ))}
-      
-      {/* Draw lines from DXF intersection to corner nodes */}
-      {lJunctions.map(lj => {
+      {cornerNodes.map((node) => {
+        const color = node.type === 'exterior' ? '#FF0000' : '#FFCC00';
+
+        return (
+          <group key={node.id}>
+            {/* Vertical string */}
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={2}
+                  array={new Float32Array([
+                    node.x * SCALE,
+                    yBase,
+                    node.y * SCALE,
+                    node.x * SCALE,
+                    yTop,
+                    node.y * SCALE,
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color={color} linewidth={2} />
+            </line>
+
+            {/* Marker + label at the top */}
+            <group position={[node.x * SCALE, yTop, node.y * SCALE]}>
+              <mesh>
+                <sphereGeometry args={[0.12, 16, 16]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
+              </mesh>
+
+              {/* Crosshair lines */}
+              <line>
+                <bufferGeometry>
+                  <bufferAttribute
+                    attach="attributes-position"
+                    count={4}
+                    array={new Float32Array([
+                      -0.15, 0, 0,
+                      0.15, 0, 0,
+                      0, 0, -0.15,
+                      0, 0, 0.15,
+                    ])}
+                    itemSize={3}
+                  />
+                </bufferGeometry>
+                <lineBasicMaterial color={color} linewidth={2} />
+              </line>
+
+              <Html
+                center
+                distanceFactor={8}
+                style={{
+                  color: node.type === 'exterior' ? '#FFF' : '#000',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  background: color,
+                  padding: '3px 8px',
+                  borderRadius: '4px',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  border: '2px solid white',
+                }}
+              >
+                {node.type === 'exterior' ? 'NÓ EXT' : 'NÓ INT'}
+              </Html>
+            </group>
+          </group>
+        );
+      })}
+
+      {/* Diagonal reference lines on the ground plane (DXF intersection -> node) */}
+      {lJunctions.map((lj) => {
         if (!lj.exteriorNode || !lj.interiorNode) return null;
-        
-        const dxfPos = [lj.x * SCALE, y - 0.1, lj.y * SCALE];
-        const extPos = [lj.exteriorNode.x * SCALE, y, lj.exteriorNode.y * SCALE];
-        const intPos = [lj.interiorNode.x * SCALE, y, lj.interiorNode.y * SCALE];
-        
+
+        const dxfPos = [lj.x * SCALE, yBase, lj.y * SCALE];
+        const extPos = [lj.exteriorNode.x * SCALE, yBase, lj.exteriorNode.y * SCALE];
+        const intPos = [lj.interiorNode.x * SCALE, yBase, lj.interiorNode.y * SCALE];
+
         return (
           <group key={`lines-${lj.nodeId}`}>
-            {/* Line from DXF to exterior node */}
             <line>
               <bufferGeometry>
                 <bufferAttribute
@@ -277,8 +302,7 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
               </bufferGeometry>
               <lineBasicMaterial color="#FF0000" linewidth={2} />
             </line>
-            
-            {/* Line from DXF to interior node */}
+
             <line>
               <bufferGeometry>
                 <bufferAttribute
@@ -293,8 +317,8 @@ function CornerNodesVisualization({ chainsResult, settings }: DebugVisualization
               </bufferGeometry>
               <lineBasicMaterial color="#FFCC00" linewidth={2} />
             </line>
-            
-            {/* DXF intersection marker (small white sphere) */}
+
+            {/* DXF intersection marker on the ground */}
             <mesh position={dxfPos as [number, number, number]}>
               <sphereGeometry args={[0.06, 8, 8]} />
               <meshBasicMaterial color="#FFFFFF" />
