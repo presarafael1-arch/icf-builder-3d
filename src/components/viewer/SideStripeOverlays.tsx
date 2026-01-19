@@ -15,13 +15,13 @@ const STRIPE_OFFSET_MM = 1; // 1mm offset from panel surface
 const EXTERIOR_COLOR = '#3B82F6'; // Blue
 const INTERIOR_COLOR = '#FFFFFF'; // White
 
-// Stripe opacity
-const EXTERIOR_OPACITY = 0.28;
-const INTERIOR_OPACITY = 0.18;
+// Stripe opacity (80% as requested)
+const STRIPE_OPACITY = 0.8;
 
 interface SideStripeOverlaysProps {
   allPanels: ClassifiedPanel[];
   concreteThickness: ConcreteThickness;
+  visible?: boolean; // Toggle visibility from parent
 }
 
 /**
@@ -31,7 +31,7 @@ interface SideStripeOverlaysProps {
  * 
  * Stripes are centered on panels and use raycast override to not interfere with picking.
  */
-export function SideStripeOverlays({ allPanels, concreteThickness }: SideStripeOverlaysProps) {
+export function SideStripeOverlays({ allPanels, concreteThickness, visible = true }: SideStripeOverlaysProps) {
   const extMeshRef = useRef<THREE.InstancedMesh>(null);
   const intMeshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -118,7 +118,8 @@ export function SideStripeOverlays({ allPanels, concreteThickness }: SideStripeO
     intMeshRef.current.raycast = () => {};
   }, [intMatrices]);
 
-  if (allPanels.length === 0) return null;
+  // Don't render if not visible or no panels
+  if (!visible || allPanels.length === 0) return null;
 
   return (
     <>
@@ -132,7 +133,7 @@ export function SideStripeOverlays({ allPanels, concreteThickness }: SideStripeO
         <meshBasicMaterial
           color={EXTERIOR_COLOR}
           transparent
-          opacity={EXTERIOR_OPACITY}
+          opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset
@@ -151,7 +152,7 @@ export function SideStripeOverlays({ allPanels, concreteThickness }: SideStripeO
         <meshBasicMaterial
           color={INTERIOR_COLOR}
           transparent
-          opacity={INTERIOR_OPACITY}
+          opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset

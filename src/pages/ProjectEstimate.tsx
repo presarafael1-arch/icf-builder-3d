@@ -69,6 +69,7 @@ export default function ProjectEstimate() {
     showJunctions: true,
     showGrid: true,
     showGrids: true,
+    showSideStripes: true, // EXT/INT stripes
 
     // View / params
     currentRow: 1,

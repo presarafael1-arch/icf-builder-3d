@@ -1,9 +1,15 @@
-import { Layers, Maximize2, RotateCcw } from 'lucide-react';
+import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
 import { ViewerSettings, ConcreteThickness } from '@/types/icf';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Switch } from '@/components/ui/switch';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 
 interface ViewerControlsProps {
   settings: ViewerSettings;
@@ -26,12 +32,112 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
       });
     }
   };
+
+  const toggleSetting = (key: keyof ViewerSettings) => {
+    onSettingsChange({
+      ...settings,
+      [key]: !settings[key]
+    });
+  };
+
+  // Toggle all corner node related settings together
+  const toggleCornerNodes = () => {
+    const newValue = !settings.showCornerNodes;
+    onSettingsChange({
+      ...settings,
+      showCornerNodes: newValue,
+      showCornerNodeLabels: newValue,
+      showCornerNodeWires: newValue,
+    });
+  };
   
   return (
     <div className="toolbar absolute bottom-4 left-4 right-4 flex flex-wrap justify-between gap-2">
-      {/* Left side - Thickness selector */}
+      {/* Left side - Thickness selector + Visibility */}
       <div className="flex items-center gap-3">
-        <Label className="text-xs text-muted-foreground">Espessura (tc):</Label>
+        {/* Visibility Popover */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Eye className="h-4 w-4" />
+              <span className="text-xs">Visibilidade</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent 
+            className="w-64 bg-background border border-border shadow-lg z-50" 
+            align="start"
+            sideOffset={8}
+          >
+            <div className="space-y-3">
+              <h4 className="font-medium text-sm text-foreground border-b border-border pb-2">
+                Visibilidade
+              </h4>
+              
+              {/* Grid toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Grid3X3 className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-grid" className="text-sm cursor-pointer">
+                    Grelha base
+                  </Label>
+                </div>
+                <Switch
+                  id="show-grid"
+                  checked={settings.showGrid}
+                  onCheckedChange={() => toggleSetting('showGrid')}
+                />
+              </div>
+
+              {/* Outlines toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Square className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-outlines" className="text-sm cursor-pointer">
+                    Contornos painéis
+                  </Label>
+                </div>
+                <Switch
+                  id="show-outlines"
+                  checked={settings.showOutlines}
+                  onCheckedChange={() => toggleSetting('showOutlines')}
+                />
+              </div>
+
+              {/* Corner nodes + labels + wires toggle (combined) */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <GitBranch className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-nodes" className="text-sm cursor-pointer">
+                    Nós + Labels + Fios
+                  </Label>
+                </div>
+                <Switch
+                  id="show-nodes"
+                  checked={settings.showCornerNodes}
+                  onCheckedChange={toggleCornerNodes}
+                />
+              </div>
+
+              {/* EXT/INT stripes toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Palette className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-stripes" className="text-sm cursor-pointer">
+                    Faixa EXT/INT
+                  </Label>
+                </div>
+                <Switch
+                  id="show-stripes"
+                  checked={settings.showSideStripes}
+                  onCheckedChange={() => toggleSetting('showSideStripes')}
+                />
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* Thickness selector */}
+        <Label className="text-xs text-muted-foreground">tc:</Label>
         <ToggleGroup 
           type="single" 
           value={settings.concreteThickness} 
