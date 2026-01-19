@@ -21,22 +21,40 @@ export type SideClassification =
   | 'BOTH_INT'      // Interior partition wall (both sides inside building)
   | 'UNRESOLVED';   // Cannot determine (open geometry or error)
 
+// Footprint detection status
+export type FootprintStatus = 'OK' | 'UNRESOLVED' | 'NO_WALLS';
+
 export interface ChainSideInfo {
   chainId: string;
   classification: SideClassification;
+  // Whether the positive perpendicular direction points outside (true) or inside (false)
+  // This is the "outsideIsLeft" equivalent - but expressed as "outsideIsRight" (positive perp)
+  outsideIsPositivePerp: boolean;
   // The outward normal direction (pointing to exterior)
   // null if classification is BOTH_INT or UNRESOLVED
   outwardNormalAngle: number | null;
   // Debug info
   leftInside: boolean;
   rightInside: boolean;
+  // Segment-level stats for debug
+  segmentStats?: {
+    totalSegments: number;
+    leftExtCount: number;
+    rightExtCount: number;
+    bothIntCount: number;
+    unresolvedCount: number;
+  };
 }
 
 export interface FootprintResult {
+  // Detection status
+  status: FootprintStatus;
   // The outer polygon vertices (CCW order)
   outerPolygon: Array<{ x: number; y: number }>;
   // Area of outer polygon (mm²)
   outerArea: number;
+  // Number of closed loops found
+  loopsFound: number;
   // Classification for each chain
   chainSides: Map<string, ChainSideInfo>;
   // Any interior loops (holes) detected
@@ -48,6 +66,8 @@ export interface FootprintResult {
     interiorPartitions: number;
     unresolved: number;
   };
+  // Unresolved chain IDs for diagnostic display
+  unresolvedChainIds: string[];
 }
 
 // ============= Point-in-Polygon Algorithm =============
@@ -254,11 +274,14 @@ export function detectFootprintAndClassify(
 ): FootprintResult {
   if (chains.length === 0) {
     return {
+      status: 'NO_WALLS',
       outerPolygon: [],
       outerArea: 0,
+      loopsFound: 0,
       chainSides: new Map(),
       interiorLoops: [],
       stats: { totalChains: 0, exteriorChains: 0, interiorPartitions: 0, unresolved: 0 },
+      unresolvedChainIds: [],
     };
   }
   
@@ -272,6 +295,7 @@ export function detectFootprintAndClassify(
   let outerPolygon: Array<{ x: number; y: number }> = [];
   let outerArea = 0;
   const interiorLoops: Array<Array<{ x: number; y: number }>> = [];
+  let usedFallback = false;
   
   for (const loop of loops) {
     const area = signedPolygonArea(loop);
@@ -290,9 +314,10 @@ export function detectFootprintAndClassify(
   
   // If no closed loops found, try to create a bounding polygon from chain extents
   if (outerPolygon.length < 3) {
-    console.log('[FootprintDetection] No closed loops, using bounding box fallback');
+    console.log('[FootprintDetection] No closed loops, using convex hull fallback');
     outerPolygon = createBoundingPolygon(chains);
     outerArea = Math.abs(signedPolygonArea(outerPolygon));
+    usedFallback = true;
   }
   
   console.log('[FootprintDetection] Outer polygon:', outerPolygon.length, 'vertices, area:', (outerArea / 1e6).toFixed(2), 'm²');
@@ -302,6 +327,7 @@ export function detectFootprintAndClassify(
   let exteriorChains = 0;
   let interiorPartitions = 0;
   let unresolved = 0;
+  const unresolvedChainIds: string[] = [];
   
   const EPS = 150; // Offset distance for point sampling (mm)
   
@@ -318,11 +344,13 @@ export function detectFootprintAndClassify(
       chainSides.set(chain.id, {
         chainId: chain.id,
         classification: 'UNRESOLVED',
+        outsideIsPositivePerp: true,
         outwardNormalAngle: null,
         leftInside: false,
         rightInside: false,
       });
       unresolved++;
+      unresolvedChainIds.push(chain.id);
       return;
     }
     
@@ -331,6 +359,7 @@ export function detectFootprintAndClassify(
     
     // Perpendicular: rotate 90° CCW for "left" side
     // Left = (-dirY, dirX), Right = (dirY, -dirX)
+    // "Positive perpendicular" = Right side = (dirY, -dirX)
     const leftX = midX - dirY * EPS;
     const leftY = midY + dirX * EPS;
     const rightX = midX + dirY * EPS;
@@ -342,30 +371,36 @@ export function detectFootprintAndClassify(
     
     let classification: SideClassification;
     let outwardNormalAngle: number | null = null;
+    let outsideIsPositivePerp = true; // Default: positive perp (right) is outside
     
     if (leftInside && !rightInside) {
       // Left is inside, right is outside => Right is EXT
       classification = 'RIGHT_EXT';
       outwardNormalAngle = Math.atan2(-dirX, dirY); // Normal pointing right
+      outsideIsPositivePerp = true; // Positive perp points to exterior
       exteriorChains++;
     } else if (!leftInside && rightInside) {
       // Right is inside, left is outside => Left is EXT
       classification = 'LEFT_EXT';
       outwardNormalAngle = Math.atan2(dirX, -dirY); // Normal pointing left
+      outsideIsPositivePerp = false; // Negative perp points to exterior
       exteriorChains++;
     } else if (leftInside && rightInside) {
       // Both inside => interior partition wall
       classification = 'BOTH_INT';
+      outsideIsPositivePerp = true; // Arbitrary for partitions
       interiorPartitions++;
     } else {
       // Both outside => unresolved (wall outside footprint?)
       classification = 'UNRESOLVED';
       unresolved++;
+      unresolvedChainIds.push(chain.id);
     }
     
     chainSides.set(chain.id, {
       chainId: chain.id,
       classification,
+      outsideIsPositivePerp,
       outwardNormalAngle,
       leftInside,
       rightInside,
@@ -378,9 +413,17 @@ export function detectFootprintAndClassify(
     unresolved,
   });
   
+  // Determine overall status
+  const status: FootprintStatus = 
+    (outerPolygon.length >= 3 && !usedFallback) ? 'OK' : 
+    (usedFallback && outerPolygon.length >= 3) ? 'OK' :
+    'UNRESOLVED';
+  
   return {
+    status,
     outerPolygon,
     outerArea,
+    loopsFound: loops.length,
     chainSides,
     interiorLoops,
     stats: {
@@ -389,6 +432,7 @@ export function detectFootprintAndClassify(
       interiorPartitions,
       unresolved,
     },
+    unresolvedChainIds,
   };
 }
 

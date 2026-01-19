@@ -97,6 +97,9 @@ export default function ProjectEstimate() {
     showCornerNodes: false,
     showCornerNodeLabels: false,
     showCornerNodeWires: false,
+    // Footprint debug
+    showFootprint: false,
+    showFootprintStats: false,
   });
   
   useEffect(() => {
