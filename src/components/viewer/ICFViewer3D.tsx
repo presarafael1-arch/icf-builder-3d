@@ -618,8 +618,9 @@ function BatchedPanelInstances({
   }, [panelsByType.CORNER_CUT, panelGeometry]);
 
   // Update OUTLINE mesh (all panels get outlines)
+  // Re-run when showOutlines changes so meshes get repopulated after remount
   useEffect(() => {
-    if (!outlineMeshRef.current || allPanels.length === 0) return;
+    if (!outlineMeshRef.current || allPanels.length === 0 || !showOutlines) return;
     allPanels.forEach((panel, i) => {
       // Clone matrix and apply slight scale-up for outline visibility
       const outlineMatrix = panel.matrix.clone();
@@ -633,7 +634,7 @@ function BatchedPanelInstances({
       outlineMeshRef.current!.setMatrixAt(i, outlineMatrix);
     });
     outlineMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [allPanels, outlineGeometry]);
+  }, [allPanels, outlineGeometry, showOutlines]);
 
   // Update TOPO mesh (T-junction topos)
   useEffect(() => {

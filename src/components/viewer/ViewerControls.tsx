@@ -1,4 +1,4 @@
-import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette } from 'lucide-react';
+import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
@@ -130,6 +130,21 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   id="show-stripes"
                   checked={settings.showSideStripes}
                   onCheckedChange={() => toggleSetting('showSideStripes')}
+                />
+              </div>
+
+              {/* DXF Lines toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="show-dxf" className="text-sm cursor-pointer">
+                    Linhas DXF
+                  </Label>
+                </div>
+                <Switch
+                  id="show-dxf"
+                  checked={settings.showDXFLines}
+                  onCheckedChange={() => toggleSetting('showDXFLines')}
                 />
               </div>
             </div>
