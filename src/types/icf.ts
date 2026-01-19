@@ -227,6 +227,9 @@ export interface ViewerSettings {
   showTopos: boolean;
   showOpenings: boolean;
   showGrid: boolean; // Base grid
+  
+  // Visibility panel controls (minimal UI)
+  showSideStripes: boolean; // EXT/INT stripe overlays
 
   // View / params
   currentRow: number;

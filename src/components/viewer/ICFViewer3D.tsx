@@ -782,7 +782,8 @@ function BatchedPanelInstances({
       {/* EXT/INT side stripe overlays - Blue (exterior) and White (interior) */}
       <SideStripeOverlays 
         allPanels={allPanels} 
-        concreteThickness={settings.concreteThickness} 
+        concreteThickness={settings.concreteThickness}
+        visible={settings.showSideStripes}
       />
     </>
   );

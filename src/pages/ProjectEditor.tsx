@@ -275,6 +275,7 @@ export default function ProjectEditor() {
     showTopos: true,
     showOpenings: true,
     showGrid: true, // Base grid always visible
+    showSideStripes: true, // EXT/INT stripe overlays
 
     // View / params
     currentRow: 1,
