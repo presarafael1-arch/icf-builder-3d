@@ -243,7 +243,11 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={isExtSelected ? 3 : 2} />
+                  <lineBasicMaterial
+                    color={isExtSelected ? "#FFFFFF" : "#FF0000"}
+                    linewidth={isExtSelected ? 3 : 2}
+                    depthTest={false}
+                  />
                 </line>
               )}
 
@@ -259,7 +263,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                     itemSize={3}
                   />
                 </bufferGeometry>
-                <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} />
+                 <lineBasicMaterial color={isExtSelected ? "#FFFFFF" : "#FF0000"} linewidth={2} depthTest={false} />
               </line>
 
               <group position={[extNode.x * SCALE, yTop, extNode.y * SCALE]}>
@@ -346,7 +350,11 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                       itemSize={3}
                     />
                   </bufferGeometry>
-                  <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={isIntSelected ? 3 : 2} />
+                  <lineBasicMaterial
+                    color={isIntSelected ? "#FFFFFF" : "#FFCC00"}
+                    linewidth={isIntSelected ? 3 : 2}
+                    depthTest={false}
+                  />
                 </line>
               )}
 
@@ -362,7 +370,7 @@ function CornerNodesVisualization({ chainsResult, settings, selectedCornerNode, 
                     itemSize={3}
                   />
                 </bufferGeometry>
-                <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} />
+                 <lineBasicMaterial color={isIntSelected ? "#FFFFFF" : "#FFCC00"} linewidth={2} depthTest={false} />
               </line>
 
               <group position={[intNode.x * SCALE, yTop, intNode.y * SCALE]}>
