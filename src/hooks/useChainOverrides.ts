@@ -2,7 +2,11 @@
  * Chain Overrides Hook
  * 
  * Manages chain-level overrides including exterior/interior side flipping
- * with persistence to localStorage
+ * with persistence to localStorage.
+ * 
+ * CRITICAL: When flipping a chain, panel IDs change (ext<->int).
+ * This hook provides a callback mechanism to migrate panel overrides
+ * when a flip occurs.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -17,12 +21,18 @@ export interface ChainOverride {
   updatedAt: string;
 }
 
+/**
+ * Callback type for migrating panel overrides when chain flip occurs.
+ * Receives the chainId being flipped and whether it will be flipped (true) or unflipped (false).
+ */
+export type OnChainFlipCallback = (chainId: string, willBeFlipped: boolean) => void;
+
 export interface UseChainOverridesResult {
   overrides: Map<string, ChainOverride>;
   
   // Side flip operations
   isFlipped: (chainId: string) => boolean;
-  toggleFlip: (chainId: string) => void;
+  toggleFlip: (chainId: string, onFlipCallback?: OnChainFlipCallback) => void;
   setFlip: (chainId: string, flip: boolean) => void;
   
   // Clear
@@ -71,13 +81,22 @@ export function useChainOverrides(projectId: string | undefined): UseChainOverri
   }, [overrides]);
   
   /**
-   * Toggle the flip state of a chain
+   * Toggle the flip state of a chain.
+   * Optionally accepts a callback to migrate panel overrides before state change.
    */
-  const toggleFlip = useCallback((chainId: string) => {
+  const toggleFlip = useCallback((chainId: string, onFlipCallback?: OnChainFlipCallback) => {
     setOverrides(prev => {
       const next = new Map(prev);
       const existing = next.get(chainId);
       const now = new Date().toISOString();
+      const wasFlipped = existing?.flipSide ?? false;
+      const willBeFlipped = !wasFlipped;
+
+      // Call the migration callback BEFORE changing state
+      // This allows the caller to swap panel overrides
+      if (onFlipCallback) {
+        onFlipCallback(chainId, willBeFlipped);
+      }
 
       if (existing) {
         if (!existing.flipSide) {
