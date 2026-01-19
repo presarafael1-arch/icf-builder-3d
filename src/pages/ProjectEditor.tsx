@@ -878,6 +878,8 @@ export default function ProjectEditor() {
         onLockPanel={lockPanel}
         onUnlockPanel={unlockPanel}
         onPreviewColor={setPreviewColor}
+        viewerSettings={viewerSettings}
+        onViewerSettingsChange={setViewerSettings}
       />
     </MainLayout>
   );

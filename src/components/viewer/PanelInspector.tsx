@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, MoveHorizontal, Minus, Plus } from 'lucide-react';
+import { X, Lock, Unlock, RefreshCw, AlertTriangle, Check, Trash2, ChevronLeft, ChevronRight, MoveHorizontal, Minus, Plus, Crosshair } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,8 +29,10 @@ import {
   getTopoType
 } from '@/types/panel-selection';
 import { PanelType } from '@/lib/panel-layout';
-import { TOOTH, PANEL_WIDTH } from '@/types/icf';
+import { TOOTH, PANEL_WIDTH, ViewerSettings } from '@/types/icf';
 import { PANEL_COLORS } from '@/components/viewer/ICFViewer3D';
+import { Slider } from '@/components/ui/slider';
+
 
 interface PanelInspectorProps {
   isOpen: boolean;
@@ -44,6 +46,9 @@ interface PanelInspectorProps {
   onLockPanel: (panelId: string) => void;
   onUnlockPanel: (panelId: string) => void;
   onPreviewColor?: (color: string | null) => void;
+  // Corner node offset calibration
+  viewerSettings?: ViewerSettings;
+  onViewerSettingsChange?: (settings: ViewerSettings) => void;
 }
 
 // Panel classification options with colors
@@ -72,6 +77,8 @@ export function PanelInspector({
   onLockPanel,
   onUnlockPanel,
   onPreviewColor,
+  viewerSettings,
+  onViewerSettingsChange,
 }: PanelInspectorProps) {
   const [editType, setEditType] = useState<PanelType | 'auto'>('auto');
   const [editCut, setEditCut] = useState<string>('');
@@ -572,6 +579,215 @@ export function PanelInspector({
               </Button>
             )}
           </div>
+          
+          <Separator />
+          
+          {/* === CORNER NODES CALIBRATION === */}
+          {viewerSettings && onViewerSettingsChange && (
+            <div className="space-y-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+              <div className="flex items-center gap-2">
+                <Crosshair className="h-4 w-4 text-red-400" />
+                <Label className="text-sm font-medium text-red-400">Calibração Nós de Canto</Label>
+                <span className="text-xs text-muted-foreground ml-auto">½T = {(TOOTH / 2).toFixed(1)}mm</span>
+              </div>
+              
+              <p className="text-xs text-muted-foreground">
+                Ajusta a posição dos nós EXT/INT em passos de ½ TOOTH
+              </p>
+              
+              {/* Exterior Node X */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-red-400 font-medium">NÓ EXT - X</Label>
+                  <span className="text-xs font-mono w-16 text-right">
+                    {(viewerSettings.cornerNodeExtOffsetX ?? 0) >= 0 ? '+' : ''}{(viewerSettings.cornerNodeExtOffsetX ?? 0).toFixed(1)}T
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeExtOffsetX: (viewerSettings.cornerNodeExtOffsetX ?? 0) - 0.5
+                    })}
+                  >
+                    -½
+                  </Button>
+                  <Slider
+                    value={[viewerSettings.cornerNodeExtOffsetX ?? 0]}
+                    min={-10}
+                    max={10}
+                    step={0.5}
+                    onValueChange={([v]) => onViewerSettingsChange({ ...viewerSettings, cornerNodeExtOffsetX: v })}
+                    className="flex-1"
+                  />
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeExtOffsetX: (viewerSettings.cornerNodeExtOffsetX ?? 0) + 0.5
+                    })}
+                  >
+                    +½
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Exterior Node Y */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-red-400 font-medium">NÓ EXT - Y</Label>
+                  <span className="text-xs font-mono w-16 text-right">
+                    {(viewerSettings.cornerNodeExtOffsetY ?? 0) >= 0 ? '+' : ''}{(viewerSettings.cornerNodeExtOffsetY ?? 0).toFixed(1)}T
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeExtOffsetY: (viewerSettings.cornerNodeExtOffsetY ?? 0) - 0.5
+                    })}
+                  >
+                    -½
+                  </Button>
+                  <Slider
+                    value={[viewerSettings.cornerNodeExtOffsetY ?? 0]}
+                    min={-10}
+                    max={10}
+                    step={0.5}
+                    onValueChange={([v]) => onViewerSettingsChange({ ...viewerSettings, cornerNodeExtOffsetY: v })}
+                    className="flex-1"
+                  />
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeExtOffsetY: (viewerSettings.cornerNodeExtOffsetY ?? 0) + 0.5
+                    })}
+                  >
+                    +½
+                  </Button>
+                </div>
+              </div>
+              
+              <Separator className="my-2" />
+              
+              {/* Interior Node X */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-yellow-400 font-medium">NÓ INT - X</Label>
+                  <span className="text-xs font-mono w-16 text-right">
+                    {(viewerSettings.cornerNodeIntOffsetX ?? 0) >= 0 ? '+' : ''}{(viewerSettings.cornerNodeIntOffsetX ?? 0).toFixed(1)}T
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeIntOffsetX: (viewerSettings.cornerNodeIntOffsetX ?? 0) - 0.5
+                    })}
+                  >
+                    -½
+                  </Button>
+                  <Slider
+                    value={[viewerSettings.cornerNodeIntOffsetX ?? 0]}
+                    min={-10}
+                    max={10}
+                    step={0.5}
+                    onValueChange={([v]) => onViewerSettingsChange({ ...viewerSettings, cornerNodeIntOffsetX: v })}
+                    className="flex-1"
+                  />
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeIntOffsetX: (viewerSettings.cornerNodeIntOffsetX ?? 0) + 0.5
+                    })}
+                  >
+                    +½
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Interior Node Y */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-yellow-400 font-medium">NÓ INT - Y</Label>
+                  <span className="text-xs font-mono w-16 text-right">
+                    {(viewerSettings.cornerNodeIntOffsetY ?? 0) >= 0 ? '+' : ''}{(viewerSettings.cornerNodeIntOffsetY ?? 0).toFixed(1)}T
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeIntOffsetY: (viewerSettings.cornerNodeIntOffsetY ?? 0) - 0.5
+                    })}
+                  >
+                    -½
+                  </Button>
+                  <Slider
+                    value={[viewerSettings.cornerNodeIntOffsetY ?? 0]}
+                    min={-10}
+                    max={10}
+                    step={0.5}
+                    onValueChange={([v]) => onViewerSettingsChange({ ...viewerSettings, cornerNodeIntOffsetY: v })}
+                    className="flex-1"
+                  />
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 w-10 text-xs"
+                    onClick={() => onViewerSettingsChange({
+                      ...viewerSettings,
+                      cornerNodeIntOffsetY: (viewerSettings.cornerNodeIntOffsetY ?? 0) + 0.5
+                    })}
+                  >
+                    +½
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Reset button */}
+              {((viewerSettings.cornerNodeExtOffsetX ?? 0) !== 0 || 
+                (viewerSettings.cornerNodeExtOffsetY ?? 0) !== 0 ||
+                (viewerSettings.cornerNodeIntOffsetX ?? 0) !== 0 ||
+                (viewerSettings.cornerNodeIntOffsetY ?? 0) !== 0) && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="w-full text-xs mt-2"
+                  onClick={() => onViewerSettingsChange({
+                    ...viewerSettings,
+                    cornerNodeExtOffsetX: 0,
+                    cornerNodeExtOffsetY: 0,
+                    cornerNodeIntOffsetX: 0,
+                    cornerNodeIntOffsetY: 0,
+                  })}
+                >
+                  <RefreshCw className="h-3 w-3 mr-2" />
+                  Reset todos os offsets
+                </Button>
+              )}
+            </div>
+          )}
           
           <Separator />
           

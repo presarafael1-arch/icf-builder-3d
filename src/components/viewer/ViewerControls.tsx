@@ -340,7 +340,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                       />
                     </div>
                     
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center justify-between">
                       <Label htmlFor="show-corner-wires" className="text-sm text-muted-foreground">Fios</Label>
                       <Switch
                         id="show-corner-wires"
@@ -350,67 +350,9 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                       />
                     </div>
                     
-                    {settings.showCornerNodes && (
-                      <div className="space-y-3 p-2 bg-muted/30 rounded">
-                        <p className="text-[10px] text-muted-foreground">Offset Manual (TOOTH)</p>
-                        
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs text-red-400">EXT X</Label>
-                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeExtOffsetX?.toFixed(1) ?? '0.0'}</span>
-                          </div>
-                          <Slider
-                            value={[settings.cornerNodeExtOffsetX ?? 0]}
-                            min={-5}
-                            max={5}
-                            step={0.1}
-                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeExtOffsetX: v })}
-                          />
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs text-red-400">EXT Y</Label>
-                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeExtOffsetY?.toFixed(1) ?? '0.0'}</span>
-                          </div>
-                          <Slider
-                            value={[settings.cornerNodeExtOffsetY ?? 0]}
-                            min={-5}
-                            max={5}
-                            step={0.1}
-                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeExtOffsetY: v })}
-                          />
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs text-yellow-400">INT X</Label>
-                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeIntOffsetX?.toFixed(1) ?? '0.0'}</span>
-                          </div>
-                          <Slider
-                            value={[settings.cornerNodeIntOffsetX ?? 0]}
-                            min={-5}
-                            max={5}
-                            step={0.1}
-                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeIntOffsetX: v })}
-                          />
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs text-yellow-400">INT Y</Label>
-                            <span className="text-xs font-mono w-12 text-right">{settings.cornerNodeIntOffsetY?.toFixed(1) ?? '0.0'}</span>
-                          </div>
-                          <Slider
-                            value={[settings.cornerNodeIntOffsetY ?? 0]}
-                            min={-5}
-                            max={5}
-                            step={0.1}
-                            onValueChange={([v]) => onSettingsChange({ ...settings, cornerNodeIntOffsetY: v })}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    <p className="text-[10px] text-muted-foreground mt-2 italic">
+                      Calibração de offsets: usar Inspetor de Painel
+                    </p>
                   </div>
                 </div>
               </div>
