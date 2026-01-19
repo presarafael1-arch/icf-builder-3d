@@ -860,55 +860,6 @@ function getEndCap(
 }
 
 /**
- * Determine if the perpendicular "right" side (90° CW) of this chain
- * corresponds to the architectural "exterior" or "interior".
- * 
- * Uses the L-junction cross product to determine winding.
- * Returns true if perpendicular positive = interior (needs flip)
- */
-function shouldFlipSideForChain(
-  chain: WallChain,
-  lJunctions: LJunctionInfo[]
-): boolean {
-  // Find any L-junction this chain participates in
-  const lj = lJunctions.find(l => 
-    l.primaryChainId === chain.id || l.secondaryChainId === chain.id
-  );
-  
-  if (!lj) return false; // No L-junction, use default
-  
-  // Get the other chain at this L-junction
-  const otherChainId = lj.primaryChainId === chain.id ? lj.secondaryChainId : lj.primaryChainId;
-  
-  // Get direction vectors pointing AWAY from the junction
-  const chainAtStart = Math.abs(chain.startX - lj.x) < 300 && Math.abs(chain.startY - lj.y) < 300;
-  const thisDir = chainAtStart 
-    ? { x: (chain.endX - chain.startX) / chain.lengthMm, y: (chain.endY - chain.startY) / chain.lengthMm }
-    : { x: (chain.startX - chain.endX) / chain.lengthMm, y: (chain.startY - chain.endY) / chain.lengthMm };
-  
-  // Perpendicular (90° CW): (-dy, dx)
-  const perpRight = { x: -thisDir.y, y: thisDir.x };
-  
-  // The cross product in computeCornerNodes determines which side is exterior
-  // cross > 0 means the "right" side (positive perp) faces INTERIOR
-  // cross < 0 means the "right" side (positive perp) faces EXTERIOR
-  
-  // We need to recalculate the cross product here
-  const otherAngle = lj.primaryChainId === chain.id ? lj.secondaryAngle : lj.primaryAngle;
-  const otherDir = { x: Math.cos(otherAngle), y: Math.sin(otherAngle) };
-  
-  // Direction of THIS chain at the junction (pointing away)
-  const thisAngle = Math.atan2(thisDir.y, thisDir.x);
-  const cross = thisDir.x * otherDir.y - thisDir.y * otherDir.x;
-  
-  // If cross > 0: CCW winding, perpendicular "right" faces INTERIOR
-  // If cross < 0: CW winding, perpendicular "right" faces EXTERIOR
-  // Our default code assumes perpendicular positive = interior, negative = exterior
-  // So if cross < 0, we need to FLIP
-  return cross < 0;
-}
-
-/**
  * Layout panels for a chain interval with proper L/T/free-end rules
  * 
  * FILL STRATEGY:
@@ -940,23 +891,10 @@ export function layoutPanelsForChainWithJunctions(
   
   const endpointInfo = getChainEndpointInfo(chain, lJunctions, tJunctions, freeEnds);
   
-  // Determine if this chain needs side flipping based on L-junction geometry
-  const needsFlip = shouldFlipSideForChain(chain, lJunctions);
-  
-  // Effective side: flip if the geometry indicates perpendicular positive is NOT interior
-  const effectiveSide = needsFlip 
-    ? (side === 'exterior' ? 'interior' : 'exterior') 
-    : side;
-  
-  if (needsFlip && row === 0) {
-    console.log(`[SIDE FLIP] Chain ${chain.id}: requested=${side}, effective=${effectiveSide} (flipped due to L-junction geometry)`);
-  }
-  
   // Slot counter for stable IDs
   let slotCounter = 0;
   
-  // Side short code for IDs - use ORIGINAL side for labeling (user intent)
-  // but effectiveSide for geometry (actual positioning)
+  // Side short code for IDs
   const sideCode = side === 'exterior' ? 'ext' : 'int';
   
   // Helper to determine seed origin
@@ -1028,8 +966,9 @@ export function layoutPanelsForChainWithJunctions(
     const perpX = -dirY;
     const perpZ = dirX;
     
-    // Use effectiveSide from parent scope (already computed based on L-junction geometry)
-    // This ensures panels are positioned on the correct architectural side
+    // NOTE: For this debugging pass we do NOT auto-flip exterior/interior at corners.
+    // The caller will generate only the exterior wall, so the side is stable.
+    const effectiveSide = side;
     
     // Panel positioning perpendicular to wall:
     // Wall total thickness = 4 TOOTH (150mm) or 5 TOOTH (220mm)
