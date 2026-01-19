@@ -283,6 +283,8 @@ export default function ProjectEditor() {
     showPanels: true,
     showExteriorPanels: true,
     showInteriorPanels: true,
+    showPartitionPanels: true, // Partition panels (interior walls)
+    showUnknownPanels: true, // Unresolved panels
     showTopos: true,
     showOpenings: true,
     showGrid: true, // Base grid always visible

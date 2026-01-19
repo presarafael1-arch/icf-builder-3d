@@ -1,4 +1,4 @@
-import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart } from 'lucide-react';
+import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart, Box, Columns } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
@@ -64,7 +64,7 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
             </Button>
           </PopoverTrigger>
           <PopoverContent 
-            className="w-64 bg-background border border-border shadow-lg z-50" 
+            className="w-72 bg-background border border-border shadow-lg z-50" 
             align="start"
             sideOffset={8}
           >
@@ -148,7 +148,75 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                 />
               </div>
 
-              {/* Separator */}
+              {/* Panel Side Visibility Section */}
+              <div className="border-t border-border my-1 pt-2">
+                <h5 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                  <Box className="h-3 w-3" />
+                  Painéis por Tipo
+                </h5>
+              </div>
+
+              {/* Exterior panels toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-blue-400" />
+                  <Label htmlFor="show-exterior" className="text-sm cursor-pointer">
+                    Exteriores (azul)
+                  </Label>
+                </div>
+                <Switch
+                  id="show-exterior"
+                  checked={settings.showExteriorPanels}
+                  onCheckedChange={() => toggleSetting('showExteriorPanels')}
+                />
+              </div>
+
+              {/* Interior panels toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-white" />
+                  <Label htmlFor="show-interior" className="text-sm cursor-pointer">
+                    Interiores (branco)
+                  </Label>
+                </div>
+                <Switch
+                  id="show-interior"
+                  checked={settings.showInteriorPanels}
+                  onCheckedChange={() => toggleSetting('showInteriorPanels')}
+                />
+              </div>
+
+              {/* Partition panels toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-purple-400" />
+                  <Label htmlFor="show-partition" className="text-sm cursor-pointer">
+                    Partições (internos)
+                  </Label>
+                </div>
+                <Switch
+                  id="show-partition"
+                  checked={settings.showPartitionPanels}
+                  onCheckedChange={() => toggleSetting('showPartitionPanels')}
+                />
+              </div>
+
+              {/* Unknown/Unresolved panels toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-orange-400" />
+                  <Label htmlFor="show-unknown" className="text-sm cursor-pointer">
+                    Não resolvidos
+                  </Label>
+                </div>
+                <Switch
+                  id="show-unknown"
+                  checked={settings.showUnknownPanels}
+                  onCheckedChange={() => toggleSetting('showUnknownPanels')}
+                />
+              </div>
+
+              {/* Debug Footprint Section */}
               <div className="border-t border-border my-1 pt-2">
                 <h5 className="text-xs font-medium text-muted-foreground mb-2">Debug Footprint</h5>
               </div>

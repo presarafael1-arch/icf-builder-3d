@@ -62,6 +62,8 @@ export default function ProjectEstimate() {
     showPanels: true,
     showExteriorPanels: true,
     showInteriorPanels: true,
+    showPartitionPanels: true, // Partition panels
+    showUnknownPanels: true, // Unresolved panels
     showTopos: true,
     showWebs: true,
     showTarugos: false,

@@ -43,6 +43,9 @@ export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT
 // Side of the wall (for dual-panel layout)
 export type WallSide = 'exterior' | 'interior';
 
+// Chain classification type (from footprint detection)
+export type ChainClassification = 'PERIMETER' | 'PARTITION' | 'UNRESOLVED';
+
 // Classified panel placement (with stable ID support)
 export interface ClassifiedPanel {
   matrix: THREE.Matrix4;
@@ -54,6 +57,7 @@ export interface ClassifiedPanel {
   isTopoPiece?: boolean;
   isEndPiece?: boolean;
   side?: WallSide; // Which side of the wall this panel is on
+  chainClassification?: ChainClassification; // Whether this is perimeter, partition, or unresolved
   
   // Stable ID components (for panel selection)
   panelId?: string;
@@ -1119,6 +1123,14 @@ export function layoutPanelsForChainWithJunctions(
     const cutLeftMm = type === 'CORNER_CUT' ? PANEL_WIDTH - width : 0;
     const cutRightMm = 0; // Never cut both sides
 
+    // Determine chain classification from sideClassification
+    let chainClassification: ChainClassification = 'UNRESOLVED';
+    if (chain.sideClassification === 'LEFT_EXT' || chain.sideClassification === 'RIGHT_EXT') {
+      chainClassification = 'PERIMETER';
+    } else if (chain.sideClassification === 'BOTH_INT') {
+      chainClassification = 'PARTITION';
+    }
+
     return { 
       matrix, 
       type, 
@@ -1128,6 +1140,7 @@ export function layoutPanelsForChainWithJunctions(
       isCornerPiece: isCorner, 
       isEndPiece: isEnd,
       side: effectiveSide, // Include which side this panel is on (after flip)
+      chainClassification, // Include chain classification for filtering
       // Stable ID data
       panelId,
       slotIndex,

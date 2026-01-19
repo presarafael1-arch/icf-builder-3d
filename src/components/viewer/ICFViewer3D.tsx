@@ -177,6 +177,7 @@ function ChainOverlay({ walls }: { walls: WallSegment[] }) {
 }
 
 // Footprint polygon visualization (green lines outlining detected outer polygon)
+// Uses depthTest=false and high renderOrder to always be visible
 function FootprintVisualization({ walls }: { walls: WallSegment[] }) {
   const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   
@@ -192,11 +193,13 @@ function FootprintVisualization({ walls }: { walls: WallSegment[] }) {
       const p1 = polygon[i];
       const p2 = polygon[(i + 1) % polygon.length];
       
+      // Raise Y by 2mm to be visible above ground
+      const yOffset = 0.005;
       positions[i * 6 + 0] = p1.x * SCALE;
-      positions[i * 6 + 1] = 0.03; // Slightly above grid
+      positions[i * 6 + 1] = yOffset;
       positions[i * 6 + 2] = p1.y * SCALE;
       positions[i * 6 + 3] = p2.x * SCALE;
-      positions[i * 6 + 4] = 0.03;
+      positions[i * 6 + 4] = yOffset;
       positions[i * 6 + 5] = p2.y * SCALE;
     }
     
@@ -209,8 +212,15 @@ function FootprintVisualization({ walls }: { walls: WallSegment[] }) {
   if (!geometry) return null;
   
   return (
-    <lineSegments geometry={geometry} frustumCulled={false}>
-      <lineBasicMaterial color={'#22c55e'} linewidth={3} opacity={0.9} transparent />
+    <lineSegments geometry={geometry} frustumCulled={false} renderOrder={100}>
+      <lineBasicMaterial 
+        color={'#22c55e'} 
+        linewidth={3} 
+        opacity={1} 
+        transparent={false}
+        depthTest={false}
+        depthWrite={false}
+      />
     </lineSegments>
   );
 }
@@ -491,23 +501,39 @@ function BatchedPanelInstances({
     
     const processedPanels = result.allPanels.map(applyOverrideWithType);
     
-    // Filter panels by exterior/interior visibility settings
+    // Filter panels by chain classification and side visibility settings
     const filteredPanels = processedPanels.filter(panel => {
       const panelId = panel.panelId || '';
       const isExterior = panelId.includes(':ext:');
       const isInterior = panelId.includes(':int:');
-      if (isExterior && !settings.showExteriorPanels) return false;
-      if (isInterior && !settings.showInteriorPanels) return false;
+      const classification = panel.chainClassification || 'UNRESOLVED';
+      
+      // Filter by chain classification
+      if (classification === 'PARTITION' && !settings.showPartitionPanels) return false;
+      if (classification === 'UNRESOLVED' && !settings.showUnknownPanels) return false;
+      
+      // Filter by side (for PERIMETER chains)
+      if (classification === 'PERIMETER') {
+        if (isExterior && !settings.showExteriorPanels) return false;
+        if (isInterior && !settings.showInteriorPanels) return false;
+      }
+      
       return true;
     });
     
-    // Helper function to filter by side visibility and apply overrides with type
+    // Helper function to filter by visibility and apply overrides with type
     const filterBySide = (panels: ClassifiedPanel[]) => panels.map(applyOverrideWithType).filter(p => {
       const pid = p.panelId || '';
       const isExt = pid.includes(':ext:');
       const isInt = pid.includes(':int:');
-      if (isExt && !settings.showExteriorPanels) return false;
-      if (isInt && !settings.showInteriorPanels) return false;
+      const classification = p.chainClassification || 'UNRESOLVED';
+      
+      if (classification === 'PARTITION' && !settings.showPartitionPanels) return false;
+      if (classification === 'UNRESOLVED' && !settings.showUnknownPanels) return false;
+      if (classification === 'PERIMETER') {
+        if (isExt && !settings.showExteriorPanels) return false;
+        if (isInt && !settings.showInteriorPanels) return false;
+      }
       return true;
     });
     
