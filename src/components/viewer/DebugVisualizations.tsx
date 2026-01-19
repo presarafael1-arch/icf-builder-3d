@@ -53,6 +53,7 @@ interface DebugVisualizationsProps {
   selectedCornerNode?: string | null; // Full node ID: 'node-{junctionId}-ext' or 'node-{junctionId}-int'
   onSelectCornerNode?: (nodeId: string | null) => void;
   cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>; // Individual offsets per node
+  flippedChains?: Set<string>; // Chains with manually flipped EXT/INT classification
 }
 
 // Seed markers at junction nodes
@@ -731,7 +732,8 @@ function TJunctionAxes({ chainsResult, settings }: DebugVisualizationsProps) {
 }
 
 // Run segments with different colors per chain
-function RunSegments({ chainsResult, settings }: DebugVisualizationsProps) {
+// Flipped chains are highlighted with a distinct color (magenta)
+function RunSegments({ chainsResult, settings, flippedChains }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
   
   const geometry = useMemo(() => {
@@ -741,8 +743,13 @@ function RunSegments({ chainsResult, settings }: DebugVisualizationsProps) {
     const positions: number[] = [];
     const colors: number[] = [];
     
+    // Color for flipped chains (magenta/pink)
+    const flippedColor = new THREE.Color('#FF00FF');
+    
     chains.forEach((chain, idx) => {
-      const color = new THREE.Color(RUN_COLORS[idx % RUN_COLORS.length]);
+      // Check if this chain is flipped
+      const isFlipped = flippedChains?.has(chain.id) ?? false;
+      const color = isFlipped ? flippedColor : new THREE.Color(RUN_COLORS[idx % RUN_COLORS.length]);
       
       // Draw chain line at mid-height
       const y = settings.maxRows * PANEL_HEIGHT * SCALE / 2 + 0.05;
@@ -759,7 +766,7 @@ function RunSegments({ chainsResult, settings }: DebugVisualizationsProps) {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     
     return geo;
-  }, [chains, settings.maxRows]);
+  }, [chains, settings.maxRows, flippedChains]);
   
   if (!geometry) return null;
   
@@ -1053,7 +1060,8 @@ function LCornerBoundingBoxes({ chainsResult, settings }: DebugVisualizationsPro
 }
 
 // Wall Dimensions Visualization - shows measurements in TOOTH units
-function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizationsProps) {
+// Also shows indicator for flipped chains
+function WallDimensionsVisualization({ chainsResult, settings, flippedChains }: DebugVisualizationsProps) {
   const { chains } = chainsResult;
   
   // Calculate wall measurements
@@ -1131,9 +1139,38 @@ function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizat
       {chainLabels.map(label => {
         const exteriorOffset = label.offsetDist * SCALE;
         const interiorOffset = -label.offsetDist * SCALE;
+        const isFlipped = flippedChains?.has(label.chainId) ?? false;
         
         return (
           <group key={label.chainId}>
+            {/* Flipped indicator badge */}
+            {isFlipped && (
+              <Html
+                position={[
+                  label.centerX * SCALE,
+                  y + 0.1,
+                  label.centerY * SCALE
+                ]}
+                center
+                distanceFactor={12}
+                style={{
+                  background: '#FF00FF',
+                  borderRadius: '4px',
+                  padding: '3px 8px',
+                  color: 'white',
+                  fontSize: '10px',
+                  fontWeight: 'bold',
+                  fontFamily: 'monospace',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  border: '2px solid #FF66FF',
+                  boxShadow: '0 0 10px rgba(255, 0, 255, 0.5)',
+                }}
+              >
+                ⟲ INVERTIDO
+              </Html>
+            )}
+            
             {/* Chain length label at center */}
             <Html
               position={[
@@ -1144,7 +1181,7 @@ function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizat
               center
               distanceFactor={15}
               style={{
-                background: '#0ea5e9',
+                background: isFlipped ? '#FF00FF' : '#0ea5e9',
                 borderRadius: '4px',
                 padding: '3px 8px',
                 color: 'white',
@@ -1257,7 +1294,7 @@ function WallDimensionsVisualization({ chainsResult, settings }: DebugVisualizat
 }
 
 // Main component that renders debug visualizations based on settings
-export function DebugVisualizations({ chainsResult, settings, selectedCornerNode, onSelectCornerNode, cornerNodeOffsets }: DebugVisualizationsProps) {
+export function DebugVisualizations({ chainsResult, settings, selectedCornerNode, onSelectCornerNode, cornerNodeOffsets, flippedChains }: DebugVisualizationsProps) {
   return (
     <group>
       {settings.showSeeds && (
@@ -1269,7 +1306,7 @@ export function DebugVisualizations({ chainsResult, settings, selectedCornerNode
       )}
       
       {settings.showRunSegments && (
-        <RunSegments chainsResult={chainsResult} settings={settings} />
+        <RunSegments chainsResult={chainsResult} settings={settings} flippedChains={flippedChains} />
       )}
       
       {settings.showMiddleZone && (
@@ -1289,7 +1326,7 @@ export function DebugVisualizations({ chainsResult, settings, selectedCornerNode
       )}
       
       {settings.showWallDimensions && (
-        <WallDimensionsVisualization chainsResult={chainsResult} settings={settings} />
+        <WallDimensionsVisualization chainsResult={chainsResult} settings={settings} flippedChains={flippedChains} />
       )}
       
       {settings.showCornerNodes && (

@@ -1511,6 +1511,7 @@ function Scene({
         selectedCornerNode={selectedCornerNode}
         onSelectCornerNode={onSelectCornerNode}
         cornerNodeOffsets={cornerNodeOffsets}
+        flippedChains={flippedChains}
       />
 
       <Environment preset="city" />
