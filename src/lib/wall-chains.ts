@@ -64,6 +64,8 @@ export interface ChainsResult {
       interiorPartitions: number;
       unresolved: number;
     };
+    // List of unresolved chain IDs for diagnostic display
+    unresolvedChainIds: string[];
   };
   stats: {
     originalSegments: number;
@@ -1227,6 +1229,7 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
         interiorPartitions: footprintResult.stats.interiorPartitions,
         unresolved: footprintResult.stats.unresolved,
       },
+      unresolvedChainIds: footprintResult.unresolvedChainIds,
     },
     stats,
     junctionCounts,

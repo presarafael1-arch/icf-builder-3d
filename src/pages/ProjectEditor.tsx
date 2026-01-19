@@ -326,6 +326,7 @@ export default function ProjectEditor() {
     // Footprint debug
     showFootprint: false,
     showFootprintStats: false,
+    highlightUnresolved: false, // Highlight unresolved chains
   });
   
   // Corner node offsets (individual per nodeId)

@@ -272,6 +272,7 @@ export interface ViewerSettings {
   // Footprint debug toggles
   showFootprint: boolean;
   showFootprintStats: boolean;
+  highlightUnresolved: boolean; // Highlight unresolved/unknown panels with distinct color
 }
 
 // Individual corner node offset (per nodeId)

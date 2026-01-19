@@ -250,6 +250,21 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   onCheckedChange={() => toggleSetting('showFootprintStats')}
                 />
               </div>
+
+              {/* Highlight unresolved toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-orange-400" />
+                  <Label htmlFor="highlight-unresolved" className="text-sm cursor-pointer">
+                    Destacar Não Resolvidas
+                  </Label>
+                </div>
+                <Switch
+                  id="highlight-unresolved"
+                  checked={settings.highlightUnresolved}
+                  onCheckedChange={() => toggleSetting('highlightUnresolved')}
+                />
+              </div>
             </div>
           </PopoverContent>
         </Popover>
