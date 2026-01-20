@@ -19,6 +19,7 @@ export type SideClassification =
   | 'LEFT_EXT'      // Left side is exterior, right is interior
   | 'RIGHT_EXT'     // Right side is exterior, left is interior  
   | 'BOTH_INT'      // Interior partition wall (both sides inside building)
+  | 'OUTSIDE'       // Chain is entirely outside the footprint (e.g., external feature, fence)
   | 'UNRESOLVED';   // Cannot determine (open geometry or error)
 
 // Footprint detection status
@@ -65,10 +66,13 @@ export interface FootprintResult {
     totalChains: number;
     exteriorChains: number;
     interiorPartitions: number;
+    outsideFeatures: number; // Chains entirely outside footprint
     unresolved: number;
   };
-  // Unresolved chain IDs for diagnostic display
+  // Unresolved chain IDs for diagnostic display (real errors)
   unresolvedChainIds: string[];
+  // Outside chain IDs (not errors, just outside footprint)
+  outsideChainIds: string[];
 }
 
 // ============= Point-in-Polygon Algorithm =============
@@ -357,8 +361,9 @@ export function detectFootprintAndClassify(
       loopsFound: 0,
       chainSides: new Map(),
       interiorLoops: [],
-      stats: { totalChains: 0, exteriorChains: 0, interiorPartitions: 0, unresolved: 0 },
+      stats: { totalChains: 0, exteriorChains: 0, interiorPartitions: 0, outsideFeatures: 0, unresolved: 0 },
       unresolvedChainIds: [],
+      outsideChainIds: [],
     };
   }
   
@@ -404,8 +409,10 @@ export function detectFootprintAndClassify(
   const chainSides = new Map<string, ChainSideInfo>();
   let exteriorChains = 0;
   let interiorPartitions = 0;
+  let outsideFeatures = 0;
   let unresolved = 0;
   const unresolvedChainIds: string[] = [];
+  const outsideChainIds: string[] = [];
   
   // Adaptive eps values - try multiple distances to escape boundary ambiguity
   const EPS_LIST = [50, 150, 300, 500]; // mm - increasing offset distances
@@ -578,10 +585,11 @@ export function detectFootprintAndClassify(
       outsideIsPositivePerp = true; // Arbitrary for partitions
       interiorPartitions++;
     } else if (bothOutsideVotes >= majorityThreshold) {
-      classification = 'UNRESOLVED';
+      // Chain is entirely outside footprint - NOT an error, just an external feature
+      classification = 'OUTSIDE';
       unresolvedReason = 'BOTH_OUTSIDE';
-      unresolved++;
-      unresolvedChainIds.push(chain.id);
+      outsideFeatures++;
+      outsideChainIds.push(chain.id);
     } else if (ambiguousVotes >= majorityThreshold) {
       classification = 'UNRESOLVED';
       unresolvedReason = 'BOUNDARY_AMBIGUOUS';
@@ -701,10 +709,11 @@ export function detectFootprintAndClassify(
   console.log('[FootprintDetection] Classification:', {
     exterior: exteriorChains,
     interior: interiorPartitions,
+    outside: outsideFeatures,
     unresolved,
   });
   
-  // Determine overall status
+  // Determine overall status - OUTSIDE chains are NOT errors, so don't count them
   const status: FootprintStatus = 
     (outerPolygon.length >= 3 && !usedFallback) ? 'OK' : 
     (usedFallback && outerPolygon.length >= 3) ? 'OK' :
@@ -721,9 +730,11 @@ export function detectFootprintAndClassify(
       totalChains: chains.length,
       exteriorChains,
       interiorPartitions,
+      outsideFeatures,
       unresolved,
     },
     unresolvedChainIds,
+    outsideChainIds,
   };
 }
 
@@ -828,6 +839,9 @@ export function getPanelSideFromClassification(
       return isPositiveOffset ? 'interior' : 'exterior';
     case 'BOTH_INT':
       // Both sides are interior (partition wall)
+      return 'interior';
+    case 'OUTSIDE':
+      // Outside features - treat as interior (neutral) for rendering
       return 'interior';
     case 'UNRESOLVED':
     default:
