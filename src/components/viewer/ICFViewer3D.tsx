@@ -294,8 +294,27 @@ interface FootprintStatsOverlayProps {
   walls: WallSegment[];
 }
 
+// Helper to get unresolved reason description
+function getUnresolvedReasonDescription(reason?: string): string {
+  switch (reason) {
+    case 'BOTH_OUTSIDE':
+      return 'Segmento fora do footprint (geometria aberta?)';
+    case 'ZERO_LENGTH':
+      return 'Segmento com comprimento zero (degenerado)';
+    case 'NO_POLYGON':
+      return 'Não foi possível detectar polígono fechado';
+    default:
+      return 'Causa não identificada';
+  }
+}
+
 function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
+  const footprintResult = useMemo(() => {
+    // Re-run footprint detection to get full segmentStats with reasons
+    const { detectFootprintAndClassify } = require('@/lib/footprint-detection');
+    return detectFootprintAndClassify(chainsResult.chains, 100);
+  }, [chainsResult.chains]);
   
   const footprint = chainsResult.footprint;
   if (!footprint) return null;
@@ -306,17 +325,31 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   const hasUnresolved = unresolved > 0;
   const unresolvedIds = footprint.unresolvedChainIds || [];
   
+  // Build detailed unresolved info with reasons
+  const unresolvedDetails = unresolvedIds.map(id => {
+    const sideInfo = footprintResult?.chainSides?.get(id);
+    const reason = sideInfo?.segmentStats?.unresolvedReason;
+    return { id, reason };
+  });
+  
+  // Determine status indicator
+  const statusOK = footprint.outerPolygon.length >= 3 && unresolved === 0;
+  const statusPartial = footprint.outerPolygon.length >= 3 && unresolved > 0;
+  
   return (
     <div className="absolute top-16 left-4 z-20 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-2 shadow-lg max-w-xs">
       <div className="font-medium text-foreground border-b border-border pb-1 flex items-center gap-2">
-        <span className="inline-block w-3 h-3 rounded-full bg-green-500"></span>
+        <span className={`inline-block w-3 h-3 rounded-full ${statusOK ? 'bg-green-500' : statusPartial ? 'bg-yellow-500' : 'bg-red-500'}`}></span>
         Footprint Detection Stats
+        <span className={`text-[10px] ml-auto ${statusOK ? 'text-green-400' : statusPartial ? 'text-yellow-400' : 'text-red-400'}`}>
+          {statusOK ? 'OK' : statusPartial ? 'PARTIAL' : 'UNRESOLVED'}
+        </span>
       </div>
       
       <div className="space-y-1 text-muted-foreground">
         <div className="flex justify-between">
           <span>Loops encontrados:</span>
-          <span className="font-mono text-foreground">{chainsResult.footprint?.stats.exteriorChains ? 1 : 0}</span>
+          <span className="font-mono text-foreground">{footprint.outerPolygon.length >= 3 ? '1' : '0'}</span>
         </div>
         <div className="flex justify-between">
           <span>Área footprint:</span>
@@ -343,15 +376,18 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
       {hasUnresolved && (
         <div className="border-t border-border pt-2 space-y-1">
           <div className="text-orange-400 text-[11px] font-medium">Chains não resolvidas:</div>
-          <div className="flex flex-wrap gap-1">
-            {unresolvedIds.map(id => (
-              <span key={id} className="bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded text-[10px] font-mono">
-                {id}
-              </span>
+          <div className="space-y-1.5">
+            {unresolvedDetails.map(({ id, reason }) => (
+              <div key={id} className="bg-orange-500/10 rounded p-1.5">
+                <span className="text-orange-300 font-mono text-[10px] block">{id}</span>
+                <span className="text-orange-400/70 text-[9px] block mt-0.5">
+                  → {getUnresolvedReasonDescription(reason)}
+                </span>
+              </div>
             ))}
           </div>
-          <div className="text-orange-400/70 text-[10px] mt-1">
-            Desligar "Não resolvidas" na Visibilidade para localizar.
+          <div className="text-orange-400/70 text-[10px] mt-2 border-t border-orange-500/20 pt-1.5">
+            💡 Use "Destacar Não Resolvidas" ou desligue na Visibilidade para localizar.
           </div>
         </div>
       )}

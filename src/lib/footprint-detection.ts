@@ -43,6 +43,7 @@ export interface ChainSideInfo {
     rightExtCount: number;
     bothIntCount: number;
     unresolvedCount: number;
+    unresolvedReason?: string; // Reason for UNRESOLVED classification (e.g., 'BOTH_OUTSIDE', 'ZERO_LENGTH', 'NO_POLYGON')
   };
 }
 
@@ -348,6 +349,14 @@ export function detectFootprintAndClassify(
         outwardNormalAngle: null,
         leftInside: false,
         rightInside: false,
+        segmentStats: {
+          totalSegments: 0,
+          leftExtCount: 0,
+          rightExtCount: 0,
+          bothIntCount: 0,
+          unresolvedCount: 1,
+          unresolvedReason: 'ZERO_LENGTH',
+        },
       });
       unresolved++;
       unresolvedChainIds.push(chain.id);
@@ -372,6 +381,7 @@ export function detectFootprintAndClassify(
     let classification: SideClassification;
     let outwardNormalAngle: number | null = null;
     let outsideIsPositivePerp = true; // Default: positive perp (right) is outside
+    let unresolvedReason: string | undefined;
     
     if (leftInside && !rightInside) {
       // Left is inside, right is outside => Right is EXT
@@ -393,6 +403,7 @@ export function detectFootprintAndClassify(
     } else {
       // Both outside => unresolved (wall outside footprint?)
       classification = 'UNRESOLVED';
+      unresolvedReason = 'BOTH_OUTSIDE';
       unresolved++;
       unresolvedChainIds.push(chain.id);
     }
@@ -404,8 +415,87 @@ export function detectFootprintAndClassify(
       outwardNormalAngle,
       leftInside,
       rightInside,
+      segmentStats: {
+        totalSegments: 1,
+        leftExtCount: classification === 'LEFT_EXT' ? 1 : 0,
+        rightExtCount: classification === 'RIGHT_EXT' ? 1 : 0,
+        bothIntCount: classification === 'BOTH_INT' ? 1 : 0,
+        unresolvedCount: classification === 'UNRESOLVED' ? 1 : 0,
+        unresolvedReason,
+      },
     });
   });
+  
+  // Step 4: Per-chain consistency check for PERIMETER chains
+  // Verify that the side marked as "exterior" actually falls OUTSIDE the footprint
+  // using the EXACT same perpendicular calculation used in panel placement
+  if (outerPolygon.length >= 3) {
+    chainSides.forEach((sideInfo, chainId) => {
+      // Only check perimeter chains (LEFT_EXT or RIGHT_EXT)
+      if (sideInfo.classification !== 'LEFT_EXT' && sideInfo.classification !== 'RIGHT_EXT') {
+        return;
+      }
+      
+      const chain = chains.find(c => c.id === chainId);
+      if (!chain) return;
+      
+      // Calculate using the same perpendicular convention as panel placement
+      const dx = chain.endX - chain.startX;
+      const dy = chain.endY - chain.startY;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1) return;
+      
+      const dirX = dx / len;
+      const dirY = dy / len;
+      
+      // "Positive perpendicular" = 90° CW from direction = (dirY, -dirX) (used in panel placement)
+      // This is the RIGHT side when looking from start to end
+      const perpX = dirY;
+      const perpY = -dirX;
+      
+      // Get midpoint
+      const midX = (chain.startX + chain.endX) / 2;
+      const midY = (chain.startY + chain.endY) / 2;
+      
+      // Test point on the "exterior" side according to current classification
+      const testOffset = EPS;
+      let testX: number, testY: number;
+      
+      if (sideInfo.outsideIsPositivePerp) {
+        // Current assumption: positive perp (right) is exterior
+        testX = midX + perpX * testOffset;
+        testY = midY + perpY * testOffset;
+      } else {
+        // Current assumption: negative perp (left) is exterior
+        testX = midX - perpX * testOffset;
+        testY = midY - perpY * testOffset;
+      }
+      
+      // If the "exterior" test point is INSIDE the footprint, our classification is inverted
+      const exteriorPointIsInside = pointInPolygon(testX, testY, outerPolygon);
+      
+      if (exteriorPointIsInside) {
+        // INVERT the classification - the exterior is actually on the opposite side
+        console.log(`[FootprintDetection] Consistency check: Chain ${chainId} has inverted EXT/INT - correcting`);
+        
+        sideInfo.outsideIsPositivePerp = !sideInfo.outsideIsPositivePerp;
+        
+        // Also update the classification label for clarity
+        if (sideInfo.classification === 'LEFT_EXT') {
+          sideInfo.classification = 'RIGHT_EXT';
+        } else if (sideInfo.classification === 'RIGHT_EXT') {
+          sideInfo.classification = 'LEFT_EXT';
+        }
+        
+        // Update outward normal angle
+        if (sideInfo.outsideIsPositivePerp) {
+          sideInfo.outwardNormalAngle = Math.atan2(-dirX, dirY);
+        } else {
+          sideInfo.outwardNormalAngle = Math.atan2(dirX, -dirY);
+        }
+      }
+    });
+  }
   
   console.log('[FootprintDetection] Classification:', {
     exterior: exteriorChains,
