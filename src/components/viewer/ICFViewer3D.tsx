@@ -235,44 +235,63 @@ interface UnresolvedHighlightsProps {
 function UnresolvedHighlights({ allPanels, concreteThickness, visible = true }: UnresolvedHighlightsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   
-  // Filter only UNRESOLVED panels
-  const unresolvedPanels = useMemo(() => 
-    allPanels.filter(p => p.chainClassification === 'UNRESOLVED'),
-  [allPanels]);
+  // IMPORTANT: All hooks must be called BEFORE any early return to avoid React hooks violation
+  // Filter only UNRESOLVED panels - always compute even if not visible
+  const unresolvedPanels = useMemo(() => {
+    if (!allPanels || !Array.isArray(allPanels)) return [];
+    return allPanels.filter(p => p && p.chainClassification === 'UNRESOLVED');
+  }, [allPanels]);
   
-  // Create matrices with slight scale-up for glow effect
-  const matrices = useMemo(() => {
-    return unresolvedPanels.map(panel => {
-      const pos = new THREE.Vector3();
-      const quat = new THREE.Quaternion();
-      const scale = new THREE.Vector3();
-      panel.matrix.decompose(pos, quat, scale);
-      // Scale up slightly for highlight visibility
-      scale.multiplyScalar(1.02);
-      const matrix = new THREE.Matrix4();
-      matrix.compose(pos, quat, scale);
-      return matrix;
-    });
-  }, [unresolvedPanels]);
-  
-  useEffect(() => {
-    if (!meshRef.current || matrices.length === 0) return;
-    matrices.forEach((matrix, i) => {
-      meshRef.current!.setMatrixAt(i, matrix);
-    });
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  }, [matrices]);
-  
-  if (!visible || unresolvedPanels.length === 0) return null;
-  
+  // Geometry - always create to keep hook order stable
   const glowGeometry = useMemo(() => 
     new THREE.BoxGeometry(PANEL_WIDTH * SCALE, PANEL_HEIGHT * SCALE, PANEL_THICKNESS * SCALE),
   []);
   
+  // Create matrices with slight scale-up for glow effect - defensive with null checks
+  const matrices = useMemo(() => {
+    if (!visible || unresolvedPanels.length === 0) return [];
+    return unresolvedPanels.map(panel => {
+      if (!panel || !panel.matrix) return null;
+      try {
+        const pos = new THREE.Vector3();
+        const quat = new THREE.Quaternion();
+        const scale = new THREE.Vector3();
+        panel.matrix.decompose(pos, quat, scale);
+        // Scale up slightly for highlight visibility
+        scale.multiplyScalar(1.02);
+        const matrix = new THREE.Matrix4();
+        matrix.compose(pos, quat, scale);
+        return matrix;
+      } catch (e) {
+        console.warn('[UnresolvedHighlights] Failed to decompose matrix for panel', panel.panelId);
+        return null;
+      }
+    }).filter((m): m is THREE.Matrix4 => m !== null);
+  }, [visible, unresolvedPanels]);
+  
+  // Instance count for InstancedMesh args - must be stable, use max of 1 if empty to avoid issues
+  const instanceCount = useMemo(() => Math.max(1, matrices.length), [matrices.length]);
+  
+  // Update instance matrices
+  useEffect(() => {
+    if (!meshRef.current || matrices.length === 0) return;
+    matrices.forEach((matrix, i) => {
+      if (matrix && meshRef.current) {
+        meshRef.current.setMatrixAt(i, matrix);
+      }
+    });
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true;
+    }
+  }, [matrices]);
+  
+  // Now we can safely return null AFTER all hooks are declared
+  if (!visible || unresolvedPanels.length === 0 || matrices.length === 0) return null;
+  
   return (
     <instancedMesh 
       ref={meshRef} 
-      args={[glowGeometry, undefined, unresolvedPanels.length]} 
+      args={[glowGeometry, undefined, instanceCount]} 
       frustumCulled={false}
       raycast={() => null} // Non-interactive
     >
@@ -298,13 +317,17 @@ interface FootprintStatsOverlayProps {
 function getUnresolvedReasonDescription(reason?: string): string {
   switch (reason) {
     case 'BOTH_OUTSIDE':
-      return 'Segmento fora do footprint (geometria aberta?)';
+      return 'Ambos os lados fora do footprint (geometria aberta?)';
     case 'ZERO_LENGTH':
       return 'Segmento com comprimento zero (degenerado)';
     case 'NO_POLYGON':
       return 'Não foi possível detectar polígono fechado';
+    case 'BOUNDARY_AMBIGUOUS':
+      return 'Pontos caem na fronteira do polígono (eps insuficiente)';
+    case 'MIXED_VOTES':
+      return 'Votos mistos entre segmentos (geometria irregular)';
     default:
-      return 'Causa não identificada';
+      return reason ? `Causa: ${reason}` : 'Causa não identificada';
   }
 }
 
@@ -325,11 +348,12 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   const hasUnresolved = unresolved > 0;
   const unresolvedIds = footprint.unresolvedChainIds || [];
   
-  // Build detailed unresolved info with reasons
+  // Build detailed unresolved info with reasons and segment stats
   const unresolvedDetails = unresolvedIds.map(id => {
     const sideInfo = footprintResult?.chainSides?.get(id);
     const reason = sideInfo?.segmentStats?.unresolvedReason;
-    return { id, reason };
+    const stats = sideInfo?.segmentStats;
+    return { id, reason, stats };
   });
   
   // Determine status indicator
@@ -377,17 +401,23 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
         <div className="border-t border-border pt-2 space-y-1">
           <div className="text-orange-400 text-[11px] font-medium">Chains não resolvidas:</div>
           <div className="space-y-1.5">
-            {unresolvedDetails.map(({ id, reason }) => (
+            {unresolvedDetails.map(({ id, reason, stats }) => (
               <div key={id} className="bg-orange-500/10 rounded p-1.5">
                 <span className="text-orange-300 font-mono text-[10px] block">{id}</span>
                 <span className="text-orange-400/70 text-[9px] block mt-0.5">
                   → {getUnresolvedReasonDescription(reason)}
                 </span>
+                {stats && stats.totalSegments > 0 && (
+                  <span className="text-orange-400/50 text-[8px] block mt-0.5">
+                    Votos: R={stats.rightExtCount} L={stats.leftExtCount} P={stats.bothIntCount} U={stats.unresolvedCount} /{stats.totalSegments}
+                  </span>
+                )}
               </div>
             ))}
           </div>
-          <div className="text-orange-400/70 text-[10px] mt-2 border-t border-orange-500/20 pt-1.5">
-            💡 Use "Destacar Não Resolvidas" ou desligue na Visibilidade para localizar.
+          <div className="text-orange-400/70 text-[10px] mt-2 border-t border-orange-500/20 pt-1.5 space-y-1">
+            <div>💡 Use "Destacar Não Resolvidas" ou desligue na Visibilidade para localizar.</div>
+            <div>🔧 Se a chain está classificada, mas invertida, use "Inverter Lado EXT/INT" no Panel Inspector.</div>
           </div>
         </div>
       )}
