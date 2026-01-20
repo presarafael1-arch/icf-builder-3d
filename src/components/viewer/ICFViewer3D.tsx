@@ -6,6 +6,7 @@ import { PANEL_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS, WallSegment, ViewerSettings
 import { OpeningData, OpeningCandidate, getAffectedRows } from '@/types/openings';
 import { calculateWallAngle, calculateWallLength, calculateGridRows, calculateWebsPerRow } from '@/lib/icf-calculations';
 import { buildWallChains, buildWallChainsAutoTuned, WallChain } from '@/lib/wall-chains';
+import { detectFootprintAndClassify } from '@/lib/footprint-detection';
 import { getRemainingIntervalsForRow } from '@/lib/openings-calculations';
 import { 
   generatePanelLayout, 
@@ -335,7 +336,6 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   const chainsResult = useMemo(() => buildWallChainsAutoTuned(walls), [walls]);
   const footprintResult = useMemo(() => {
     // Re-run footprint detection to get full segmentStats with reasons
-    const { detectFootprintAndClassify } = require('@/lib/footprint-detection');
     return detectFootprintAndClassify(chainsResult.chains, 100);
   }, [chainsResult.chains]);
   
