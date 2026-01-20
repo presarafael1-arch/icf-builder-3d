@@ -225,6 +225,7 @@ export interface ViewerSettings {
   showExteriorPanels: boolean; // Show exterior face panels (PERIMETER EXT)
   showInteriorPanels: boolean; // Show interior face panels (PERIMETER INT)
   showPartitionPanels: boolean; // Show partition panels (BOTH_INT)
+  showOutsidePanels: boolean; // Show panels from chains outside footprint
   showUnknownPanels: boolean; // Show unresolved/unknown panels
   showTopos: boolean;
   showOpenings: boolean;

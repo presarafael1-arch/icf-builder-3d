@@ -284,6 +284,7 @@ export default function ProjectEditor() {
     showExteriorPanels: true,
     showInteriorPanels: true,
     showPartitionPanels: true, // Partition panels (interior walls)
+    showOutsidePanels: true, // Panels outside footprint
     showUnknownPanels: true, // Unresolved panels
     showTopos: true,
     showOpenings: true,

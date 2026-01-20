@@ -216,6 +216,21 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                 />
               </div>
 
+              {/* Outside footprint panels toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-gray-400" />
+                  <Label htmlFor="show-outside" className="text-sm cursor-pointer">
+                    Fora do footprint
+                  </Label>
+                </div>
+                <Switch
+                  id="show-outside"
+                  checked={settings.showOutsidePanels}
+                  onCheckedChange={() => toggleSetting('showOutsidePanels')}
+                />
+              </div>
+
               {/* Debug Footprint Section */}
               <div className="border-t border-border my-1 pt-2">
                 <h5 className="text-xs font-medium text-muted-foreground mb-2">Debug Footprint</h5>

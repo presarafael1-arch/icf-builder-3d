@@ -317,8 +317,6 @@ interface FootprintStatsOverlayProps {
 // Helper to get unresolved reason description
 function getUnresolvedReasonDescription(reason?: string): string {
   switch (reason) {
-    case 'BOTH_OUTSIDE':
-      return 'Ambos os lados fora do footprint (geometria aberta?)';
     case 'ZERO_LENGTH':
       return 'Segmento com comprimento zero (degenerado)';
     case 'NO_POLYGON':
@@ -343,10 +341,12 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   if (!footprint) return null;
   
   const areaM2 = footprint.outerAreaMm2 / 1e6;
-  const { exteriorChains, interiorPartitions, unresolved } = footprint.stats;
-  const total = exteriorChains + interiorPartitions + unresolved;
+  const { exteriorChains, interiorPartitions, outsideFeatures, unresolved } = footprint.stats;
+  const total = exteriorChains + interiorPartitions + outsideFeatures + unresolved;
   const hasUnresolved = unresolved > 0;
+  const hasOutside = outsideFeatures > 0;
   const unresolvedIds = footprint.unresolvedChainIds || [];
+  const outsideIds = footprint.outsideChainIds || [];
   
   // Build detailed unresolved info with reasons and segment stats
   const unresolvedDetails = unresolvedIds.map(id => {
@@ -356,7 +356,7 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
     return { id, reason, stats };
   });
   
-  // Determine status indicator
+  // Determine status indicator - OUTSIDE is not an error
   const statusOK = footprint.outerPolygon.length >= 3 && unresolved === 0;
   const statusPartial = footprint.outerPolygon.length >= 3 && unresolved > 0;
   
@@ -391,15 +391,35 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
           <span className="text-purple-400">⬤ Partições (INT/INT):</span>
           <span className="font-mono">{interiorPartitions}/{total}</span>
         </div>
+        <div className={`flex justify-between ${hasOutside ? 'text-gray-400' : 'text-muted-foreground'}`}>
+          <span>⬤ Fora do footprint:</span>
+          <span className="font-mono">{outsideFeatures}/{total}</span>
+        </div>
         <div className={`flex justify-between ${hasUnresolved ? 'text-orange-400' : 'text-muted-foreground'}`}>
           <span>{hasUnresolved ? '⚠' : '⬤'} Não resolvidas:</span>
           <span className="font-mono">{unresolved}/{total}</span>
         </div>
       </div>
       
+      {/* Outside footprint section (not errors) */}
+      {hasOutside && (
+        <div className="border-t border-border pt-2 space-y-1">
+          <div className="text-gray-400 text-[11px] font-medium">Fora do footprint:</div>
+          <div className="text-gray-500 text-[10px] space-y-0.5">
+            {outsideIds.map(id => (
+              <span key={id} className="font-mono block">{id}</span>
+            ))}
+          </div>
+          <div className="text-gray-500 text-[9px] mt-1">
+            ℹ️ Chains fora do perímetro (ex.: vedações, muros externos). Use o toggle "Fora do footprint" na Visibilidade.
+          </div>
+        </div>
+      )}
+      
+      {/* Real unresolved errors */}
       {hasUnresolved && (
         <div className="border-t border-border pt-2 space-y-1">
-          <div className="text-orange-400 text-[11px] font-medium">Chains não resolvidas:</div>
+          <div className="text-orange-400 text-[11px] font-medium">Chains não resolvidas (erros):</div>
           <div className="space-y-1.5">
             {unresolvedDetails.map(({ id, reason, stats }) => (
               <div key={id} className="bg-orange-500/10 rounded p-1.5">
@@ -416,7 +436,7 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
             ))}
           </div>
           <div className="text-orange-400/70 text-[10px] mt-2 border-t border-orange-500/20 pt-1.5 space-y-1">
-            <div>💡 Use "Destacar Não Resolvidas" ou desligue na Visibilidade para localizar.</div>
+            <div>💡 Use "Destacar Não Resolvidas" para localizar.</div>
             <div>🔧 Se a chain está classificada, mas invertida, use "Inverter Lado EXT/INT" no Panel Inspector.</div>
           </div>
         </div>
@@ -649,6 +669,7 @@ function BatchedPanelInstances({
       
       // Filter by chain classification
       if (classification === 'PARTITION' && !settings.showPartitionPanels) return false;
+      if (classification === 'OUTSIDE' && !settings.showOutsidePanels) return false;
       if (classification === 'UNRESOLVED' && !settings.showUnknownPanels) return false;
       
       // Filter by side (for PERIMETER chains)
@@ -668,6 +689,7 @@ function BatchedPanelInstances({
       const classification = p.chainClassification || 'UNRESOLVED';
       
       if (classification === 'PARTITION' && !settings.showPartitionPanels) return false;
+      if (classification === 'OUTSIDE' && !settings.showOutsidePanels) return false;
       if (classification === 'UNRESOLVED' && !settings.showUnknownPanels) return false;
       if (classification === 'PERIMETER') {
         if (isExt && !settings.showExteriorPanels) return false;
