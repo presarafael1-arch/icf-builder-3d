@@ -771,9 +771,14 @@ export default function ProjectEditor() {
       // Ensure viewer fits the imported plan
       fitView();
       
-      // Compute junction counts from actual chains (after transforms will be applied)
-      // Use the same chain-building logic that the viewer and left panel use
-      const chainsResult = buildWallChainsAutoTuned(newWalls);
+      // Compute junction counts from TRANSFORMED walls (after DXF transforms are applied)
+      // This ensures toast counts match the chain list (which also uses transformed walls)
+      const transformedForToast = applyDXFTransform(newWalls, {
+        flipY: viewerSettings.dxfFlipY,
+        mirrorX: viewerSettings.dxfMirrorX,
+        rotation: viewerSettings.dxfRotation,
+      });
+      const chainsResult = buildWallChainsAutoTuned(transformedForToast);
       const junctionCounts = chainsResult.junctionCounts;
       
       // Format total length for display
