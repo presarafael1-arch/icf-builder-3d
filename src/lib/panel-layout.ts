@@ -32,6 +32,17 @@ export {
   type InteriorCornerMap,
   type CornerRole
 } from './interior-lcorner-normalization';
+
+// Re-export L-corner node anchoring for consumers
+export {
+  buildLCornerNodeInfo,
+  getLCornerNodeInfo,
+  getPanelCornerRole,
+  getAllCornerNodes,
+  type LCornerNodeInfo,
+  type LCornerNodeMap,
+  type ExteriorCornerRole
+} from './lcorner-node-anchoring';
 import * as THREE from 'three';
 import { 
   PANEL_WIDTH, 
@@ -166,8 +177,14 @@ interface EndpointInfo {
  * - Exterior offset line is perpendicular outward (away from building interior)
  * - Interior offset line is perpendicular inward (toward building interior)
  * 
- * The intersection of the two exterior offset lines = "nó externo"
- * The intersection of the two interior offset lines = "nó interno"
+ * The intersection of the two exterior offset lines = "nó externo" (nodeExt)
+ * The intersection of the two interior offset lines = "nó interno" (nodeInt)
+ * 
+ * CRITICAL: Use correct wall thickness offsets:
+ * - 150mm concrete: halfThickness = 2 TOOTH (= 4 TOOTH wall / 2)
+ * - 220mm concrete: halfThickness = 2.5 TOOTH (= 5 TOOTH wall / 2)
+ * 
+ * Panel center is at halfThickness - 0.5T from centerline (accounts for foam thickness)
  */
 function computeCornerNodes(
   lj: LJunctionInfo,
@@ -187,9 +204,11 @@ function computeCornerNodes(
     };
   }
   
-  // Perpendicular offset distance from DXF centerline
-  const exteriorOffsetMm = 3.5 * TOOTH;
-  const interiorOffsetMm = 3.5 * TOOTH;
+  // CORRECT wall thickness calculation:
+  // - 150mm concrete: 4 TOOTH total → halfThickness = 2 TOOTH
+  // - 220mm concrete: 5 TOOTH total → halfThickness = 2.5 TOOTH
+  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
+  const halfThicknessMm = (wallTotalTooth / 2) * TOOTH;
   
   // Get direction vectors for each arm (pointing AWAY from the junction)
   const primaryAtStart = Math.abs(primaryChain.startX - lj.x) < 300 && Math.abs(primaryChain.startY - lj.y) < 300;
@@ -203,44 +222,49 @@ function computeCornerNodes(
     : { x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm, y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm };
   
   // Perpendicular directions (90° CW = "right" side when looking along wall)
-  const primaryPerp = { x: -primaryDir.y, y: primaryDir.x };
-  const secondaryPerp = { x: -secondaryDir.y, y: secondaryDir.x };
+  // Using unified convention: perp = (dirY, -dirX) for consistency with panel-layout
+  const primaryPerp = { x: primaryDir.y, y: -primaryDir.x };
+  const secondaryPerp = { x: secondaryDir.y, y: -secondaryDir.x };
   
   // Determine which perpendicular direction is "exterior" vs "interior"
   // Use footprint-based classification if available, otherwise fall back to cross-product heuristic
   let primaryExtSign = 1;  // +1 = right side, -1 = left side
   let secondaryExtSign = 1;
   
-  if (outerPolygon && outerPolygon.length >= 3) {
+  // Check chain classifications for exterior direction
+  if (primaryChain.sideClassification === 'LEFT_EXT') {
+    primaryExtSign = -1; // Left side (negative perp) is exterior
+  } else if (primaryChain.sideClassification === 'RIGHT_EXT') {
+    primaryExtSign = 1; // Right side (positive perp) is exterior
+  } else if (outerPolygon && outerPolygon.length >= 3) {
     // Use point-in-polygon test: the side that falls OUTSIDE the polygon is exterior
     const EPS = 150;
-    
-    // Test primary chain: which side is outside?
     const primaryRightX = lj.x + primaryPerp.x * EPS;
     const primaryRightY = lj.y + primaryPerp.y * EPS;
     const primaryRightInside = pointInPolygonSimple(primaryRightX, primaryRightY, outerPolygon);
-    primaryExtSign = primaryRightInside ? -1 : 1; // If right is inside, left is exterior (-1)
-    
-    // Test secondary chain
+    primaryExtSign = primaryRightInside ? -1 : 1;
+  }
+  
+  if (secondaryChain.sideClassification === 'LEFT_EXT') {
+    secondaryExtSign = -1;
+  } else if (secondaryChain.sideClassification === 'RIGHT_EXT') {
+    secondaryExtSign = 1;
+  } else if (outerPolygon && outerPolygon.length >= 3) {
+    const EPS = 150;
     const secondaryRightX = lj.x + secondaryPerp.x * EPS;
     const secondaryRightY = lj.y + secondaryPerp.y * EPS;
     const secondaryRightInside = pointInPolygonSimple(secondaryRightX, secondaryRightY, outerPolygon);
     secondaryExtSign = secondaryRightInside ? -1 : 1;
-  } else {
-    // Fallback: use cross-product based heuristic
-    const cross = primaryDir.x * secondaryDir.y - primaryDir.y * secondaryDir.x;
-    primaryExtSign = cross > 0 ? -1 : 1;
-    secondaryExtSign = cross > 0 ? -1 : 1;
   }
   
-  // Exterior offset lines
+  // Exterior offset lines: offset by halfThickness from centerline
   const primaryExtOffset = { 
-    x: lj.x + primaryPerp.x * exteriorOffsetMm * primaryExtSign, 
-    y: lj.y + primaryPerp.y * exteriorOffsetMm * primaryExtSign 
+    x: lj.x + primaryPerp.x * halfThicknessMm * primaryExtSign, 
+    y: lj.y + primaryPerp.y * halfThicknessMm * primaryExtSign 
   };
   const secondaryExtOffset = { 
-    x: lj.x + secondaryPerp.x * exteriorOffsetMm * secondaryExtSign, 
-    y: lj.y + secondaryPerp.y * exteriorOffsetMm * secondaryExtSign 
+    x: lj.x + secondaryPerp.x * halfThicknessMm * secondaryExtSign, 
+    y: lj.y + secondaryPerp.y * halfThicknessMm * secondaryExtSign 
   };
   
   // Find intersection of the two exterior offset lines
@@ -251,12 +275,12 @@ function computeCornerNodes(
   
   // Interior offset lines (opposite side)
   const primaryIntOffset = { 
-    x: lj.x + primaryPerp.x * interiorOffsetMm * (-primaryExtSign), 
-    y: lj.y + primaryPerp.y * interiorOffsetMm * (-primaryExtSign) 
+    x: lj.x + primaryPerp.x * halfThicknessMm * (-primaryExtSign), 
+    y: lj.y + primaryPerp.y * halfThicknessMm * (-primaryExtSign) 
   };
   const secondaryIntOffset = { 
-    x: lj.x + secondaryPerp.x * interiorOffsetMm * (-secondaryExtSign), 
-    y: lj.y + secondaryPerp.y * interiorOffsetMm * (-secondaryExtSign) 
+    x: lj.x + secondaryPerp.x * halfThicknessMm * (-secondaryExtSign), 
+    y: lj.y + secondaryPerp.y * halfThicknessMm * (-secondaryExtSign) 
   };
   
   const intIntersection = lineIntersection(
@@ -268,9 +292,11 @@ function computeCornerNodes(
     dxf: { x: lj.x.toFixed(1), y: lj.y.toFixed(1) },
     exterior: { x: extIntersection.x.toFixed(1), y: extIntersection.y.toFixed(1) },
     interior: { x: intIntersection.x.toFixed(1), y: intIntersection.y.toFixed(1) },
+    halfThicknessMm: halfThicknessMm.toFixed(1),
     primaryExtSign,
     secondaryExtSign,
-    usedFootprint: !!(outerPolygon && outerPolygon.length >= 3),
+    primaryClassification: primaryChain.sideClassification,
+    secondaryClassification: secondaryChain.sideClassification,
   });
   
   return {
