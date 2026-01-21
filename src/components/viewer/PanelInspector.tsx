@@ -29,6 +29,7 @@ import {
   getTopoType
 } from '@/types/panel-selection';
 import { PanelType } from '@/lib/panel-layout';
+import { InteriorCornerInfo } from '@/lib/interior-lcorner-normalization';
 import { TOOTH, PANEL_WIDTH, ViewerSettings } from '@/types/icf';
 import { PANEL_COLORS } from '@/components/viewer/ICFViewer3D';
 import { Slider } from '@/components/ui/slider';
@@ -52,6 +53,8 @@ interface PanelInspectorProps {
   // Chain side flip
   isChainFlipped?: (chainId: string) => boolean;
   onToggleChainFlip?: (chainId: string) => void;
+  // Interior L-corner normalization info
+  interiorCornerInfo?: InteriorCornerInfo | null;
 }
 
 // Panel classification options with colors
@@ -84,6 +87,7 @@ export function PanelInspector({
   onViewerSettingsChange,
   isChainFlipped,
   onToggleChainFlip,
+  interiorCornerInfo,
 }: PanelInspectorProps) {
   const [editType, setEditType] = useState<PanelType | 'auto'>('auto');
   const [editCut, setEditCut] = useState<string>('');
@@ -682,6 +686,60 @@ export function PanelInspector({
                     {isChainFlipped?.(panelData.chainId) ? "Invertido" : "Normal"}
                   </Button>
                 </div>
+              </div>
+            )}
+            
+            {/* Interior L-Corner Normalization Info */}
+            {interiorCornerInfo && panelData.side === 'interior' && (
+              <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30 space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-cyan-500" />
+                  <Label className="text-sm font-medium text-cyan-400">L-Corner Interior Normalizado</Label>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Junção L</Label>
+                    <code className="text-xs font-mono block">{interiorCornerInfo.lJunctionId.slice(0, 12)}...</code>
+                  </div>
+                  
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Papel</Label>
+                    <Badge variant={interiorCornerInfo.cornerRole === 'LEAD' ? 'default' : 'secondary'} 
+                           className={interiorCornerInfo.cornerRole === 'LEAD' ? 'bg-cyan-600' : ''}>
+                      {interiorCornerInfo.cornerRole}
+                    </Badge>
+                  </div>
+                  
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Corte de Canto</Label>
+                    <span className="font-mono font-bold text-cyan-400">
+                      {interiorCornerInfo.cornerCutTooth}×TOOTH ({interiorCornerInfo.cornerCutMm.toFixed(1)}mm)
+                    </span>
+                  </div>
+                  
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Lado do Corte</Label>
+                    <Badge variant="outline">{interiorCornerInfo.cornerCutEnd === 'start' ? 'Início' : 'Fim'}</Badge>
+                  </div>
+                  
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Offset de Fase</Label>
+                    <span className="font-mono font-bold text-cyan-400">
+                      {interiorCornerInfo.cornerPhaseOffsetTooth}×TOOTH
+                    </span>
+                  </div>
+                  
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Erro de Alinhamento</Label>
+                    <span className="font-mono">{interiorCornerInfo.phaseError.toFixed(1)}mm</span>
+                  </div>
+                </div>
+                
+                <p className="text-xs text-muted-foreground mt-2">
+                  Hipótese escolhida: H{interiorCornerInfo.chosenHypothesis} 
+                  (erro total: {(interiorCornerInfo.chosenHypothesis === 1 ? interiorCornerInfo.hypothesis1Error : interiorCornerInfo.hypothesis2Error).toFixed(1)}mm)
+                </p>
               </div>
             )}
             
