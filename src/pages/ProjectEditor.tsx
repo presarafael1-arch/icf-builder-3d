@@ -327,6 +327,7 @@ export default function ProjectEditor() {
     showFootprint: false,
     showFootprintStats: false,
     highlightUnresolved: false, // Highlight unresolved chains
+    showOutsideFootprint: true, // Show chains outside the building footprint
   });
   
   // Corner node offsets (individual per nodeId)

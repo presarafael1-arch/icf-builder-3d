@@ -36,6 +36,10 @@ export interface ChainSideInfo {
   // Debug info
   leftInside: boolean;
   rightInside: boolean;
+  // Flag: true if chain is entirely outside the building footprint (not an error, just metadata)
+  isOutsideFootprint: boolean;
+  // Reason for being outside footprint (if applicable)
+  outsideReason?: string;
   // Segment-level stats for debug
   segmentStats?: {
     totalSegments: number;
@@ -43,7 +47,7 @@ export interface ChainSideInfo {
     rightExtCount: number;
     bothIntCount: number;
     unresolvedCount: number;
-    unresolvedReason?: string; // Reason for UNRESOLVED classification (e.g., 'BOTH_OUTSIDE', 'ZERO_LENGTH', 'NO_POLYGON')
+    unresolvedReason?: string; // Reason for UNRESOLVED classification (e.g., 'ZERO_LENGTH', 'NO_POLYGON')
   };
 }
 
@@ -66,9 +70,14 @@ export interface FootprintResult {
     exteriorChains: number;
     interiorPartitions: number;
     unresolved: number;
+    outsideFootprint: number; // Chains outside the building footprint (not errors)
   };
-  // Unresolved chain IDs for diagnostic display
+  // Unresolved chain IDs for diagnostic display (true errors only: ZERO_LENGTH, NO_POLYGON, etc.)
   unresolvedChainIds: string[];
+  // Chain IDs that are outside the building footprint (not errors, just metadata)
+  outsideChainIds: string[];
+  // Chain IDs that are internal partitions
+  partitionChainIds: string[];
 }
 
 // ============= Point-in-Polygon Algorithm =============
@@ -357,8 +366,10 @@ export function detectFootprintAndClassify(
       loopsFound: 0,
       chainSides: new Map(),
       interiorLoops: [],
-      stats: { totalChains: 0, exteriorChains: 0, interiorPartitions: 0, unresolved: 0 },
+      stats: { totalChains: 0, exteriorChains: 0, interiorPartitions: 0, unresolved: 0, outsideFootprint: 0 },
       unresolvedChainIds: [],
+      outsideChainIds: [],
+      partitionChainIds: [],
     };
   }
   
@@ -405,7 +416,10 @@ export function detectFootprintAndClassify(
   let exteriorChains = 0;
   let interiorPartitions = 0;
   let unresolved = 0;
+  let outsideFootprint = 0;
   const unresolvedChainIds: string[] = [];
+  const outsideChainIds: string[] = [];
+  const partitionChainIds: string[] = [];
   
   // Adaptive eps values - try multiple distances to escape boundary ambiguity
   const EPS_LIST = [50, 150, 300, 500]; // mm - increasing offset distances
@@ -495,6 +509,7 @@ export function detectFootprintAndClassify(
         outwardNormalAngle: null,
         leftInside: false,
         rightInside: false,
+        isOutsideFootprint: false,
         segmentStats: {
           totalSegments: 0,
           leftExtCount: 0,
@@ -561,6 +576,8 @@ export function detectFootprintAndClassify(
     let outsideIsPositivePerp = true;
     let outwardNormalAngle: number | null = null;
     let unresolvedReason: string | undefined;
+    let isOutsideFootprint = false;
+    let outsideReason: string | undefined;
     
     // Check for majority
     if (rightExtVotes >= majorityThreshold) {
@@ -577,11 +594,16 @@ export function detectFootprintAndClassify(
       classification = 'BOTH_INT';
       outsideIsPositivePerp = true; // Arbitrary for partitions
       interiorPartitions++;
+      partitionChainIds.push(chain.id);
     } else if (bothOutsideVotes >= majorityThreshold) {
-      classification = 'UNRESOLVED';
-      unresolvedReason = 'BOTH_OUTSIDE';
-      unresolved++;
-      unresolvedChainIds.push(chain.id);
+      // Chain is entirely outside the building footprint - treat as BOTH_INT visually (neutral)
+      // but flag it as outsideFootprint for UI/filtering purposes
+      classification = 'BOTH_INT';
+      outsideIsPositivePerp = true;
+      isOutsideFootprint = true;
+      outsideReason = 'BOTH_OUTSIDE';
+      outsideFootprint++;
+      outsideChainIds.push(chain.id);
     } else if (ambiguousVotes >= majorityThreshold) {
       classification = 'UNRESOLVED';
       unresolvedReason = 'BOUNDARY_AMBIGUOUS';
@@ -606,6 +628,7 @@ export function detectFootprintAndClassify(
         classification = 'BOTH_INT';
         outsideIsPositivePerp = true;
         interiorPartitions++;
+        partitionChainIds.push(chain.id);
       } else {
         // Truly unresolved - mixed results
         classification = 'UNRESOLVED';
@@ -628,6 +651,8 @@ export function detectFootprintAndClassify(
       outwardNormalAngle,
       leftInside,
       rightInside,
+      isOutsideFootprint,
+      outsideReason,
       segmentStats: {
         totalSegments: numSamples,
         leftExtCount: leftExtVotes,
@@ -702,6 +727,7 @@ export function detectFootprintAndClassify(
     exterior: exteriorChains,
     interior: interiorPartitions,
     unresolved,
+    outsideFootprint,
   });
   
   // Determine overall status
@@ -722,8 +748,11 @@ export function detectFootprintAndClassify(
       exteriorChains,
       interiorPartitions,
       unresolved,
+      outsideFootprint,
     },
     unresolvedChainIds,
+    outsideChainIds,
+    partitionChainIds,
   };
 }
 
