@@ -84,6 +84,7 @@ export function usePanelRaycast(): UsePanelRaycastResult {
           rowIndex: panel.rowIndex,
           rowParity: (panel.rowIndex % 2 === 0) ? 1 : 2,
           side: panelSide,
+          chainClassification: panel.chainClassification || 'UNRESOLVED',
           seedOrigin: panel.seedOrigin || 'none',
           nearestNodeId: panel.nearestNodeId || null,
           nearestNodeType: null,
@@ -137,6 +138,7 @@ export function usePanelRaycast(): UsePanelRaycastResult {
         rowIndex: topo.rowIndex,
         rowParity: (topo.rowIndex % 2 === 0) ? 1 : 2,
         side: 'exterior',
+        chainClassification: 'PERIMETER', // TOPOs are always on perimeter chains
         seedOrigin: topo.reason === 'T_junction' ? 'T_junction' : 'free_end',
         nearestNodeId: topo.junctionId || null,
         nearestNodeType: topo.reason === 'T_junction' ? 'T' : 'end',
