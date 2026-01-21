@@ -273,6 +273,7 @@ export interface ViewerSettings {
   showFootprint: boolean;
   showFootprintStats: boolean;
   highlightUnresolved: boolean; // Highlight unresolved/unknown panels with distinct color
+  showOutsideFootprint: boolean; // Show chains/panels that are outside the building footprint
 }
 
 // Individual corner node offset (per nodeId)

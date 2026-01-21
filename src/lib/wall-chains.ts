@@ -63,9 +63,14 @@ export interface ChainsResult {
       exteriorChains: number;
       interiorPartitions: number;
       unresolved: number;
+      outsideFootprint: number; // Chains outside the building footprint (not errors)
     };
-    // List of unresolved chain IDs for diagnostic display
+    // List of unresolved chain IDs for diagnostic display (true errors only)
     unresolvedChainIds: string[];
+    // Chain IDs that are outside the building footprint (not errors, just metadata)
+    outsideChainIds: string[];
+    // Chain IDs that are internal partitions
+    partitionChainIds: string[];
   };
   stats: {
     originalSegments: number;
@@ -1215,6 +1220,7 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
     exterior: footprintResult.stats.exteriorChains,
     interiorPartitions: footprintResult.stats.interiorPartitions,
     unresolved: footprintResult.stats.unresolved,
+    outsideFootprint: footprintResult.stats.outsideFootprint,
   });
 
   return {
@@ -1228,8 +1234,11 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
         exteriorChains: footprintResult.stats.exteriorChains,
         interiorPartitions: footprintResult.stats.interiorPartitions,
         unresolved: footprintResult.stats.unresolved,
+        outsideFootprint: footprintResult.stats.outsideFootprint,
       },
       unresolvedChainIds: footprintResult.unresolvedChainIds,
+      outsideChainIds: footprintResult.outsideChainIds,
+      partitionChainIds: footprintResult.partitionChainIds,
     },
     stats,
     junctionCounts,

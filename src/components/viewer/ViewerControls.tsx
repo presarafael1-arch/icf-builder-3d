@@ -265,6 +265,21 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   onCheckedChange={() => toggleSetting('highlightUnresolved')}
                 />
               </div>
+
+              {/* Outside footprint toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Columns className="h-4 w-4 text-yellow-400" />
+                  <Label htmlFor="show-outside-footprint" className="text-sm cursor-pointer">
+                    Fora do footprint
+                  </Label>
+                </div>
+                <Switch
+                  id="show-outside-footprint"
+                  checked={settings.showOutsideFootprint}
+                  onCheckedChange={() => toggleSetting('showOutsideFootprint')}
+                />
+              </div>
             </div>
           </PopoverContent>
         </Popover>

@@ -317,8 +317,6 @@ interface FootprintStatsOverlayProps {
 // Helper to get unresolved reason description
 function getUnresolvedReasonDescription(reason?: string): string {
   switch (reason) {
-    case 'BOTH_OUTSIDE':
-      return 'Ambos os lados fora do footprint (geometria aberta?)';
     case 'ZERO_LENGTH':
       return 'Segmento com comprimento zero (degenerado)';
     case 'NO_POLYGON':
@@ -329,6 +327,16 @@ function getUnresolvedReasonDescription(reason?: string): string {
       return 'Votos mistos entre segmentos (geometria irregular)';
     default:
       return reason ? `Causa: ${reason}` : 'Causa não identificada';
+  }
+}
+
+// Helper to get outside footprint reason description
+function getOutsideReasonDescription(reason?: string): string {
+  switch (reason) {
+    case 'BOTH_OUTSIDE':
+      return 'Ambos os lados fora do footprint (chain externa ao edifício)';
+    default:
+      return reason ? `Causa: ${reason}` : 'Chain fora do perímetro do edifício';
   }
 }
 
@@ -343,10 +351,13 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   if (!footprint) return null;
   
   const areaM2 = footprint.outerAreaMm2 / 1e6;
-  const { exteriorChains, interiorPartitions, unresolved } = footprint.stats;
-  const total = exteriorChains + interiorPartitions + unresolved;
+  const { exteriorChains, interiorPartitions, unresolved, outsideFootprint } = footprint.stats;
+  const total = exteriorChains + interiorPartitions + unresolved + outsideFootprint;
   const hasUnresolved = unresolved > 0;
+  const hasOutside = outsideFootprint > 0;
   const unresolvedIds = footprint.unresolvedChainIds || [];
+  const outsideIds = footprint.outsideChainIds || [];
+  const partitionIds = footprint.partitionChainIds || [];
   
   // Build detailed unresolved info with reasons and segment stats
   const unresolvedDetails = unresolvedIds.map(id => {
@@ -356,12 +367,20 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
     return { id, reason, stats };
   });
   
+  // Build outside footprint details
+  const outsideDetails = outsideIds.map(id => {
+    const sideInfo = footprintResult?.chainSides?.get(id);
+    const reason = sideInfo?.outsideReason;
+    const stats = sideInfo?.segmentStats;
+    return { id, reason, stats };
+  });
+  
   // Determine status indicator
   const statusOK = footprint.outerPolygon.length >= 3 && unresolved === 0;
   const statusPartial = footprint.outerPolygon.length >= 3 && unresolved > 0;
   
   return (
-    <div className="absolute top-16 left-4 z-20 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-2 shadow-lg max-w-xs">
+    <div className="absolute top-16 left-4 z-20 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-2 shadow-lg max-w-xs max-h-[80vh] overflow-y-auto">
       <div className="font-medium text-foreground border-b border-border pb-1 flex items-center gap-2">
         <span className={`inline-block w-3 h-3 rounded-full ${statusOK ? 'bg-green-500' : statusPartial ? 'bg-yellow-500' : 'bg-red-500'}`}></span>
         Footprint Detection Stats
@@ -391,15 +410,20 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
           <span className="text-purple-400">⬤ Partições (INT/INT):</span>
           <span className="font-mono">{interiorPartitions}/{total}</span>
         </div>
+        <div className={`flex justify-between ${hasOutside ? 'text-yellow-400' : 'text-muted-foreground'}`}>
+          <span>{hasOutside ? '⚡' : '⬤'} Fora do footprint:</span>
+          <span className="font-mono">{outsideFootprint}/{total}</span>
+        </div>
         <div className={`flex justify-between ${hasUnresolved ? 'text-orange-400' : 'text-muted-foreground'}`}>
           <span>{hasUnresolved ? '⚠' : '⬤'} Não resolvidas:</span>
           <span className="font-mono">{unresolved}/{total}</span>
         </div>
       </div>
       
+      {/* Não resolvidas (true errors) */}
       {hasUnresolved && (
         <div className="border-t border-border pt-2 space-y-1">
-          <div className="text-orange-400 text-[11px] font-medium">Chains não resolvidas:</div>
+          <div className="text-orange-400 text-[11px] font-medium">⚠ Chains não resolvidas (erros):</div>
           <div className="space-y-1.5">
             {unresolvedDetails.map(({ id, reason, stats }) => (
               <div key={id} className="bg-orange-500/10 rounded p-1.5">
@@ -416,8 +440,47 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
             ))}
           </div>
           <div className="text-orange-400/70 text-[10px] mt-2 border-t border-orange-500/20 pt-1.5 space-y-1">
-            <div>💡 Use "Destacar Não Resolvidas" ou desligue na Visibilidade para localizar.</div>
-            <div>🔧 Se a chain está classificada, mas invertida, use "Inverter Lado EXT/INT" no Panel Inspector.</div>
+            <div>💡 Use "Destacar Não Resolvidas" para localizar.</div>
+            <div>🔧 Use "Inverter Lado EXT/INT" no Panel Inspector para corrigir.</div>
+          </div>
+        </div>
+      )}
+      
+      {/* Fora do footprint (not errors) */}
+      {hasOutside && (
+        <div className="border-t border-border pt-2 space-y-1">
+          <div className="text-yellow-400 text-[11px] font-medium">⚡ Fora do footprint (não crítico):</div>
+          <div className="space-y-1.5">
+            {outsideDetails.map(({ id, reason, stats }) => (
+              <div key={id} className="bg-yellow-500/10 rounded p-1.5">
+                <span className="text-yellow-300 font-mono text-[10px] block">{id}</span>
+                <span className="text-yellow-400/70 text-[9px] block mt-0.5">
+                  → {getOutsideReasonDescription(reason)}
+                </span>
+                {stats && stats.totalSegments > 0 && (
+                  <span className="text-yellow-400/50 text-[8px] block mt-0.5">
+                    Votos: R={stats.rightExtCount} L={stats.leftExtCount} P={stats.bothIntCount} U={stats.unresolvedCount} /{stats.totalSegments}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="text-yellow-400/70 text-[10px] mt-2 border-t border-yellow-500/20 pt-1.5">
+            <div>ℹ️ Estas chains estão fora do perímetro do edifício.</div>
+            <div>💡 Toggle "Fora do footprint" na Visibilidade para ocultar.</div>
+          </div>
+        </div>
+      )}
+      
+      {/* Partições internas */}
+      {partitionIds.length > 0 && (
+        <div className="border-t border-border pt-2 space-y-1">
+          <div className="text-purple-400 text-[11px] font-medium">Partições internas ({partitionIds.length}):</div>
+          <div className="text-purple-400/60 text-[9px]">
+            {partitionIds.slice(0, 5).map(id => (
+              <span key={id} className="font-mono mr-1">{id.slice(0, 12)}...</span>
+            ))}
+            {partitionIds.length > 5 && <span>+{partitionIds.length - 5} mais</span>}
           </div>
         </div>
       )}
@@ -465,6 +528,7 @@ function BatchedPanelInstances({
   onLayoutStatsChange,
   onPanelDataReady,
   flippedChains = new Set(),
+  outsideChainIds = [],
 }: {
   chains: WallChain[];
   settings: ViewerSettings; 
@@ -488,6 +552,7 @@ function BatchedPanelInstances({
   onLayoutStatsChange?: (stats: { lJunctions: number; tJunctions: number; xJunctions?: number; freeEnds?: number; templatesApplied: number; toposPlaced: number; effectiveOffset?: number }) => void;
   onPanelDataReady?: (panelsByType: Record<PanelType, ClassifiedPanel[]>, allPanels: ClassifiedPanel[], allTopos: TopoPlacement[]) => void;
   flippedChains?: Set<string>;
+  outsideChainIds?: string[];
 }) {
   // Selection mesh ref for highlight
   const selectionMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -640,12 +705,19 @@ function BatchedPanelInstances({
     
     const processedPanels = result.allPanels.map(applyOverrideWithType);
     
+    // Build outside chain set for filtering
+    const outsideChainSet = new Set(outsideChainIds);
+    
     // Filter panels by chain classification and side visibility settings
     const filteredPanels = processedPanels.filter(panel => {
       const panelId = panel.panelId || '';
       const isExterior = panelId.includes(':ext:');
       const isInterior = panelId.includes(':int:');
       const classification = panel.chainClassification || 'UNRESOLVED';
+      const chainId = panel.chainId || '';
+      
+      // Filter by outside footprint (chains outside the building)
+      if (outsideChainSet.has(chainId) && !settings.showOutsideFootprint) return false;
       
       // Filter by chain classification
       if (classification === 'PARTITION' && !settings.showPartitionPanels) return false;
@@ -666,6 +738,10 @@ function BatchedPanelInstances({
       const isExt = pid.includes(':ext:');
       const isInt = pid.includes(':int:');
       const classification = p.chainClassification || 'UNRESOLVED';
+      const chainId = p.chainId || '';
+      
+      // Filter by outside footprint
+      if (outsideChainSet.has(chainId) && !settings.showOutsideFootprint) return false;
       
       if (classification === 'PARTITION' && !settings.showPartitionPanels) return false;
       if (classification === 'UNRESOLVED' && !settings.showUnknownPanels) return false;
@@ -712,7 +788,7 @@ function BatchedPanelInstances({
       allTopos: result.allTopos,
       layoutStats: result.stats,
     };
-  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, panelOverrides, flippedChains]);
+  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, settings.showPartitionPanels, settings.showUnknownPanels, settings.showOutsideFootprint, panelOverrides, flippedChains, outsideChainIds]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;
@@ -1784,6 +1860,7 @@ function Scene({
           onLayoutStatsChange={onLayoutStatsChange}
           onPanelDataReady={onPanelDataReady}
           flippedChains={flippedChains}
+          outsideChainIds={chainsResult.footprint?.outsideChainIds || []}
         />
       )}
 
