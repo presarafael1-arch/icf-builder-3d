@@ -21,7 +21,17 @@
 import { WallChain, ChainNode } from './wall-chains';
 import { getPanelSideFromClassification } from './footprint-detection';
 import * as THREE from 'three';
-import { 
+import {
+  CORNER_CUT_MM,
+  CORNER_CUT_TOOTH,
+  OFFSET_SMALL_MM,
+  OFFSET_LARGE_MM,
+  OFFSET_SMALL_TOOTH,
+  OFFSET_LARGE_TOOTH,
+  CornerRole,
+  CornerScenario,
+} from './l-corner-normalization';
+import {
   PANEL_WIDTH, 
   PANEL_HEIGHT, 
   FOAM_THICKNESS,
@@ -75,6 +85,11 @@ export interface ClassifiedPanel {
   
   // Debug: L-corner offset info
   lCornerOffsetMm?: number;
+  lCornerCutMm?: number;
+  lCornerRole?: CornerRole;
+  lCornerScenario?: CornerScenario;
+  lCornerRefPanelId?: string | null;
+  lCornerRefPhase?: number | null;
   isPrimaryArm?: boolean;
   isExtendingArm?: boolean;
 }
@@ -782,49 +797,127 @@ function roundToHalfTooth(mm: number): number {
 /**
  * Determine the start reservation (cap) for a chain endpoint
  * 
- * SIMPLIFIED VERSION: ALL L-CORNERS ARE FULL PANELS STARTING AT VERTEX
- * No cuts, no special offsets - just place panels from intersection point.
- * Perpendicular offset is handled separately in createPanel.
+ * L-CORNER NORMALIZATION:
+ * - Corner cut is always 4×TOOTH on both panels
+ * - Panel width = 1200 - 4×TOOTH = 1200 - 282.35 = ~917.65mm (13 TOOTH)
+ * - Offset is determined by LEAD/SEAT roles (2.5T for LEAD, 1.5T for SEAT) 
+ *   OR by alignment to reference parallel panel's tooth phase
  */
 interface CapResult {
   reservationMm: number;
   type: PanelType;
   addTopo: boolean;
   topoId: string;
-  startOffsetMm: number; // Offset along chain from corner vertex (0 = start at vertex)
+  startOffsetMm: number; // Offset along chain from corner vertex
+  // L-corner debug info
+  lCornerRole?: CornerRole;
+  lCornerCutMm?: number;
+}
+
+/**
+ * Compute LEAD/SEAT role for a chain at an L-junction
+ * Based on cross product of direction vectors
+ */
+function computeCornerRole(
+  chain: WallChain,
+  lj: LJunctionInfo,
+  chains: WallChain[],
+  atStart: boolean
+): { role: CornerRole; crossZ: number } {
+  const otherChainId = lj.primaryChainId === chain.id ? lj.secondaryChainId : lj.primaryChainId;
+  const otherChain = chains.find(c => c.id === otherChainId);
+  
+  if (!otherChain) {
+    return { role: 'LEAD', crossZ: 0 };
+  }
+  
+  // Get direction vectors pointing AWAY from junction
+  const tolerance = 300;
+  
+  // This chain's direction
+  const thisAtStart = Math.abs(chain.startX - lj.x) < tolerance && Math.abs(chain.startY - lj.y) < tolerance;
+  const thisDir = thisAtStart
+    ? { x: (chain.endX - chain.startX) / chain.lengthMm, y: (chain.endY - chain.startY) / chain.lengthMm }
+    : { x: (chain.startX - chain.endX) / chain.lengthMm, y: (chain.startY - chain.endY) / chain.lengthMm };
+  
+  // Other chain's direction  
+  const otherAtStart = Math.abs(otherChain.startX - lj.x) < tolerance && Math.abs(otherChain.startY - lj.y) < tolerance;
+  const otherDir = otherAtStart
+    ? { x: (otherChain.endX - otherChain.startX) / otherChain.lengthMm, y: (otherChain.endY - otherChain.startY) / otherChain.lengthMm }
+    : { x: (otherChain.startX - otherChain.endX) / otherChain.lengthMm, y: (otherChain.startY - otherChain.endY) / otherChain.lengthMm };
+  
+  // Cross product: A × B = A.x * B.y - A.y * B.x
+  const crossZ = thisDir.x * otherDir.y - thisDir.y * otherDir.x;
+  
+  // LEAD = the one that "advances" (crossZ > 0 means this chain is CCW from other)
+  const role: CornerRole = crossZ > 0 ? 'LEAD' : 'SEAT';
+  
+  return { role, crossZ };
+}
+
+/**
+ * Get offset for L-corner based on role
+ * LEAD gets the larger offset (2.5T), SEAT gets the smaller (1.5T)
+ * 
+ * NOTE: This is the default behavior. Phase alignment can override this.
+ */
+function getCornerOffsetForRole(role: CornerRole): number {
+  return role === 'LEAD' ? OFFSET_LARGE_MM : OFFSET_SMALL_MM;
 }
 
 /**
  * Get start cap for a chain endpoint
  * 
- * SIMPLIFIED: L-corners place FULL panels starting at the vertex.
- * No offset, no cut - panels go from intersection outward.
+ * L-CORNERS: Apply 4×TOOTH cut and 1.5T/2.5T offset based on role
  */
 function getStartCap(
   chain: WallChain,
   endpointInfo: ReturnType<typeof getChainEndpointInfo>,
   row: number,
   side: WallSide = 'exterior',
-  concreteThickness: ConcreteThickness = '150'
+  concreteThickness: ConcreteThickness = '150',
+  chains: WallChain[] = []
 ): CapResult {
+  // Panel width after corner cut
+  const cornerPanelWidth = PANEL_WIDTH - CORNER_CUT_MM;
+  
   let reservationMm = PANEL_WIDTH;
   let type: PanelType = 'FULL';
   let addTopo = false;
   let topoId = '';
-  let startOffsetMm = 0; // Start at vertex
+  let startOffsetMm = 0;
+  let lCornerRole: CornerRole | undefined;
+  let lCornerCutMm: number | undefined;
   
   switch (endpointInfo.startType) {
     case 'L': {
-      // L-CORNER: restart from the beginning (debug)
-      // Only apply the perpendicular wall offset elsewhere; no along-chain offsets here.
-      reservationMm = PANEL_WIDTH;
-      type = 'FULL';
-      startOffsetMm = 0;
+      // L-CORNER NORMALIZATION
+      // 1. Cut = 4×TOOTH always
+      // 2. Offset based on LEAD/SEAT role
+      const lj = endpointInfo.startL;
+      if (lj) {
+        const { role, crossZ } = computeCornerRole(chain, lj, chains, true);
+        lCornerRole = role;
+        lCornerCutMm = CORNER_CUT_MM;
+        
+        // Get offset based on role
+        startOffsetMm = getCornerOffsetForRole(role);
+        
+        // Panel width is reduced by the corner cut
+        reservationMm = cornerPanelWidth;
+        type = 'CORNER_CUT';
+        
+        console.log(`[L-CORNER CAP START] chain=${chain.id.slice(0,8)} role=${role} offset=${(startOffsetMm/TOOTH).toFixed(1)}T cut=${CORNER_CUT_TOOTH}T crossZ=${crossZ.toFixed(3)}`);
+      } else {
+        // Fallback: no junction info
+        reservationMm = PANEL_WIDTH;
+        type = 'FULL';
+        startOffsetMm = 0;
+      }
       break;
     }
       
     case 'T':
-      // T-JUNCTION: same simplified approach for now
       if (endpointInfo.isBranchAtStart) {
         reservationMm = PANEL_WIDTH;
         type = 'FULL';
@@ -848,7 +941,7 @@ function getStartCap(
       type = 'FULL';
   }
   
-  return { reservationMm, type, addTopo, topoId, startOffsetMm };
+  return { reservationMm, type, addTopo, topoId, startOffsetMm, lCornerRole, lCornerCutMm };
 }
 
 function getEndCap(
@@ -856,26 +949,46 @@ function getEndCap(
   endpointInfo: ReturnType<typeof getChainEndpointInfo>,
   row: number,
   side: WallSide = 'exterior',
-  concreteThickness: ConcreteThickness = '150'
+  concreteThickness: ConcreteThickness = '150',
+  chains: WallChain[] = []
 ): CapResult {
+  // Panel width after corner cut
+  const cornerPanelWidth = PANEL_WIDTH - CORNER_CUT_MM;
+  
   let reservationMm = PANEL_WIDTH;
   let type: PanelType = 'FULL';
   let addTopo = false;
   let topoId = '';
-  let startOffsetMm = 0; // Start at vertex
+  let startOffsetMm = 0;
+  let lCornerRole: CornerRole | undefined;
+  let lCornerCutMm: number | undefined;
   
   switch (endpointInfo.endType) {
     case 'L': {
-      // L-CORNER: restart from the beginning (debug)
-      // Only apply the perpendicular wall offset elsewhere; no along-chain offsets here.
-      reservationMm = PANEL_WIDTH;
-      type = 'FULL';
-      startOffsetMm = 0;
+      // L-CORNER NORMALIZATION
+      const lj = endpointInfo.endL;
+      if (lj) {
+        const { role, crossZ } = computeCornerRole(chain, lj, chains, false);
+        lCornerRole = role;
+        lCornerCutMm = CORNER_CUT_MM;
+        
+        // Get offset based on role
+        startOffsetMm = getCornerOffsetForRole(role);
+        
+        // Panel width is reduced by the corner cut
+        reservationMm = cornerPanelWidth;
+        type = 'CORNER_CUT';
+        
+        console.log(`[L-CORNER CAP END] chain=${chain.id.slice(0,8)} role=${role} offset=${(startOffsetMm/TOOTH).toFixed(1)}T cut=${CORNER_CUT_TOOTH}T crossZ=${crossZ.toFixed(3)}`);
+      } else {
+        reservationMm = PANEL_WIDTH;
+        type = 'FULL';
+        startOffsetMm = 0;
+      }
       break;
     }
       
     case 'T':
-      // T-JUNCTION: same simplified approach for now
       if (endpointInfo.isBranchAtEnd) {
         reservationMm = PANEL_WIDTH;
         type = 'FULL';
@@ -1238,16 +1351,16 @@ export function layoutPanelsForChainWithJunctions(
   const isAtChainStart = intervalStart === 0;
   const isAtChainEnd = intervalEnd === chain.lengthMm;
   
-  // Left (start) cap - pass side for correct L-corner rules
+  // Left (start) cap - pass chains for L-corner role computation
   let leftCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '', startOffsetMm: 0 };
   if (isAtChainStart) {
-    leftCap = getStartCap(chain, endpointInfo, row, side, concreteThickness);
+    leftCap = getStartCap(chain, endpointInfo, row, side, concreteThickness, allChains);
   }
   
-  // Right (end) cap - pass side for correct L-corner rules
+  // Right (end) cap - pass chains for L-corner role computation
   let rightCap: CapResult = { reservationMm: PANEL_WIDTH, type: 'FULL', addTopo: false, topoId: '', startOffsetMm: 0 };
   if (isAtChainEnd) {
-    rightCap = getEndCap(chain, endpointInfo, row, side, concreteThickness);
+    rightCap = getEndCap(chain, endpointInfo, row, side, concreteThickness, allChains);
   }
   
   // ============= HANDLE VERY SHORT INTERVALS =============
