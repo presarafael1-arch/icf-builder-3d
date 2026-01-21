@@ -1034,7 +1034,8 @@ export function layoutPanelsForChainWithJunctions(
   freeEnds: EndpointInfo[],
   side: WallSide = 'exterior',
   concreteThickness: ConcreteThickness = '150',
-  flippedChains: Set<string> = new Set()
+  flippedChains: Set<string> = new Set(),
+  allChains: WallChain[] = []
 ): { panels: ClassifiedPanel[]; topos: TopoPlacement[] } {
   const panels: ClassifiedPanel[] = [];
   const topos: TopoPlacement[] = [];
@@ -1575,7 +1576,8 @@ export function generatePanelLayout(
               freeEnds,
               side,
               concreteThickness,
-              flippedChains
+              flippedChains,
+              chains
             );
             
             panels.forEach(panel => {
