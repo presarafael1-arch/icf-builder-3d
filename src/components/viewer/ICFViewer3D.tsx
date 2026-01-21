@@ -14,7 +14,10 @@ import {
   ClassifiedPanel, 
   TopoPlacement,
   detectLJunctions,
-  detectTJunctions 
+  detectTJunctions,
+  applyInteriorLCornerNormalization,
+  InteriorCornerMap,
+  LJunctionInfo,
 } from '@/lib/panel-layout';
 import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';

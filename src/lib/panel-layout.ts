@@ -20,6 +20,18 @@
 
 import { WallChain, ChainNode } from './wall-chains';
 import { getPanelSideFromClassification } from './footprint-detection';
+
+// Re-export L-corner normalization for consumers
+export { 
+  applyInteriorLCornerNormalization, 
+  getInteriorCornerInfo, 
+  isInteriorCornerPanel,
+  CORNER_CUT_MM,
+  CORNER_CUT_TOOTH,
+  type InteriorCornerInfo,
+  type InteriorCornerMap,
+  type CornerRole
+} from './interior-lcorner-normalization';
 import * as THREE from 'three';
 import { 
   PANEL_WIDTH, 
