@@ -282,6 +282,9 @@ export interface ViewerSettings {
   showFootprintStats: boolean;
   highlightUnresolved: boolean; // Highlight unresolved/unknown panels with distinct color
   showOutsideFootprint: boolean; // Show chains/panels that are outside the building footprint
+  
+  // Global EXT/INT flip - swaps exterior/interior classification for ALL chains
+  flipAllSides: boolean;
 }
 
 // Individual corner node offset (per nodeId)

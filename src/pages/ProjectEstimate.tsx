@@ -109,6 +109,7 @@ export default function ProjectEstimate() {
     showFootprintStats: false,
     highlightUnresolved: false, // Highlight unresolved chains
     showOutsideFootprint: true, // Show chains outside the building footprint
+    flipAllSides: false, // Global EXT/INT flip
   });
   
   useEffect(() => {

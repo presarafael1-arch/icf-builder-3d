@@ -959,7 +959,8 @@ export function layoutPanelsForChainWithJunctions(
   freeEnds: EndpointInfo[],
   side: WallSide = 'exterior',
   concreteThickness: ConcreteThickness = '150',
-  flippedChains: Set<string> = new Set()
+  flippedChains: Set<string> = new Set(),
+  flipAllSides: boolean = false
 ): { panels: ClassifiedPanel[]; topos: TopoPlacement[] } {
   const panels: ClassifiedPanel[] = [];
   const topos: TopoPlacement[] = [];
@@ -983,7 +984,7 @@ export function layoutPanelsForChainWithJunctions(
   // The 'side' parameter tells us which offset direction we're generating (positive or negative perp)
   // We need to map this to actual exterior/interior based on the chain's classification
   
-  const isChainFlipped = flippedChains.has(chain.id);
+  const isChainFlipped = flippedChains.has(chain.id) !== flipAllSides; // XOR: global flip inverts per-chain flip
   
   // Determine if positive perpendicular offset means exterior or interior
   // Based on chain.sideClassification from footprint detection:
@@ -1430,7 +1431,8 @@ export function generatePanelLayout(
   maxRows: number,
   getIntervalsForRow: (chain: WallChain, row: number) => { start: number; end: number }[],
   concreteThickness: ConcreteThickness = '150',
-  flippedChains: Set<string> = new Set()
+  flippedChains: Set<string> = new Set(),
+  flipAllSides: boolean = false
 ): {
   panelsByType: Record<PanelType, ClassifiedPanel[]>;
   allPanels: ClassifiedPanel[];
@@ -1500,7 +1502,8 @@ export function generatePanelLayout(
               freeEnds,
               side,
               concreteThickness,
-              flippedChains
+              flippedChains,
+              flipAllSides
             );
             
             panels.forEach(panel => {

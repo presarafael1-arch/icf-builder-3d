@@ -355,6 +355,21 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   onCheckedChange={() => toggleSetting('showOutsideFootprint')}
                 />
               </div>
+
+              {/* Global EXT/INT Flip toggle */}
+              <div className="flex items-center justify-between border-t border-border pt-2 mt-2">
+                <div className="flex items-center gap-2">
+                  <FlipVertical className="h-4 w-4 text-primary" />
+                  <Label htmlFor="flip-all-sides" className="text-sm cursor-pointer font-medium">
+                    Flip global EXT/INT
+                  </Label>
+                </div>
+                <Switch
+                  id="flip-all-sides"
+                  checked={settings.flipAllSides}
+                  onCheckedChange={() => toggleSetting('flipAllSides')}
+                />
+              </div>
             </div>
           </PopoverContent>
         </Popover>
