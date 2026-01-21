@@ -771,9 +771,14 @@ export default function ProjectEditor() {
       // Ensure viewer fits the imported plan
       fitView();
       
+      // Compute junction counts from actual chains (after transforms will be applied)
+      // Use the same chain-building logic that the viewer and left panel use
+      const chainsResult = buildWallChainsAutoTuned(newWalls);
+      const junctionCounts = chainsResult.junctionCounts;
+      
       // Format total length for display
-      const totalMeters = stats.totalLengthMM / 1000;
-      const { L, T, X } = stats.junctionCounts;
+      const totalMeters = chainsResult.stats.totalLengthMm / 1000;
+      const { L, T, X } = junctionCounts;
       
       toast({
         title: 'DXF importado e normalizado',
