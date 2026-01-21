@@ -479,6 +479,74 @@ function findClosedLoopsFaceWalk(
 // ============= Main Classification Function =============
 
 /**
+ * Calculate the ratio of chains that would be "outside" for a given candidate polygon.
+ * Used to validate if a footprint candidate is correct.
+ */
+function calculateOutsideRatio(
+  chains: WallChain[],
+  polygon: Array<{ x: number; y: number }>,
+  epsList: number[] = [50, 150, 300, 500]
+): { outsideRatio: number; perimeterRatio: number; details: { outsideCount: number; perimeterCount: number; partitionCount: number; total: number } } {
+  if (polygon.length < 3 || chains.length === 0) {
+    return { outsideRatio: 1, perimeterRatio: 0, details: { outsideCount: chains.length, perimeterCount: 0, partitionCount: 0, total: chains.length } };
+  }
+  
+  let outsideCount = 0;
+  let perimeterCount = 0;
+  let partitionCount = 0;
+  
+  chains.forEach(chain => {
+    const dx = chain.endX - chain.startX;
+    const dy = chain.endY - chain.startY;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1) return;
+    
+    const dirX = dx / len;
+    const dirY = dy / len;
+    const perpX = dirY;
+    const perpY = -dirX;
+    
+    const midX = (chain.startX + chain.endX) / 2;
+    const midY = (chain.startY + chain.endY) / 2;
+    
+    // Test with largest eps for robust classification
+    let plusInside = false;
+    let minusInside = false;
+    
+    for (const eps of epsList) {
+      const testPlusX = midX + perpX * eps;
+      const testPlusY = midY + perpY * eps;
+      const testMinusX = midX - perpX * eps;
+      const testMinusY = midY - perpY * eps;
+      
+      const plusResult = robustPointInPolygon(testPlusX, testPlusY, polygon, 1.0);
+      const minusResult = robustPointInPolygon(testMinusX, testMinusY, polygon, 1.0);
+      
+      if (plusResult !== 'on_edge') plusInside = plusResult === 'inside';
+      if (minusResult !== 'on_edge') minusInside = minusResult === 'inside';
+      
+      // Break if we got a decisive result
+      if (plusResult !== 'on_edge' && minusResult !== 'on_edge') break;
+    }
+    
+    if (!plusInside && !minusInside) {
+      outsideCount++;
+    } else if (plusInside !== minusInside) {
+      perimeterCount++;
+    } else {
+      partitionCount++;
+    }
+  });
+  
+  const total = chains.length;
+  return {
+    outsideRatio: total > 0 ? outsideCount / total : 0,
+    perimeterRatio: total > 0 ? perimeterCount / total : 0,
+    details: { outsideCount, perimeterCount, partitionCount, total }
+  };
+}
+
+/**
  * Detect building footprint and classify each chain's exterior/interior sides.
  * Uses face-walking algorithm that handles T-junctions correctly.
  * 
@@ -511,7 +579,7 @@ export function detectFootprintAndClassify(
   
   console.log('[FootprintDetection] Found', faces.length, 'closed faces');
   
-  // Step 2: Identify outer polygon using robust selection algorithm
+  // Step 2: Identify outer polygon using robust selection algorithm with VALIDATION
   let outerPolygon: Array<{ x: number; y: number }> = [];
   let outerArea = 0;
   const interiorLoops: Array<Array<{ x: number; y: number }>> = [];
@@ -552,24 +620,68 @@ export function detectFootprintAndClassify(
     vertices: f.points.length,
   })));
   
-  // Select the best candidate as outer polygon
-  if (faces.length > 0) {
+  // VALIDATION: Try each candidate and validate it produces reasonable classification
+  const MAX_OUTSIDE_RATIO = 0.25; // If more than 25% chains are outside, reject candidate
+  const MIN_PERIMETER_RATIO = 0.15; // At least 15% should be perimeter
+  
+  for (let candidateIdx = 0; candidateIdx < faces.length; candidateIdx++) {
+    const candidate = faces[candidateIdx];
+    const candidatePolygon = candidate.orientation === 'CCW' 
+      ? candidate.points 
+      : [...candidate.points].reverse();
+    
+    const validation = calculateOutsideRatio(chains, candidatePolygon);
+    
+    console.log(`[FootprintDetection] Validating candidate ${candidateIdx}:`, {
+      id: candidate.id,
+      area: (candidate.absArea / 1e6).toFixed(2) + 'm²',
+      outsideRatio: (validation.outsideRatio * 100).toFixed(1) + '%',
+      perimeterRatio: (validation.perimeterRatio * 100).toFixed(1) + '%',
+      details: validation.details,
+    });
+    
+    // Accept candidate if it meets validation criteria
+    const outsideOK = validation.outsideRatio <= MAX_OUTSIDE_RATIO;
+    const perimeterOK = validation.perimeterRatio >= MIN_PERIMETER_RATIO || chains.length <= 3;
+    
+    if (outsideOK && perimeterOK) {
+      outerPolygon = candidatePolygon;
+      outerArea = candidate.absArea;
+      
+      // All other faces are interior
+      for (let i = 0; i < faces.length; i++) {
+        if (i !== candidateIdx) {
+          interiorLoops.push(faces[i].points);
+        }
+      }
+      
+      console.log('[FootprintDetection] Selected outer polygon (passed validation):', {
+        id: candidate.id,
+        candidateIndex: candidateIdx,
+        vertices: outerPolygon.length,
+        area: (outerArea / 1e6).toFixed(2) + 'm²',
+        containsCount: candidate.containsCount,
+      });
+      break;
+    } else {
+      console.log(`[FootprintDetection] Rejected candidate ${candidateIdx}:`, {
+        outsideOK,
+        perimeterOK,
+        reason: !outsideOK ? 'Too many outside chains' : 'Too few perimeter chains',
+      });
+    }
+  }
+  
+  // If no candidate passed validation, use best available (with warning)
+  if (outerPolygon.length < 3 && faces.length > 0) {
+    console.warn('[FootprintDetection] No candidate passed validation, using best available');
     const best = faces[0];
-    // Ensure CCW winding for outer polygon
     outerPolygon = best.orientation === 'CCW' ? best.points : [...best.points].reverse();
     outerArea = best.absArea;
     
-    // All other faces are interior
     for (let i = 1; i < faces.length; i++) {
       interiorLoops.push(faces[i].points);
     }
-    
-    console.log('[FootprintDetection] Selected outer polygon:', {
-      id: best.id,
-      vertices: outerPolygon.length,
-      area: (outerArea / 1e6).toFixed(2) + 'm²',
-      containsCount: best.containsCount,
-    });
   }
   
   // Fallback: If no closed faces found, try to create a bounding polygon
