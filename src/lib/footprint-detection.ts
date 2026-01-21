@@ -4,11 +4,12 @@
  * Detects building footprint (outer polygon) from wall segments/chains
  * and classifies which side of each chain is exterior vs interior.
  * 
- * Algorithm:
- * 1. Build a graph from chain endpoints
- * 2. Find closed loops (polygons) by walking the graph
- * 3. Identify the outer polygon (largest area, CCW winding)
- * 4. For each chain, sample points on left/right side and use point-in-polygon
+ * Algorithm (Face-Walking for T-junctions):
+ * 1. Build a planar graph from chain endpoints with half-edges
+ * 2. For each node, sort edges by angle for consistent traversal
+ * 3. Walk faces using right-hand rule (planar graph face extraction)
+ * 4. Identify the outer polygon (largest area containing most other loops)
+ * 5. For each chain, sample points on left/right side and use point-in-polygon
  *    to determine which side faces outside (EXT) vs inside (INT)
  */
 
@@ -51,6 +52,17 @@ export interface ChainSideInfo {
   };
 }
 
+// Face/loop metadata for debugging
+export interface FaceMeta {
+  id: string;
+  points: Array<{ x: number; y: number }>;
+  area: number;           // Signed area (positive = CCW)
+  absArea: number;
+  orientation: 'CCW' | 'CW';
+  centroid: { x: number; y: number };
+  containsCount: number;  // How many other face centroids this face contains
+}
+
 export interface FootprintResult {
   // Detection status
   status: FootprintStatus;
@@ -60,6 +72,8 @@ export interface FootprintResult {
   outerArea: number;
   // Number of closed loops found
   loopsFound: number;
+  // All detected faces for debug
+  facesFound: FaceMeta[];
   // Classification for each chain
   chainSides: Map<string, ChainSideInfo>;
   // Any interior loops (holes) detected
@@ -206,21 +220,36 @@ function signedPolygonArea(polygon: Array<{ x: number; y: number }>): number {
   return area / 2;
 }
 
-// ============= Graph Building for Loop Detection =============
+// ============= Half-Edge Face-Walking Algorithm (handles T-junctions) =============
+
+interface HalfEdge {
+  id: string;
+  fromKey: string;
+  toKey: string;
+  chainId: string;
+  angle: number;      // Angle of direction from -> to
+  twin?: string;      // ID of twin half-edge (opposite direction)
+  next?: string;      // Next half-edge in face traversal
+  visited: boolean;
+}
 
 interface GraphNode {
   x: number;
   y: number;
   key: string;
-  edges: Array<{ toKey: string; chainId: string; angle: number }>;
+  halfEdges: string[]; // Half-edge IDs originating from this node
 }
 
 /**
- * Build a graph from chain endpoints for loop detection.
- * Nodes are unique coordinate positions, edges are chains connecting them.
+ * Build a planar graph with half-edges from chain endpoints.
+ * This allows us to walk faces even when nodes have degree > 2 (T-junctions).
  */
-function buildGraph(chains: WallChain[], tolerance: number = 50): Map<string, GraphNode> {
+function buildHalfEdgeGraph(chains: WallChain[], tolerance: number = 50): {
+  nodes: Map<string, GraphNode>;
+  halfEdges: Map<string, HalfEdge>;
+} {
   const nodes = new Map<string, GraphNode>();
+  const halfEdges = new Map<string, HalfEdge>();
   
   // Helper to get or create node key
   const getNodeKey = (x: number, y: number): string => {
@@ -235,12 +264,14 @@ function buildGraph(chains: WallChain[], tolerance: number = 50): Map<string, Gr
     if (!nodes.has(key)) {
       const rx = Math.round(x / tolerance) * tolerance;
       const ry = Math.round(y / tolerance) * tolerance;
-      nodes.set(key, { x: rx, y: ry, key, edges: [] });
+      nodes.set(key, { x: rx, y: ry, key, halfEdges: [] });
     }
     return nodes.get(key)!;
   };
   
-  // Add edges for each chain
+  let heIdCounter = 0;
+  
+  // Create half-edges for each chain
   chains.forEach(chain => {
     const startNode = getNode(chain.startX, chain.startY);
     const endNode = getNode(chain.endX, chain.endY);
@@ -248,107 +279,208 @@ function buildGraph(chains: WallChain[], tolerance: number = 50): Map<string, Gr
     if (startNode.key === endNode.key) return; // Skip degenerate chains
     
     // Angle from start to end
-    const angle = Math.atan2(chain.endY - chain.startY, chain.endX - chain.startX);
+    const angle = Math.atan2(endNode.y - startNode.y, endNode.x - startNode.x);
+    const reverseAngle = Math.atan2(startNode.y - endNode.y, startNode.x - endNode.x);
     
-    // Add bidirectional edges
-    startNode.edges.push({ toKey: endNode.key, chainId: chain.id, angle });
-    endNode.edges.push({ toKey: startNode.key, chainId: chain.id, angle: angle + Math.PI });
+    // Create two half-edges (one in each direction)
+    const he1Id = `he-${heIdCounter++}`;
+    const he2Id = `he-${heIdCounter++}`;
+    
+    const he1: HalfEdge = {
+      id: he1Id,
+      fromKey: startNode.key,
+      toKey: endNode.key,
+      chainId: chain.id,
+      angle,
+      twin: he2Id,
+      visited: false,
+    };
+    
+    const he2: HalfEdge = {
+      id: he2Id,
+      fromKey: endNode.key,
+      toKey: startNode.key,
+      chainId: chain.id,
+      angle: reverseAngle,
+      twin: he1Id,
+      visited: false,
+    };
+    
+    halfEdges.set(he1Id, he1);
+    halfEdges.set(he2Id, he2);
+    
+    startNode.halfEdges.push(he1Id);
+    endNode.halfEdges.push(he2Id);
   });
   
-  return nodes;
-}
-
-/**
- * Find closed loops in the graph using a modified DFS.
- * Returns all polygons found, ordered by area (largest first).
- */
-function findClosedLoops(
-  graph: Map<string, GraphNode>,
-  chains: WallChain[]
-): Array<Array<{ x: number; y: number }>> {
-  const loops: Array<Array<{ x: number; y: number }>> = [];
-  const usedEdges = new Set<string>(); // "fromKey->toKey:chainId"
-  
-  // Sort edges at each node by angle (for consistent winding)
-  graph.forEach(node => {
-    node.edges.sort((a, b) => a.angle - b.angle);
-  });
-  
-  // For each starting edge, try to find a loop
-  graph.forEach((startNode) => {
-    startNode.edges.forEach((startEdge, startEdgeIdx) => {
-      const edgeKey = `${startNode.key}->${startEdge.toKey}:${startEdge.chainId}`;
-      if (usedEdges.has(edgeKey)) return;
-      
-      // Try to walk a loop using "left-hand rule" (always turn left)
-      const path: Array<{ x: number; y: number }> = [{ x: startNode.x, y: startNode.y }];
-      const pathEdges: string[] = [edgeKey];
-      
-      let currentNode = startNode;
-      let currentEdge = startEdge;
-      let iterations = 0;
-      const maxIterations = chains.length * 2 + 10;
-      
-      while (iterations < maxIterations) {
-        iterations++;
-        
-        const nextNode = graph.get(currentEdge.toKey);
-        if (!nextNode) break;
-        
-        path.push({ x: nextNode.x, y: nextNode.y });
-        
-        // Check if we've closed the loop
-        if (nextNode.key === startNode.key && pathEdges.length >= 3) {
-          // Found a closed loop!
-          loops.push([...path.slice(0, -1)]); // Remove duplicate end point
-          pathEdges.forEach(e => usedEdges.add(e));
-          break;
-        }
-        
-        // Find the next edge (turn left = next CCW edge after incoming edge)
-        const incomingAngle = currentEdge.angle + Math.PI; // Reverse direction
-        const normalizedIncoming = ((incomingAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-        
-        // Find edge with smallest CCW angle from incoming
-        let bestEdge: typeof currentEdge | null = null;
-        let bestAngleDiff = Infinity;
-        
-        for (const edge of nextNode.edges) {
-          if (edge.toKey === currentNode.key && edge.chainId === currentEdge.chainId) continue; // Skip going back
-          
-          const edgeAngle = ((edge.angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-          let angleDiff = edgeAngle - normalizedIncoming;
-          if (angleDiff < 0) angleDiff += 2 * Math.PI;
-          if (angleDiff < 0.01) angleDiff += 2 * Math.PI; // Avoid going straight back
-          
-          if (angleDiff < bestAngleDiff) {
-            bestAngleDiff = angleDiff;
-            bestEdge = edge;
-          }
-        }
-        
-        if (!bestEdge) break;
-        
-        const nextEdgeKey = `${nextNode.key}->${bestEdge.toKey}:${bestEdge.chainId}`;
-        if (pathEdges.includes(nextEdgeKey)) break; // Already visited this edge in this path
-        
-        pathEdges.push(nextEdgeKey);
-        currentNode = nextNode;
-        currentEdge = bestEdge;
-      }
+  // Sort half-edges at each node by angle (CCW order)
+  nodes.forEach(node => {
+    node.halfEdges.sort((aId, bId) => {
+      const a = halfEdges.get(aId)!;
+      const b = halfEdges.get(bId)!;
+      return a.angle - b.angle;
     });
   });
   
-  // Sort loops by absolute area (largest first)
-  loops.sort((a, b) => Math.abs(signedPolygonArea(b)) - Math.abs(signedPolygonArea(a)));
+  // Link "next" pointers using right-hand rule
+  // For each half-edge arriving at a node, the "next" is the half-edge
+  // that leaves the node with the smallest CCW angle from the incoming direction
+  nodes.forEach(node => {
+    node.halfEdges.forEach(heId => {
+      const he = halfEdges.get(heId)!;
+      const twinHe = halfEdges.get(he.twin!)!;
+      
+      // Find the outgoing edge at the destination node that is "next" (right-hand rule)
+      const destNode = nodes.get(he.toKey)!;
+      
+      // Incoming angle at destination (from source)
+      const incomingAngle = he.angle;
+      
+      // We want the outgoing edge with smallest CCW angle from (incoming + PI)
+      const reversedAngle = incomingAngle + Math.PI;
+      const normalized = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      
+      // Find the next edge by right-hand rule
+      // Sort destination edges by their angle difference from reversedAngle (CCW)
+      let bestNext: string | null = null;
+      let bestAngleDiff = Infinity;
+      
+      destNode.halfEdges.forEach(outHeId => {
+        const outHe = halfEdges.get(outHeId)!;
+        // Skip the twin (going back the same way)
+        if (outHeId === he.twin) return;
+        
+        const outAngle = outHe.angle;
+        // Calculate CCW angle difference from reversed incoming direction
+        let angleDiff = normalized(outAngle) - normalized(reversedAngle);
+        if (angleDiff < 0) angleDiff += 2 * Math.PI;
+        if (angleDiff < 0.0001) angleDiff += 2 * Math.PI; // Avoid exactly 0 (same direction)
+        
+        if (angleDiff < bestAngleDiff) {
+          bestAngleDiff = angleDiff;
+          bestNext = outHeId;
+        }
+      });
+      
+      // If no other edge found, use twin (dead end - will form degenerate face)
+      he.next = bestNext || he.twin;
+    });
+  });
   
-  return loops;
+  return { nodes, halfEdges };
+}
+
+/**
+ * Extract all faces from the half-edge graph using face traversal.
+ * This handles T-junctions correctly by following the linked "next" pointers.
+ */
+function extractFaces(
+  nodes: Map<string, GraphNode>,
+  halfEdges: Map<string, HalfEdge>
+): FaceMeta[] {
+  const faces: FaceMeta[] = [];
+  let faceIdCounter = 0;
+  
+  // Walk each unvisited half-edge to extract faces
+  halfEdges.forEach((startHe, startId) => {
+    if (startHe.visited) return;
+    
+    const facePoints: Array<{ x: number; y: number }> = [];
+    const faceEdgeIds: string[] = [];
+    
+    let currentId: string | undefined = startId;
+    let iterations = 0;
+    const maxIterations = halfEdges.size + 10;
+    
+    while (currentId && iterations < maxIterations) {
+      iterations++;
+      const he = halfEdges.get(currentId)!;
+      
+      if (he.visited) {
+        // We've closed the loop or hit a visited edge
+        if (currentId === startId && facePoints.length >= 3) {
+          // Closed loop - valid face
+          break;
+        } else {
+          // Hit a visited edge that's not the start - abort this face
+          break;
+        }
+      }
+      
+      he.visited = true;
+      faceEdgeIds.push(currentId);
+      
+      const fromNode = nodes.get(he.fromKey)!;
+      facePoints.push({ x: fromNode.x, y: fromNode.y });
+      
+      currentId = he.next;
+      
+      // Check if we've returned to start
+      if (currentId === startId) break;
+    }
+    
+    // Only create face if we have a valid polygon
+    if (facePoints.length >= 3) {
+      const signedArea = signedPolygonArea(facePoints);
+      const absArea = Math.abs(signedArea);
+      
+      // Calculate centroid
+      let cx = 0, cy = 0;
+      facePoints.forEach(p => { cx += p.x; cy += p.y; });
+      const centroid = { x: cx / facePoints.length, y: cy / facePoints.length };
+      
+      faces.push({
+        id: `face-${faceIdCounter++}`,
+        points: facePoints,
+        area: signedArea,
+        absArea,
+        orientation: signedArea >= 0 ? 'CCW' : 'CW',
+        centroid,
+        containsCount: 0,
+      });
+    }
+  });
+  
+  return faces;
+}
+
+/**
+ * Find closed loops in the graph using face-walking algorithm.
+ * This is more robust than the old method for graphs with T-junctions.
+ */
+function findClosedLoopsFaceWalk(
+  chains: WallChain[],
+  tolerance: number = 50
+): FaceMeta[] {
+  const { nodes, halfEdges } = buildHalfEdgeGraph(chains, tolerance);
+  
+  console.log('[FootprintDetection] Face-walk graph:', {
+    nodes: nodes.size,
+    halfEdges: halfEdges.size,
+    chains: chains.length,
+  });
+  
+  const faces = extractFaces(nodes, halfEdges);
+  
+  // Filter out very small faces (noise) and the unbounded outer face
+  // The unbounded face typically has very large negative area (CW winding)
+  const MIN_FACE_AREA = 100000; // 100mm² minimum
+  const validFaces = faces.filter(f => f.absArea > MIN_FACE_AREA);
+  
+  console.log('[FootprintDetection] Found faces:', {
+    total: faces.length,
+    valid: validFaces.length,
+    areas: validFaces.slice(0, 5).map(f => ({ id: f.id, area: (f.absArea / 1e6).toFixed(2) + 'm²', orientation: f.orientation })),
+  });
+  
+  return validFaces;
 }
 
 // ============= Main Classification Function =============
 
 /**
  * Detect building footprint and classify each chain's exterior/interior sides.
+ * Uses face-walking algorithm that handles T-junctions correctly.
  * 
  * @param chains - Wall chains from the DXF
  * @param tolerance - Coordinate snapping tolerance (mm)
@@ -364,6 +496,7 @@ export function detectFootprintAndClassify(
       outerPolygon: [],
       outerArea: 0,
       loopsFound: 0,
+      facesFound: [],
       chainSides: new Map(),
       interiorLoops: [],
       stats: { totalChains: 0, exteriorChains: 0, interiorPartitions: 0, unresolved: 0, outsideFootprint: 0 },
@@ -373,120 +506,75 @@ export function detectFootprintAndClassify(
     };
   }
   
-  // Step 1: Build graph and find loops
-  const graph = buildGraph(chains, tolerance);
-  const loops = findClosedLoops(graph, chains);
+  // Step 1: Find faces using face-walking algorithm (handles T-junctions)
+  const faces = findClosedLoopsFaceWalk(chains, tolerance);
   
-  console.log('[FootprintDetection] Found', loops.length, 'closed loops');
+  console.log('[FootprintDetection] Found', faces.length, 'closed faces');
   
   // Step 2: Identify outer polygon using robust selection algorithm
-  // The outer polygon should be the LARGEST loop that CONTAINS most other loops' centroids
   let outerPolygon: Array<{ x: number; y: number }> = [];
   let outerArea = 0;
   const interiorLoops: Array<Array<{ x: number; y: number }>> = [];
   let usedFallback = false;
   
-  // Calculate metadata for each loop
-  interface LoopMeta {
-    loop: Array<{ x: number; y: number }>;
-    absArea: number;
-    signedArea: number;
-    centroid: { x: number; y: number };
-    bbox: { minX: number; maxX: number; minY: number; maxY: number; diag: number };
-    containsCount: number; // How many other loop centroids this loop contains
-    isSelfIntersecting: boolean;
-  }
-  
-  const loopMetas: LoopMeta[] = loops.map(loop => {
-    const signedArea = signedPolygonArea(loop);
-    const absArea = Math.abs(signedArea);
-    
-    // Calculate centroid
-    let cx = 0, cy = 0;
-    loop.forEach(p => { cx += p.x; cy += p.y; });
-    const centroid = { x: cx / loop.length, y: cy / loop.length };
-    
-    // Calculate bounding box
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    loop.forEach(p => {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
-    });
-    const diag = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
-    
-    return {
-      loop,
-      absArea,
-      signedArea,
-      centroid,
-      bbox: { minX, maxX, minY, maxY, diag },
-      containsCount: 0,
-      isSelfIntersecting: false, // Could add self-intersection check if needed
-    };
-  });
-  
-  // Calculate containsCount for each loop (how many other loop centroids it contains)
-  for (let i = 0; i < loopMetas.length; i++) {
-    for (let j = 0; j < loopMetas.length; j++) {
+  // Calculate containsCount for each face
+  for (let i = 0; i < faces.length; i++) {
+    for (let j = 0; j < faces.length; j++) {
       if (i === j) continue;
-      // Normalize the loop to CCW for consistent point-in-polygon test
-      const normalizedLoop = loopMetas[i].signedArea > 0 
-        ? loopMetas[i].loop 
-        : [...loopMetas[i].loop].reverse();
-      if (pointInPolygon(loopMetas[j].centroid.x, loopMetas[j].centroid.y, normalizedLoop)) {
-        loopMetas[i].containsCount++;
+      // Normalize face to CCW for consistent point-in-polygon test
+      const normalizedFace = faces[i].orientation === 'CCW' 
+        ? faces[i].points 
+        : [...faces[i].points].reverse();
+      if (pointInPolygon(faces[j].centroid.x, faces[j].centroid.y, normalizedFace)) {
+        faces[i].containsCount++;
       }
     }
   }
   
-  // Sort loops by selection criteria:
-  // 1. Primary: Largest containsCount (contains most other loops)
+  // Sort faces by selection criteria:
+  // 1. Primary: Largest containsCount (contains most other faces)
   // 2. Secondary: Largest absArea
-  // 3. Tertiary: Largest bbox diagonal
-  loopMetas.sort((a, b) => {
+  faces.sort((a, b) => {
     // First by containsCount (descending)
     if (b.containsCount !== a.containsCount) {
       return b.containsCount - a.containsCount;
     }
     // Then by area (descending)
-    if (Math.abs(b.absArea - a.absArea) > 1000) { // >1cm² difference
-      return b.absArea - a.absArea;
-    }
-    // Finally by bbox diagonal (descending)
-    return b.bbox.diag - a.bbox.diag;
+    return b.absArea - a.absArea;
   });
   
-  console.log('[FootprintDetection] Loop selection candidates:', loopMetas.map((m, i) => ({
+  console.log('[FootprintDetection] Face selection candidates:', faces.slice(0, 5).map((f, i) => ({
     index: i,
-    area: (m.absArea / 1e6).toFixed(2) + 'm²',
-    containsCount: m.containsCount,
-    bboxDiag: (m.bbox.diag / 1000).toFixed(2) + 'm',
+    id: f.id,
+    area: (f.absArea / 1e6).toFixed(2) + 'm²',
+    containsCount: f.containsCount,
+    orientation: f.orientation,
+    vertices: f.points.length,
   })));
   
   // Select the best candidate as outer polygon
-  if (loopMetas.length > 0) {
-    const best = loopMetas[0];
+  if (faces.length > 0) {
+    const best = faces[0];
     // Ensure CCW winding for outer polygon
-    outerPolygon = best.signedArea > 0 ? best.loop : [...best.loop].reverse();
+    outerPolygon = best.orientation === 'CCW' ? best.points : [...best.points].reverse();
     outerArea = best.absArea;
     
-    // All other loops are interior
-    for (let i = 1; i < loopMetas.length; i++) {
-      interiorLoops.push(loopMetas[i].loop);
+    // All other faces are interior
+    for (let i = 1; i < faces.length; i++) {
+      interiorLoops.push(faces[i].points);
     }
     
     console.log('[FootprintDetection] Selected outer polygon:', {
+      id: best.id,
       vertices: outerPolygon.length,
       area: (outerArea / 1e6).toFixed(2) + 'm²',
       containsCount: best.containsCount,
     });
   }
   
-  // If no closed loops found, try to create a bounding polygon from chain extents
+  // Fallback: If no closed faces found, try to create a bounding polygon
   if (outerPolygon.length < 3) {
-    console.log('[FootprintDetection] No closed loops, using convex hull fallback');
+    console.log('[FootprintDetection] No closed faces, using convex hull fallback');
     outerPolygon = createBoundingPolygon(chains);
     outerArea = Math.abs(signedPolygonArea(outerPolygon));
     usedFallback = true;
@@ -495,7 +583,6 @@ export function detectFootprintAndClassify(
   console.log('[FootprintDetection] Outer polygon:', outerPolygon.length, 'vertices, area:', (outerArea / 1e6).toFixed(2), 'm²');
   
   // Step 3: Classify each chain using ADAPTIVE EPS and MAJORITY VOTING
-  // This is critical for centerlines where points may fall on the polygon boundary
   const chainSides = new Map<string, ChainSideInfo>();
   let exteriorChains = 0;
   let interiorPartitions = 0;
@@ -511,12 +598,11 @@ export function detectFootprintAndClassify(
   
   /**
    * Test a single point with adaptive eps to determine inside/outside
-   * Returns: { result: 'inside' | 'outside' | 'ambiguous', usedEps: number }
    */
   const testPointAdaptive = (
     baseX: number, baseY: number,
     perpX: number, perpY: number,
-    sign: 1 | -1 // +1 for positive perp, -1 for negative perp
+    sign: 1 | -1
   ): { result: 'inside' | 'outside' | 'ambiguous'; usedEps: number } => {
     for (const eps of EPS_LIST) {
       const testX = baseX + perpX * eps * sign;
@@ -524,10 +610,7 @@ export function detectFootprintAndClassify(
       
       const pointResult = robustPointInPolygon(testX, testY, outerPolygon, EDGE_TOLERANCE);
       
-      if (pointResult === 'on_edge') {
-        // Try larger eps
-        continue;
-      }
+      if (pointResult === 'on_edge') continue;
       
       return {
         result: pointResult === 'inside' ? 'inside' : 'outside',
@@ -535,13 +618,11 @@ export function detectFootprintAndClassify(
       };
     }
     
-    // All eps values resulted in on_edge - truly ambiguous
     return { result: 'ambiguous', usedEps: 0 };
   };
   
   /**
    * Classify a chain segment using adaptive eps
-   * Returns classification vote and debug info
    */
   const classifySegment = (
     midX: number, midY: number,
@@ -555,32 +636,24 @@ export function detectFootprintAndClassify(
     const plusAmbiguous = plusResult.result === 'ambiguous';
     const minusAmbiguous = minusResult.result === 'ambiguous';
     
-    // Use max eps used for debug
     const usedEps = Math.max(plusResult.usedEps, minusResult.usedEps);
     
-    // If either side is ambiguous, mark as ambiguous
     if (plusAmbiguous || minusAmbiguous) {
       return { vote: 'AMBIGUOUS', usedEps };
     }
     
-    // Determine classification based on inside/outside
     if (minusInside && !plusInside) {
-      // Minus (left) is inside, Plus (right) is outside => RIGHT_EXT
       return { vote: 'RIGHT_EXT', usedEps };
     } else if (!minusInside && plusInside) {
-      // Plus (right) is inside, Minus (left) is outside => LEFT_EXT
       return { vote: 'LEFT_EXT', usedEps };
     } else if (plusInside && minusInside) {
-      // Both inside => PARTITION
       return { vote: 'BOTH_INT', usedEps };
     } else {
-      // Both outside => edge case (wall outside footprint)
       return { vote: 'BOTH_OUTSIDE', usedEps };
     }
   };
   
   chains.forEach(chain => {
-    // Get chain direction and perpendicular
     const dx = chain.endX - chain.startX;
     const dy = chain.endY - chain.startY;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -612,18 +685,15 @@ export function detectFootprintAndClassify(
     const dirY = dy / len;
     
     // "Positive perpendicular" = 90° CW from direction = (dirY, -dirX)
-    // This matches the panel placement convention exactly
     const perpX = dirY;
     const perpY = -dirX;
     
     // Sample multiple points along the chain for majority voting
-    // Use up to 5 sample points distributed along the chain
-    const numSamples = Math.min(5, Math.max(1, Math.floor(len / 500))); // One sample per 500mm, min 1, max 5
+    const numSamples = Math.min(5, Math.max(1, Math.floor(len / 500)));
     const samplePoints: Array<{ x: number; y: number }> = [];
     
     for (let i = 0; i < numSamples; i++) {
       const t = numSamples === 1 ? 0.5 : i / (numSamples - 1);
-      // Clamp t to avoid exact endpoints (which may be at intersections)
       const tClamped = Math.max(0.1, Math.min(0.9, t));
       samplePoints.push({
         x: chain.startX + dx * tClamped,
@@ -631,7 +701,6 @@ export function detectFootprintAndClassify(
       });
     }
     
-    // Classify each sample point
     let rightExtVotes = 0;
     let leftExtVotes = 0;
     let bothIntVotes = 0;
@@ -652,7 +721,6 @@ export function detectFootprintAndClassify(
       }
     }
     
-    // Determine final classification by majority vote
     const totalVotes = samplePoints.length;
     const majorityThreshold = Math.ceil(totalVotes / 2);
     
@@ -663,7 +731,6 @@ export function detectFootprintAndClassify(
     let isOutsideFootprint = false;
     let outsideReason: string | undefined;
     
-    // Check for majority
     if (rightExtVotes >= majorityThreshold) {
       classification = 'RIGHT_EXT';
       outsideIsPositivePerp = true;
@@ -676,12 +743,10 @@ export function detectFootprintAndClassify(
       exteriorChains++;
     } else if (bothIntVotes >= majorityThreshold) {
       classification = 'BOTH_INT';
-      outsideIsPositivePerp = true; // Arbitrary for partitions
+      outsideIsPositivePerp = true;
       interiorPartitions++;
       partitionChainIds.push(chain.id);
     } else if (bothOutsideVotes >= majorityThreshold) {
-      // Chain is entirely outside the building footprint - treat as BOTH_INT visually (neutral)
-      // but flag it as outsideFootprint for UI/filtering purposes
       classification = 'BOTH_INT';
       outsideIsPositivePerp = true;
       isOutsideFootprint = true;
@@ -694,10 +759,8 @@ export function detectFootprintAndClassify(
       unresolved++;
       unresolvedChainIds.push(chain.id);
     } else {
-      // No clear majority - use the highest vote count, preferring perimeter over partition
       const perimeterVotes = rightExtVotes + leftExtVotes;
       if (perimeterVotes > bothIntVotes && perimeterVotes > ambiguousVotes + bothOutsideVotes) {
-        // Perimeter wins - pick the side with more votes
         if (rightExtVotes >= leftExtVotes) {
           classification = 'RIGHT_EXT';
           outsideIsPositivePerp = true;
@@ -714,7 +777,6 @@ export function detectFootprintAndClassify(
         interiorPartitions++;
         partitionChainIds.push(chain.id);
       } else {
-        // Truly unresolved - mixed results
         classification = 'UNRESOLVED';
         unresolvedReason = 'MIXED_VOTES';
         unresolved++;
@@ -722,7 +784,6 @@ export function detectFootprintAndClassify(
       }
     }
     
-    // Use midpoint for legacy left/right inside booleans
     const midX = (chain.startX + chain.endX) / 2;
     const midY = (chain.startY + chain.endY) / 2;
     const leftInside = pointInPolygon(midX - perpX * 150, midY - perpY * 150, outerPolygon);
@@ -749,11 +810,8 @@ export function detectFootprintAndClassify(
   });
   
   // Step 4: Per-chain consistency check for PERIMETER chains
-  // Verify that the side marked as "exterior" actually falls OUTSIDE the footprint
-  // This catches any edge cases where the majority vote still got it wrong
   if (outerPolygon.length >= 3) {
     chainSides.forEach((sideInfo, chainId) => {
-      // Only check perimeter chains (LEFT_EXT or RIGHT_EXT)
       if (sideInfo.classification !== 'LEFT_EXT' && sideInfo.classification !== 'RIGHT_EXT') {
         return;
       }
@@ -761,7 +819,6 @@ export function detectFootprintAndClassify(
       const chain = chains.find(c => c.id === chainId);
       if (!chain) return;
       
-      // Calculate using the same perpendicular convention as panel placement
       const dx = chain.endX - chain.startX;
       const dy = chain.endY - chain.startY;
       const len = Math.sqrt(dx * dx + dy * dy);
@@ -769,35 +826,28 @@ export function detectFootprintAndClassify(
       
       const dirX = dx / len;
       const dirY = dy / len;
-      
-      // "Positive perpendicular" = 90° CW from direction = (dirY, -dirX)
       const perpX = dirY;
       const perpY = -dirX;
       
-      // Get midpoint
       const midX = (chain.startX + chain.endX) / 2;
       const midY = (chain.startY + chain.endY) / 2;
       
-      // Test point on the "exterior" side with adaptive eps
       const testResult = testPointAdaptive(
         midX, midY, perpX, perpY,
         sideInfo.outsideIsPositivePerp ? 1 : -1
       );
       
-      // If the "exterior" test point is INSIDE the footprint, our classification is inverted
       if (testResult.result === 'inside') {
-        console.log(`[FootprintDetection] Consistency check: Chain ${chainId} has inverted EXT/INT - correcting (eps=${testResult.usedEps}mm)`);
+        console.log(`[FootprintDetection] Consistency check: Chain ${chainId} has inverted EXT/INT - correcting`);
         
         sideInfo.outsideIsPositivePerp = !sideInfo.outsideIsPositivePerp;
         
-        // Also update the classification label for clarity
         if (sideInfo.classification === 'LEFT_EXT') {
           sideInfo.classification = 'RIGHT_EXT';
         } else if (sideInfo.classification === 'RIGHT_EXT') {
           sideInfo.classification = 'LEFT_EXT';
         }
         
-        // Update outward normal angle
         if (sideInfo.outsideIsPositivePerp) {
           sideInfo.outwardNormalAngle = Math.atan2(-dirX, dirY);
         } else {
@@ -814,7 +864,13 @@ export function detectFootprintAndClassify(
     outsideFootprint,
   });
   
-  // Determine overall status
+  // Sanity check: if too many chains are "outside", warn
+  const totalClassified = exteriorChains + interiorPartitions + unresolved + outsideFootprint;
+  const outsideRatio = totalClassified > 0 ? outsideFootprint / totalClassified : 0;
+  if (outsideRatio > 0.4) {
+    console.warn('[FootprintDetection] WARNING: High outside ratio (' + (outsideRatio * 100).toFixed(0) + '%) - footprint may be incorrect');
+  }
+  
   const status: FootprintStatus = 
     (outerPolygon.length >= 3 && !usedFallback) ? 'OK' : 
     (usedFallback && outerPolygon.length >= 3) ? 'OK' :
@@ -824,7 +880,8 @@ export function detectFootprintAndClassify(
     status,
     outerPolygon,
     outerArea,
-    loopsFound: loops.length,
+    loopsFound: faces.length,
+    facesFound: faces,
     chainSides,
     interiorLoops,
     stats: {
@@ -845,7 +902,6 @@ export function detectFootprintAndClassify(
  * Uses convex hull algorithm for robustness.
  */
 function createBoundingPolygon(chains: WallChain[]): Array<{ x: number; y: number }> {
-  // Collect all unique endpoints
   const points: Array<{ x: number; y: number }> = [];
   const seen = new Set<string>();
   
@@ -865,7 +921,6 @@ function createBoundingPolygon(chains: WallChain[]): Array<{ x: number; y: numbe
   
   if (points.length < 3) return points;
   
-  // Compute convex hull using Graham scan
   return convexHull(points);
 }
 
@@ -875,7 +930,6 @@ function createBoundingPolygon(chains: WallChain[]): Array<{ x: number; y: numbe
 function convexHull(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
   if (points.length < 3) return [...points];
   
-  // Find the point with lowest y (and leftmost if tie)
   let start = 0;
   for (let i = 1; i < points.length; i++) {
     if (points[i].y < points[start].y || 
@@ -886,7 +940,6 @@ function convexHull(points: Array<{ x: number; y: number }>): Array<{ x: number;
   
   const startPoint = points[start];
   
-  // Sort points by polar angle with respect to start point
   const sorted = points
     .filter((_, i) => i !== start)
     .map(p => ({
@@ -897,11 +950,9 @@ function convexHull(points: Array<{ x: number; y: number }>): Array<{ x: number;
     .sort((a, b) => a.angle - b.angle || a.dist - b.dist)
     .map(p => p.point);
   
-  // Build hull
   const hull: Array<{ x: number; y: number }> = [startPoint];
   
   for (const p of sorted) {
-    // Remove points that make clockwise turn
     while (hull.length > 1) {
       const top = hull[hull.length - 1];
       const second = hull[hull.length - 2];
@@ -923,10 +974,6 @@ function convexHull(points: Array<{ x: number; y: number }>): Array<{ x: number;
 /**
  * Given a chain's side classification and the panel's perpendicular offset direction,
  * determine if the panel is on the exterior or interior side.
- * 
- * @param classification - The chain's side classification
- * @param isPositiveOffset - True if panel is on the positive perpendicular side (right when looking along chain)
- * @returns 'exterior' or 'interior'
  */
 export function getPanelSideFromClassification(
   classification: SideClassification,
@@ -934,17 +981,13 @@ export function getPanelSideFromClassification(
 ): 'exterior' | 'interior' {
   switch (classification) {
     case 'RIGHT_EXT':
-      // Right side is exterior
       return isPositiveOffset ? 'exterior' : 'interior';
     case 'LEFT_EXT':
-      // Left side is exterior
       return isPositiveOffset ? 'interior' : 'exterior';
     case 'BOTH_INT':
-      // Both sides are interior (partition wall)
       return 'interior';
     case 'UNRESOLVED':
     default:
-      // Default to positive = exterior (legacy behavior)
       return isPositiveOffset ? 'exterior' : 'interior';
   }
 }
