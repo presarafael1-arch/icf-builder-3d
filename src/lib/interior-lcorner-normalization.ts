@@ -154,6 +154,11 @@ function findParallelExteriorRef(
 /**
  * Calculate the geometric score for a given offset hypothesis
  * 
+ * IMPROVED ALGORITHM:
+ * - Measures how well the interior panel's cut aligns with the exterior reference
+ * - The 2.5T offset should go to the panel whose cut needs more clearance from the exterior
+ * - The 1.5T offset should go to the panel whose cut is naturally closer to its meeting point
+ * 
  * Score = E1 (gap) + 100*E2 (overlap) + 10*E3 (step)
  * Lower is better
  */
@@ -171,7 +176,6 @@ function calculateHypothesisScore(
   // Calculate the position of the interior panel's cut edge
   const panelStartMm = interiorPanel.startMm ?? 0;
   const panelEndMm = interiorPanel.endMm ?? (panelStartMm + (interiorPanel.widthMm ?? PANEL_WIDTH));
-  const panelWidthMm = interiorPanel.widthMm ?? PANEL_WIDTH;
   
   // The cut position in chain-local coords
   // If at start: cut is at the start edge + offset (moving away from junction)
@@ -200,23 +204,10 @@ function calculateHypothesisScore(
   let gapError = 0;
   
   if (exteriorRef) {
-    // Calculate where the exterior panel ends (in world coords)
-    const extStartMm = exteriorRef.startMm ?? 0;
-    const extEndMm = exteriorRef.endMm ?? (extStartMm + (exteriorRef.widthMm ?? PANEL_WIDTH));
-    
-    // The exterior panel extends from start to end along its chain
-    // We want the interior cut to meet at the junction point
-    
-    // Simplified: use offset as a proxy for gap
-    // Ideal offset should make the cut plane pass through the junction node
-    // For now, we use a geometric heuristic: 
-    // - 2.5T offset means the cut is further from junction (good if exterior is "outside")
-    // - 1.5T offset means the cut is closer to junction (good if exterior is "inside")
-    
-    // The junction nodeInt is where interior faces should meet
+    // The junction node is where interior faces should meet
     const nodeInt = lJunction.interiorNode;
     if (nodeInt) {
-      // Calculate distance from cut position to nodeInt along chain axis
+      // Calculate world position of the cut
       const cutWorldX = interiorChain.startX + intDirX * cutPositionMm;
       const cutWorldY = interiorChain.startY + intDirY * cutPositionMm;
       
@@ -225,6 +216,16 @@ function calculateHypothesisScore(
       
       // Project onto perpendicular direction (how far off the cut is from node)
       gapError = Math.abs(toNodeX * intPerpX + toNodeY * intPerpY);
+      
+      // IMPROVED: Also consider the distance along the chain direction
+      // If the cut is too close to the junction, it may overlap with the exterior
+      const distAlongChain = Math.abs(toNodeX * intDirX + toNodeY * intDirY);
+      
+      // If this panel's cut would be closer to the node than expected, penalize smaller offsets
+      // (i.e., 1.5T should only be used when the cut doesn't need much clearance)
+      if (distAlongChain < CORNER_CUT_MM && offsetTooth === 1.5) {
+        gapError += TOOTH; // Add penalty for being too close with small offset
+      }
     }
   }
   
@@ -234,10 +235,15 @@ function calculateHypothesisScore(
   
   // For L-corners, if offset is too small (1.5T when 2.5T is needed), 
   // the cut may not clear the exterior panel
-  // We detect this by checking if the cut position would be "inside" the exterior face
-  if (gapError > TOOTH * 2 && offsetTooth === 1.5) {
+  // We detect this by checking if the gap error is large with small offset
+  if (gapError > TOOTH * 1.5 && offsetTooth === 1.5) {
     // Potential overlap - the 1.5T offset might not be enough
     overlapPenalty = 50;
+  }
+  
+  // Bonus: If 2.5T is used and gapError is small, this is a good fit
+  if (offsetTooth === 2.5 && gapError < TOOTH) {
+    gapError = Math.max(0, gapError - TOOTH * 0.5); // Reduce error as reward
   }
   
   // E3: Step penalty - measures how well the two interior panels align at the corner
@@ -435,20 +441,38 @@ export function applyInteriorLCornerNormalization(
     const h1TotalError = h1ScoreA.totalScore + h1ScoreB.totalScore + 10 * h1StepPenalty;
     const h2TotalError = h2ScoreA.totalScore + h2ScoreB.totalScore + 10 * h2StepPenalty;
     
-    // ============ TIEBREAKER: Parallelism ============
-    // If scores are similar, prefer the hypothesis where the 2.5T offset is on the 
-    // panel that is MORE parallel to its reference exterior (better alignment)
+    // ============ IMPROVED SELECTION LOGIC ============
+    // 1. Primary: choose hypothesis with lower total error
+    // 2. Tiebreaker: if errors are close, prefer giving 2.5T to the panel with higher overlap penalty
+    // 3. Secondary tiebreaker: use parallelism score
+    
     let useH1 = h1TotalError <= h2TotalError;
     
-    if (Math.abs(h1TotalError - h2TotalError) < 10) {
-      // Scores are very close - use parallelism as tiebreaker
-      // H1: A gets 2.5T, B gets 1.5T
-      // H2: A gets 1.5T, B gets 2.5T
-      // Prefer giving 2.5T to the one with lower parallelism (needs more adjustment)
-      const parallelismDiff = h1ScoreA.parallelism - h2ScoreB.parallelism;
-      if (Math.abs(parallelismDiff) > 0.1) {
-        // Give 2.5T to the one with lower parallelism
-        useH1 = h1ScoreA.parallelism < h2ScoreB.parallelism;
+    // If scores are very close, use multiple tiebreakers
+    if (Math.abs(h1TotalError - h2TotalError) < 15) {
+      // Tiebreaker 1: Check overlap penalties
+      // The panel that would have overlap with 1.5T should get 2.5T instead
+      const h1OverlapRisk = h1ScoreB.overlapPenalty; // B has 1.5T in H1
+      const h2OverlapRisk = h2ScoreA.overlapPenalty; // A has 1.5T in H2
+      
+      if (h1OverlapRisk !== h2OverlapRisk) {
+        // If H1 has overlap risk on B, prefer H2 (give B the 2.5T)
+        // If H2 has overlap risk on A, prefer H1 (give A the 2.5T)
+        useH1 = h2OverlapRisk > h1OverlapRisk;
+      } else {
+        // Tiebreaker 2: Use gap error - panel with larger gap needs 2.5T
+        const aGapWith15 = h2ScoreA.gapError; // A with 1.5T in H2
+        const bGapWith15 = h1ScoreB.gapError; // B with 1.5T in H1
+        
+        if (Math.abs(aGapWith15 - bGapWith15) > TOOTH * 0.3) {
+          // Give 2.5T to the one with larger gap when using 1.5T
+          useH1 = aGapWith15 > bGapWith15; // If A has larger gap with 1.5T, use H1 (A gets 2.5T)
+        } else {
+          // Tiebreaker 3: Use parallelism
+          // Give 2.5T to the panel that is MORE perpendicular to its exterior ref
+          // (higher parallelism = more aligned cut = better with 2.5T clearance)
+          useH1 = h1ScoreA.parallelism >= h2ScoreB.parallelism;
+        }
       }
     }
     
