@@ -617,9 +617,9 @@ function BatchedPanelInstances({
       return getRemainingIntervalsForRow(chain, openings, row);
     };
 
-    console.log('[BatchedPanelInstances] flippedChains', { size: flippedChains?.size ?? 0, ids: Array.from(flippedChains ?? []).slice(0, 10) });
+    console.log('[BatchedPanelInstances] flippedChains', { size: flippedChains?.size ?? 0, ids: Array.from(flippedChains ?? []).slice(0, 10), flipAllSides: settings.flipAllSides });
 
-    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow, settings.concreteThickness, flippedChains);
+    const result = generatePanelLayout(chains, visibleRows, settings.maxRows, getIntervalsForRow, settings.concreteThickness, flippedChains, settings.flipAllSides);
 
     console.log('[BatchedPanelInstances] Generated panels:', {
       FULL: result.panelsByType.FULL.length,
@@ -799,7 +799,7 @@ function BatchedPanelInstances({
         allTopos: filteredTopos,
         layoutStats: result.stats,
       };
-  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, settings.showPartitionPanels, settings.showUnknownPanels, settings.showOutsideFootprint, panelOverrides, flippedChains, outsideChainIds]);
+  }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, settings.showPartitionPanels, settings.showUnknownPanels, settings.showOutsideFootprint, settings.flipAllSides, panelOverrides, flippedChains, outsideChainIds]);
 
   // Total count and counts by type
   const totalCount = allPanels.length;

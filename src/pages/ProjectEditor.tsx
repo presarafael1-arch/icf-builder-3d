@@ -30,6 +30,24 @@ import { buildWallChains, buildWallChainsAutoTuned } from '@/lib/wall-chains';
 import { DXFSegment, NormalizedDXFResult } from '@/lib/dxf-parser';
 import { applyDXFTransform } from '@/lib/dxf-transform';
 
+// Helper to load flipAllSides from localStorage
+function loadFlipAllSides(projectId: string | undefined): boolean {
+  if (!projectId) return false;
+  try {
+    const stored = localStorage.getItem(`omni-icf-flip-all-sides-${projectId}`);
+    return stored === 'true';
+  } catch {
+    return false;
+  }
+}
+
+// Helper to save flipAllSides to localStorage
+function saveFlipAllSides(projectId: string | undefined, value: boolean): void {
+  if (!projectId) return;
+  try {
+    localStorage.setItem(`omni-icf-flip-all-sides-${projectId}`, value ? 'true' : 'false');
+  } catch {}
+}
 interface Project {
   id: string;
   name: string;
@@ -353,6 +371,9 @@ export default function ProjectEditor() {
       showFootprintStats: false,
       highlightUnresolved: false, // Highlight unresolved chains
       showOutsideFootprint: true, // Show chains outside the building footprint
+      
+      // Global EXT/INT flip - persisted per project
+      flipAllSides: loadFlipAllSides(id),
     };
   });
   
@@ -420,6 +441,11 @@ export default function ProjectEditor() {
       } catch {}
     }
   }, [id, viewerSettings.dxfFlipY, viewerSettings.dxfMirrorX, viewerSettings.dxfRotation]);
+  
+  // Persist global EXT/INT flip when it changes
+  useEffect(() => {
+    saveFlipAllSides(id, viewerSettings.flipAllSides);
+  }, [id, viewerSettings.flipAllSides]);
   
   // Build chains from transformed walls (with candidate detection enabled)
   const chainsResult = useMemo(() => buildWallChains(transformedWalls, { detectCandidates: true }), [transformedWalls]);

@@ -686,6 +686,27 @@ export function PanelInspector({
                     {isChainFlipped?.(panelData.chainId) ? "Invertido" : "Normal"}
                   </Button>
                 </div>
+                
+                {/* Debug info for side calculation */}
+                {viewerSettings && (
+                  <div className="mt-2 p-2 bg-muted/50 rounded text-xs space-y-1">
+                    <p className="font-medium text-muted-foreground">Debug EXT/INT</p>
+                    <div className="grid grid-cols-2 gap-x-3">
+                      <span>flipAllSides:</span>
+                      <span className={`font-mono ${viewerSettings.flipAllSides ? 'text-orange-400 font-bold' : ''}`}>
+                        {viewerSettings.flipAllSides ? 'SIM' : 'NÃO'}
+                      </span>
+                      <span>chainFlipped:</span>
+                      <span className={`font-mono ${isChainFlipped?.(panelData.chainId) ? 'text-orange-400 font-bold' : ''}`}>
+                        {isChainFlipped?.(panelData.chainId) ? 'SIM' : 'NÃO'}
+                      </span>
+                      <span>panel.side:</span>
+                      <span className={`font-mono font-bold ${panelData.side === 'exterior' ? 'text-blue-400' : 'text-white'}`}>
+                        {panelData.side?.toUpperCase() ?? 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             
