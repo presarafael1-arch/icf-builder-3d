@@ -1,8 +1,8 @@
-import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart, Box, Columns } from 'lucide-react';
+import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart, Box, Columns, FlipVertical, FlipHorizontal, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
-import { ViewerSettings, ConcreteThickness } from '@/types/icf';
+import { ViewerSettings, ConcreteThickness, DXFRotation } from '@/types/icf';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -10,6 +10,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ViewerControlsProps {
   settings: ViewerSettings;
@@ -21,6 +28,13 @@ interface ViewerControlsProps {
 const THICKNESS_OPTIONS: { value: ConcreteThickness; label: string }[] = [
   { value: '150', label: '150mm' },
   { value: '220', label: '220mm' },
+];
+
+const ROTATION_OPTIONS: { value: DXFRotation; label: string }[] = [
+  { value: 0, label: '0°' },
+  { value: 90, label: '90°' },
+  { value: 180, label: '180°' },
+  { value: 270, label: '270°' },
 ];
 
 export function ViewerControls({ settings, onSettingsChange, onReset, onFitView }: ViewerControlsProps) {
@@ -214,6 +228,67 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView 
                   checked={settings.showUnknownPanels}
                   onCheckedChange={() => toggleSetting('showUnknownPanels')}
                 />
+              </div>
+
+              {/* DXF Transform Section */}
+              <div className="border-t border-border my-1 pt-2">
+                <h5 className="text-xs font-medium text-muted-foreground mb-2">Transformação DXF</h5>
+              </div>
+
+              {/* Mirror Y toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FlipVertical className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="dxf-flip-y" className="text-sm cursor-pointer">
+                    Inverter Y (DXF)
+                  </Label>
+                </div>
+                <Switch
+                  id="dxf-flip-y"
+                  checked={settings.dxfFlipY}
+                  onCheckedChange={() => toggleSetting('dxfFlipY')}
+                />
+              </div>
+
+              {/* Mirror X toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FlipHorizontal className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="dxf-mirror-x" className="text-sm cursor-pointer">
+                    Espelhar X (DXF)
+                  </Label>
+                </div>
+                <Switch
+                  id="dxf-mirror-x"
+                  checked={settings.dxfMirrorX}
+                  onCheckedChange={() => toggleSetting('dxfMirrorX')}
+                />
+              </div>
+
+              {/* Rotation select */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <RotateCw className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm">Rotação DXF</Label>
+                </div>
+                <Select
+                  value={settings.dxfRotation.toString()}
+                  onValueChange={(value) => onSettingsChange({
+                    ...settings,
+                    dxfRotation: parseInt(value) as DXFRotation
+                  })}
+                >
+                  <SelectTrigger className="w-20 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ROTATION_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value.toString()}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Debug Footprint Section */}

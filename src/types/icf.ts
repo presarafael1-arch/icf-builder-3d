@@ -215,6 +215,9 @@ export interface BOMResult {
   roundingWasteMmPerFiada?: number; // waste per fiada from packing
 }
 
+// DXF rotation values (degrees)
+export type DXFRotation = 0 | 90 | 180 | 270;
+
 // 3D Viewer settings - SIMPLIFIED (removed debug toggles)
 export interface ViewerSettings {
   // View mode
@@ -240,6 +243,11 @@ export interface ViewerSettings {
   
   // Rebar spacing - kept for backwards compatibility but not exposed in UI
   rebarSpacing: RebarSpacing;
+  
+  // DXF Transformation settings (persisted per project)
+  dxfFlipY: boolean; // Mirror Y axis (flip Y coordinates around center)
+  dxfMirrorX: boolean; // Mirror X axis
+  dxfRotation: DXFRotation; // Rotation in degrees (0, 90, 180, 270)
   
   // Legacy flags kept for compatibility (always true/false defaults)
   showChains: boolean;

@@ -80,6 +80,11 @@ export default function ProjectEstimate() {
     rebarSpacing: 20,
     concreteThickness: '150',
     
+    // DXF Transform settings (defaults for estimate view)
+    dxfFlipY: false,
+    dxfMirrorX: false,
+    dxfRotation: 0,
+    
     // Panel geometry mode
     highFidelityPanels: false,
     showOutlines: true,

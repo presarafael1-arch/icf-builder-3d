@@ -20,7 +20,7 @@ import { useOpenings } from '@/hooks/useOpenings';
 import { usePanelSelection } from '@/hooks/usePanelSelection';
 import { usePanelOverrides } from '@/hooks/usePanelOverrides';
 import { useChainOverrides } from '@/hooks/useChainOverrides';
-import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing } from '@/types/icf';
+import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing, DXFRotation } from '@/types/icf';
 import { OpeningData, OpeningCandidate } from '@/types/openings';
 import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType, ThicknessDetectionResult } from '@/types/panel-selection';
 import { ClassifiedPanel, PanelType, TopoPlacement } from '@/lib/panel-layout';
@@ -28,6 +28,7 @@ import { TOOTH } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
 import { buildWallChains, buildWallChainsAutoTuned } from '@/lib/wall-chains';
 import { DXFSegment, NormalizedDXFResult } from '@/lib/dxf-parser';
+import { applyDXFTransform } from '@/lib/dxf-transform';
 
 interface Project {
   id: string;
@@ -275,59 +276,84 @@ export default function ProjectEditor() {
   });
   
   // Viewer settings - SIMPLIFIED (removed debug toggles from UI)
-  const [viewerSettings, setViewerSettings] = useState<ViewerSettings>({
-    // View mode
-    viewMode: 'panels',
-
-    // Core layers (always visible by default)
-    showPanels: true,
-    showExteriorPanels: true,
-    showInteriorPanels: true,
-    showPartitionPanels: true, // Partition panels (interior walls)
-    showUnknownPanels: true, // Unresolved panels
-    showTopos: true,
-    showOpenings: true,
-    showGrid: true, // Base grid always visible
-    showSideStripes: true, // EXT/INT stripe overlays
-
-    // View / params
-    currentRow: 1,
-    maxRows: 7,
-    concreteThickness: '150',
-    rebarSpacing: 20, // Kept for BOM but not in UI
+  // Load DXF transform settings from localStorage
+  const [viewerSettings, setViewerSettings] = useState<ViewerSettings>(() => {
+    // Load persisted DXF transform settings
+    let dxfFlipY = false;
+    let dxfMirrorX = false;
+    let dxfRotation: 0 | 90 | 180 | 270 = 0;
     
-    // Legacy flags with fixed defaults (not exposed in simplified UI)
-    showDXFLines: false,
-    showChains: true,
-    showHelpers: false,
-    showWebs: false,
-    showTarugos: false,
-    showJunctions: true,
-    showGrids: false,
-    wireframe: false,
-    highFidelityPanels: false,
-    showOutlines: true, // Panel outlines always on
+    if (id) {
+      try {
+        const stored = localStorage.getItem(`omni-icf-dxf-transform-${id}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          dxfFlipY = Boolean(parsed.flipY);
+          dxfMirrorX = Boolean(parsed.mirrorX);
+          dxfRotation = [0, 90, 180, 270].includes(parsed.rotation) ? parsed.rotation : 0;
+        }
+      } catch {}
+    }
     
-    // Debug flags - all OFF (removed from UI entirely)
-    showSeeds: false,
-    showNodeAxes: false,
-    showRunSegments: false,
-    showIndexFromSeed: false,
-    showMiddleZone: false,
-    showThicknessDetection: false,
-    showLJunctionArrows: false,
-    highlightCornerCuts: false,
-    showLCornerOffsets: false,
-    showLCornerBoundingBoxes: false,
-    showWallDimensions: false,
-    showCornerNodes: true, // Corner nodes visible (labels + wires)
-    showCornerNodeLabels: true,
-    showCornerNodeWires: true,
-    // Footprint debug
-    showFootprint: false,
-    showFootprintStats: false,
-    highlightUnresolved: false, // Highlight unresolved chains
-    showOutsideFootprint: true, // Show chains outside the building footprint
+    return {
+      // View mode
+      viewMode: 'panels',
+
+      // Core layers (always visible by default)
+      showPanels: true,
+      showExteriorPanels: true,
+      showInteriorPanels: true,
+      showPartitionPanels: true, // Partition panels (interior walls)
+      showUnknownPanels: true, // Unresolved panels
+      showTopos: true,
+      showOpenings: true,
+      showGrid: true, // Base grid always visible
+      showSideStripes: true, // EXT/INT stripe overlays
+
+      // View / params
+      currentRow: 1,
+      maxRows: 7,
+      concreteThickness: '150',
+      rebarSpacing: 20, // Kept for BOM but not in UI
+      
+      // DXF Transform settings (loaded from localStorage)
+      dxfFlipY,
+      dxfMirrorX,
+      dxfRotation,
+      
+      // Legacy flags with fixed defaults (not exposed in simplified UI)
+      showDXFLines: false,
+      showChains: true,
+      showHelpers: false,
+      showWebs: false,
+      showTarugos: false,
+      showJunctions: true,
+      showGrids: false,
+      wireframe: false,
+      highFidelityPanels: false,
+      showOutlines: true, // Panel outlines always on
+      
+      // Debug flags - all OFF (removed from UI entirely)
+      showSeeds: false,
+      showNodeAxes: false,
+      showRunSegments: false,
+      showIndexFromSeed: false,
+      showMiddleZone: false,
+      showThicknessDetection: false,
+      showLJunctionArrows: false,
+      highlightCornerCuts: false,
+      showLCornerOffsets: false,
+      showLCornerBoundingBoxes: false,
+      showWallDimensions: false,
+      showCornerNodes: true, // Corner nodes visible (labels + wires)
+      showCornerNodeLabels: true,
+      showCornerNodeWires: true,
+      // Footprint debug
+      showFootprint: false,
+      showFootprintStats: false,
+      highlightUnresolved: false, // Highlight unresolved chains
+      showOutsideFootprint: true, // Show chains outside the building footprint
+    };
   });
   
   // Corner node offsets (individual per nodeId)
@@ -373,8 +399,30 @@ export default function ProjectEditor() {
   // Preview color for classification hover
   const [previewColor, setPreviewColor] = useState<string | null>(null);
   
-  // Build chains from walls (with candidate detection enabled)
-  const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
+  // Apply DXF transformations to walls before chain building
+  const transformedWalls = useMemo(() => {
+    return applyDXFTransform(walls, {
+      flipY: viewerSettings.dxfFlipY,
+      mirrorX: viewerSettings.dxfMirrorX,
+      rotation: viewerSettings.dxfRotation,
+    });
+  }, [walls, viewerSettings.dxfFlipY, viewerSettings.dxfMirrorX, viewerSettings.dxfRotation]);
+  
+  // Persist DXF transform settings when they change
+  useEffect(() => {
+    if (id) {
+      try {
+        localStorage.setItem(`omni-icf-dxf-transform-${id}`, JSON.stringify({
+          flipY: viewerSettings.dxfFlipY,
+          mirrorX: viewerSettings.dxfMirrorX,
+          rotation: viewerSettings.dxfRotation,
+        }));
+      } catch {}
+    }
+  }, [id, viewerSettings.dxfFlipY, viewerSettings.dxfMirrorX, viewerSettings.dxfRotation]);
+  
+  // Build chains from transformed walls (with candidate detection enabled)
+  const chainsResult = useMemo(() => buildWallChains(transformedWalls, { detectCandidates: true }), [transformedWalls]);
   const chains = chainsResult.chains;
   const detectedCandidates = chainsResult.candidates;
   
@@ -890,7 +938,7 @@ export default function ProjectEditor() {
         {/* Right Panel - 3D Viewer */}
         <div className="flex-1 relative">
           <ICFViewer3D 
-            walls={walls} 
+            walls={transformedWalls} 
             settings={viewerSettings}
             openings={openings}
             candidates={activeCandidates}
