@@ -779,18 +779,26 @@ function BatchedPanelInstances({
     
     const filteredPanelsByType = regroupedByType;
     
-    // Separate panels by side for different coloring
-    const exteriorPanels = filteredPanels.filter(p => p.side === 'exterior');
-    const interiorPanels = filteredPanels.filter(p => p.side === 'interior');
-    
-    return {
-      panelsByType: filteredPanelsByType,
-      allPanels: filteredPanels,
-      exteriorPanels,
-      interiorPanels,
-      allTopos: result.allTopos,
-      layoutStats: result.stats,
-    };
+      // Separate panels by side for different coloring
+      const exteriorPanels = filteredPanels.filter(p => p.side === 'exterior');
+      const interiorPanels = filteredPanels.filter(p => p.side === 'interior');
+      
+      // Filter TOPOs based on chain visibility (when outside footprint is hidden, hide its topos too)
+      const filteredTopos = result.allTopos.filter(topo => {
+        const chainId = topo.chainId || '';
+        // Filter by outside footprint
+        if (outsideChainSet.has(chainId) && !settings.showOutsideFootprint) return false;
+        return true;
+      });
+      
+      return {
+        panelsByType: filteredPanelsByType,
+        allPanels: filteredPanels,
+        exteriorPanels,
+        interiorPanels,
+        allTopos: filteredTopos,
+        layoutStats: result.stats,
+      };
   }, [chains, openings, settings.currentRow, settings.maxRows, settings.concreteThickness, settings.showExteriorPanels, settings.showInteriorPanels, settings.showPartitionPanels, settings.showUnknownPanels, settings.showOutsideFootprint, panelOverrides, flippedChains, outsideChainIds]);
 
   // Total count and counts by type
