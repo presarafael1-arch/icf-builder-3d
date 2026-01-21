@@ -731,14 +731,35 @@ export function PanelInspector({
                   </div>
                   
                   <div>
-                    <Label className="text-xs text-muted-foreground">Erro de Alinhamento</Label>
-                    <span className="font-mono">{interiorCornerInfo.phaseError.toFixed(1)}mm</span>
+                    <Label className="text-xs text-muted-foreground">Exterior Ref</Label>
+                    <code className="text-xs font-mono">{interiorCornerInfo.phaseRefPanelId?.slice(0, 10) ?? 'N/A'}...</code>
+                  </div>
+                </div>
+                
+                {/* Scoring debug info */}
+                <div className="mt-2 p-2 bg-muted/50 rounded text-xs space-y-1">
+                  <p className="font-medium text-muted-foreground">Scoring (H{interiorCornerInfo.chosenHypothesis} escolhido)</p>
+                  <div className="grid grid-cols-2 gap-x-3">
+                    <span>H1 (A=2.5, B=1.5):</span>
+                    <span className="font-mono">{interiorCornerInfo.hypothesis1Error.toFixed(1)}</span>
+                    <span>H2 (A=1.5, B=2.5):</span>
+                    <span className="font-mono">{interiorCornerInfo.hypothesis2Error.toFixed(1)}</span>
+                    <span>Gap Error:</span>
+                    <span className="font-mono">{interiorCornerInfo.gapError?.toFixed(1) ?? 'N/A'}mm</span>
+                    <span>Overlap Penalty:</span>
+                    <span className="font-mono">{interiorCornerInfo.overlapPenalty?.toFixed(0) ?? 'N/A'}</span>
+                    <span>Step Penalty:</span>
+                    <span className="font-mono">{interiorCornerInfo.stepPenalty?.toFixed(1) ?? 'N/A'}</span>
+                    <span>Parallelism:</span>
+                    <span className="font-mono">{interiorCornerInfo.parallelismScore?.toFixed(2) ?? 'N/A'}</span>
                   </div>
                 </div>
                 
                 <p className="text-xs text-muted-foreground mt-2">
-                  Hipótese escolhida: H{interiorCornerInfo.chosenHypothesis} 
-                  (erro total: {(interiorCornerInfo.chosenHypothesis === 1 ? interiorCornerInfo.hypothesis1Error : interiorCornerInfo.hypothesis2Error).toFixed(1)}mm)
+                  <strong>Resultado:</strong> Este painel recebe <span className="text-cyan-400 font-bold">{interiorCornerInfo.cornerPhaseOffsetTooth}×TOOTH</span> offset
+                  {interiorCornerInfo.chosenHypothesis === 1 
+                    ? ' (H1: menor erro de alinhamento)' 
+                    : ' (H2: menor erro de alinhamento)'}
                 </p>
               </div>
             )}
