@@ -1,4 +1,4 @@
-import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart, Box, Columns, FlipHorizontal2, FlipVertical2, RotateCw } from 'lucide-react';
+import { Layers, Maximize2, RotateCcw, Eye, Grid3X3, Square, GitBranch, Palette, FileText, Hexagon, BarChart, Box, Columns } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
@@ -10,23 +10,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { DXFTransformSettings } from '@/lib/dxf-transform';
 
 interface ViewerControlsProps {
   settings: ViewerSettings;
   onSettingsChange: (settings: ViewerSettings) => void;
   onReset?: () => void;
   onFitView?: () => void;
-  // DXF Transform controls (optional)
-  dxfTransform?: DXFTransformSettings;
-  onDxfTransformChange?: (newTransform: Partial<DXFTransformSettings>) => void;
 }
 
 const THICKNESS_OPTIONS: { value: ConcreteThickness; label: string }[] = [
@@ -34,14 +23,7 @@ const THICKNESS_OPTIONS: { value: ConcreteThickness; label: string }[] = [
   { value: '220', label: '220mm' },
 ];
 
-const ROTATION_OPTIONS: { value: string; label: string }[] = [
-  { value: '0', label: '0°' },
-  { value: '90', label: '90°' },
-  { value: '180', label: '180°' },
-  { value: '270', label: '270°' },
-];
-
-export function ViewerControls({ settings, onSettingsChange, onReset, onFitView, dxfTransform, onDxfTransformChange }: ViewerControlsProps) {
+export function ViewerControls({ settings, onSettingsChange, onReset, onFitView }: ViewerControlsProps) {
   const handleThicknessChange = (value: string) => {
     if (value) {
       onSettingsChange({
@@ -298,71 +280,6 @@ export function ViewerControls({ settings, onSettingsChange, onReset, onFitView,
                   onCheckedChange={() => toggleSetting('showOutsideFootprint')}
                 />
               </div>
-
-              {/* DXF Transform Section - only show if callbacks provided */}
-              {dxfTransform && onDxfTransformChange && (
-                <>
-                  <div className="border-t border-border my-1 pt-2">
-                    <h5 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                      <RotateCw className="h-3 w-3" />
-                      Transformação DXF
-                    </h5>
-                  </div>
-
-                  {/* Mirror Y toggle */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FlipVertical2 className="h-4 w-4 text-cyan-400" />
-                      <Label htmlFor="mirror-y" className="text-sm cursor-pointer">
-                        Inverter Y (DXF)
-                      </Label>
-                    </div>
-                    <Switch
-                      id="mirror-y"
-                      checked={dxfTransform.mirrorY}
-                      onCheckedChange={(checked) => onDxfTransformChange({ mirrorY: checked })}
-                    />
-                  </div>
-
-                  {/* Mirror X toggle */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FlipHorizontal2 className="h-4 w-4 text-cyan-400" />
-                      <Label htmlFor="mirror-x" className="text-sm cursor-pointer">
-                        Espelhar X (DXF)
-                      </Label>
-                    </div>
-                    <Switch
-                      id="mirror-x"
-                      checked={dxfTransform.mirrorX}
-                      onCheckedChange={(checked) => onDxfTransformChange({ mirrorX: checked })}
-                    />
-                  </div>
-
-                  {/* Rotation dropdown */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <RotateCw className="h-4 w-4 text-cyan-400" />
-                      <Label className="text-sm">Rotação DXF</Label>
-                    </div>
-                    <Select
-                      value={String(dxfTransform.rotateDeg)}
-                      onValueChange={(v) => onDxfTransformChange({ rotateDeg: parseInt(v) as 0 | 90 | 180 | 270 })}
-                    >
-                      <SelectTrigger className="w-20 h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ROTATION_OPTIONS.map(opt => (
-                          <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </>
-              )}
             </div>
           </PopoverContent>
         </Popover>

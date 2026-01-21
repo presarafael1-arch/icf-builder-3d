@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Download, FileSpreadsheet, Box, Loader2 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
@@ -15,13 +15,6 @@ import { WallSegment, ViewerSettings, BOMResult, ConcreteThickness, CornerMode, 
 import { calculateWallLength, calculateWallAngle, calculateBOM, calculateNumberOfRows } from '@/lib/icf-calculations';
 import { generateBOMCSV, downloadCSV, generateFilename } from '@/lib/export-csv';
 import { generateBOMPDF, captureCanvasScreenshot } from '@/lib/export-pdf';
-import { 
-  DXFTransformSettings, 
-  DEFAULT_DXF_TRANSFORM, 
-  transformWallSegments,
-  loadDxfTransformSettings,
-  saveDxfTransformSettings
-} from '@/lib/dxf-transform';
 
 interface Project {
   id: string;
@@ -51,37 +44,6 @@ export default function ProjectEstimate() {
   const [loading, setLoading] = useState(true);
   const [exportingCSV, setExportingCSV] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
-  
-  // DXF Transform Settings (mirror/rotate) - shared with ProjectEditor via localStorage
-  const [dxfTransform, setDxfTransform] = useState<DXFTransformSettings>(() => {
-    if (id) return loadDxfTransformSettings(id);
-    return { ...DEFAULT_DXF_TRANSFORM };
-  });
-  
-  // Persist DXF transform settings
-  useEffect(() => {
-    if (id) {
-      saveDxfTransformSettings(id, dxfTransform);
-    }
-  }, [id, dxfTransform]);
-  
-  // Apply DXF transform to walls
-  const transformedWalls = useMemo(() => {
-    if (walls.length === 0) return walls;
-    const needsTransform = dxfTransform.mirrorX || dxfTransform.mirrorY || dxfTransform.rotateDeg !== 0;
-    if (!needsTransform) return walls;
-    
-    return transformWallSegments(walls, dxfTransform).map(w => ({
-      ...w,
-      length: calculateWallLength(w),
-      angle: calculateWallAngle(w),
-    }));
-  }, [walls, dxfTransform]);
-  
-  // Handler to update DXF transform settings
-  const handleDxfTransformChange = useCallback((newTransform: Partial<DXFTransformSettings>) => {
-    setDxfTransform(prev => ({ ...prev, ...newTransform }));
-  }, []);
   
   // Openings from localStorage
   const { openings } = useOpenings(id);
@@ -223,19 +185,19 @@ export default function ProjectEstimate() {
     }));
   }, [openings]);
   
-  // Calculate BOM with openings (using transformed walls)
+  // Calculate BOM with openings
   const bom: BOMResult | null = useMemo(() => {
-    if (!project || transformedWalls.length === 0) return null;
+    if (!project || walls.length === 0) return null;
     
     return calculateBOM(
-      transformedWalls,
+      walls,
       bomOpenings,
       project.wall_height_mm,
       project.rebar_spacing_cm,
       project.concrete_thickness as ConcreteThickness,
       project.corner_mode as CornerMode
     );
-  }, [project, transformedWalls, bomOpenings]);
+  }, [project, walls, bomOpenings]);
   
   const handleExportCSV = () => {
     if (!bom || !project) return;
@@ -405,7 +367,7 @@ export default function ProjectEstimate() {
             <CardContent className="p-0">
               <div className="relative h-[500px]">
                 <ICFViewer3D 
-                  walls={transformedWalls} 
+                  walls={walls} 
                   settings={viewerSettings}
                   openings={openings}
                   className="w-full h-full rounded-none"
@@ -414,8 +376,6 @@ export default function ProjectEstimate() {
                   settings={viewerSettings}
                   onSettingsChange={setViewerSettings}
                   onFitView={() => window.dispatchEvent(new CustomEvent('icf-fit-view'))}
-                  dxfTransform={dxfTransform}
-                  onDxfTransformChange={handleDxfTransformChange}
                 />
               </div>
             </CardContent>

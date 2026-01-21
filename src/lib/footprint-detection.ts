@@ -379,109 +379,25 @@ export function detectFootprintAndClassify(
   
   console.log('[FootprintDetection] Found', loops.length, 'closed loops');
   
-  // Step 2: Identify outer polygon using robust selection algorithm
-  // The outer polygon should be the LARGEST loop that CONTAINS most other loops' centroids
+  // Step 2: Identify outer polygon (largest area with CCW winding)
   let outerPolygon: Array<{ x: number; y: number }> = [];
   let outerArea = 0;
   const interiorLoops: Array<Array<{ x: number; y: number }>> = [];
   let usedFallback = false;
   
-  // Calculate metadata for each loop
-  interface LoopMeta {
-    loop: Array<{ x: number; y: number }>;
-    absArea: number;
-    signedArea: number;
-    centroid: { x: number; y: number };
-    bbox: { minX: number; maxX: number; minY: number; maxY: number; diag: number };
-    containsCount: number; // How many other loop centroids this loop contains
-    isSelfIntersecting: boolean;
-  }
-  
-  const loopMetas: LoopMeta[] = loops.map(loop => {
-    const signedArea = signedPolygonArea(loop);
-    const absArea = Math.abs(signedArea);
+  for (const loop of loops) {
+    const area = signedPolygonArea(loop);
+    const absArea = Math.abs(area);
     
-    // Calculate centroid
-    let cx = 0, cy = 0;
-    loop.forEach(p => { cx += p.x; cy += p.y; });
-    const centroid = { x: cx / loop.length, y: cy / loop.length };
-    
-    // Calculate bounding box
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    loop.forEach(p => {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
-    });
-    const diag = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
-    
-    return {
-      loop,
-      absArea,
-      signedArea,
-      centroid,
-      bbox: { minX, maxX, minY, maxY, diag },
-      containsCount: 0,
-      isSelfIntersecting: false, // Could add self-intersection check if needed
-    };
-  });
-  
-  // Calculate containsCount for each loop (how many other loop centroids it contains)
-  for (let i = 0; i < loopMetas.length; i++) {
-    for (let j = 0; j < loopMetas.length; j++) {
-      if (i === j) continue;
-      // Normalize the loop to CCW for consistent point-in-polygon test
-      const normalizedLoop = loopMetas[i].signedArea > 0 
-        ? loopMetas[i].loop 
-        : [...loopMetas[i].loop].reverse();
-      if (pointInPolygon(loopMetas[j].centroid.x, loopMetas[j].centroid.y, normalizedLoop)) {
-        loopMetas[i].containsCount++;
+    if (absArea > outerArea) {
+      if (outerPolygon.length > 0) {
+        interiorLoops.push(outerPolygon); // Demote previous outer to interior
       }
+      outerPolygon = area > 0 ? loop : [...loop].reverse(); // Ensure CCW
+      outerArea = absArea;
+    } else if (loop.length >= 3) {
+      interiorLoops.push(loop);
     }
-  }
-  
-  // Sort loops by selection criteria:
-  // 1. Primary: Largest containsCount (contains most other loops)
-  // 2. Secondary: Largest absArea
-  // 3. Tertiary: Largest bbox diagonal
-  loopMetas.sort((a, b) => {
-    // First by containsCount (descending)
-    if (b.containsCount !== a.containsCount) {
-      return b.containsCount - a.containsCount;
-    }
-    // Then by area (descending)
-    if (Math.abs(b.absArea - a.absArea) > 1000) { // >1cm² difference
-      return b.absArea - a.absArea;
-    }
-    // Finally by bbox diagonal (descending)
-    return b.bbox.diag - a.bbox.diag;
-  });
-  
-  console.log('[FootprintDetection] Loop selection candidates:', loopMetas.map((m, i) => ({
-    index: i,
-    area: (m.absArea / 1e6).toFixed(2) + 'm²',
-    containsCount: m.containsCount,
-    bboxDiag: (m.bbox.diag / 1000).toFixed(2) + 'm',
-  })));
-  
-  // Select the best candidate as outer polygon
-  if (loopMetas.length > 0) {
-    const best = loopMetas[0];
-    // Ensure CCW winding for outer polygon
-    outerPolygon = best.signedArea > 0 ? best.loop : [...best.loop].reverse();
-    outerArea = best.absArea;
-    
-    // All other loops are interior
-    for (let i = 1; i < loopMetas.length; i++) {
-      interiorLoops.push(loopMetas[i].loop);
-    }
-    
-    console.log('[FootprintDetection] Selected outer polygon:', {
-      vertices: outerPolygon.length,
-      area: (outerArea / 1e6).toFixed(2) + 'm²',
-      containsCount: best.containsCount,
-    });
   }
   
   // If no closed loops found, try to create a bounding polygon from chain extents

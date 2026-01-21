@@ -28,14 +28,6 @@ import { TOOTH } from '@/types/icf';
 import { calculateWallLength, calculateWallAngle, calculateNumberOfRows } from '@/lib/icf-calculations';
 import { buildWallChains, buildWallChainsAutoTuned } from '@/lib/wall-chains';
 import { DXFSegment, NormalizedDXFResult } from '@/lib/dxf-parser';
-import { 
-  DXFTransformSettings, 
-  DEFAULT_DXF_TRANSFORM, 
-  transformWallSegments,
-  loadDxfTransformSettings,
-  saveDxfTransformSettings,
-  detectPossibleMirror
-} from '@/lib/dxf-transform';
 
 interface Project {
   id: string;
@@ -206,39 +198,6 @@ export default function ProjectEditor() {
   const [dxfDialogOpen, setDxfDialogOpen] = useState(false);
   const [importingDXF, setImportingDXF] = useState(false);
   const [activeTab, setActiveTab] = useState('walls');
-  
-  // DXF Transform Settings (mirror/rotate)
-  const [dxfTransform, setDxfTransform] = useState<DXFTransformSettings>(() => {
-    if (id) return loadDxfTransformSettings(id);
-    return { ...DEFAULT_DXF_TRANSFORM };
-  });
-  
-  // Persist DXF transform settings
-  useEffect(() => {
-    if (id) {
-      saveDxfTransformSettings(id, dxfTransform);
-    }
-  }, [id, dxfTransform]);
-  
-  // Apply DXF transform to walls - this is the transformed version for display/chains
-  const transformedWalls = useMemo(() => {
-    if (walls.length === 0) return walls;
-    
-    // Only transform if any transform is active
-    const needsTransform = dxfTransform.mirrorX || dxfTransform.mirrorY || dxfTransform.rotateDeg !== 0;
-    if (!needsTransform) return walls;
-    
-    return transformWallSegments(walls, dxfTransform).map(w => ({
-      ...w,
-      length: calculateWallLength(w),
-      angle: calculateWallAngle(w),
-    }));
-  }, [walls, dxfTransform]);
-  
-  // Handler to update DXF transform settings
-  const handleDxfTransformChange = useCallback((newTransform: Partial<DXFTransformSettings>) => {
-    setDxfTransform(prev => ({ ...prev, ...newTransform }));
-  }, []);
   
   // Panel selection and inspection state
   const { selection, selectPanel, clearSelection } = usePanelSelection();
@@ -414,8 +373,8 @@ export default function ProjectEditor() {
   // Preview color for classification hover
   const [previewColor, setPreviewColor] = useState<string | null>(null);
   
-  // Build chains from TRANSFORMED walls (with candidate detection enabled)
-  const chainsResult = useMemo(() => buildWallChains(transformedWalls, { detectCandidates: true }), [transformedWalls]);
+  // Build chains from walls (with candidate detection enabled)
+  const chainsResult = useMemo(() => buildWallChains(walls, { detectCandidates: true }), [walls]);
   const chains = chainsResult.chains;
   const detectedCandidates = chainsResult.candidates;
   
@@ -931,7 +890,7 @@ export default function ProjectEditor() {
         {/* Right Panel - 3D Viewer */}
         <div className="flex-1 relative">
           <ICFViewer3D 
-            walls={transformedWalls} 
+            walls={walls} 
             settings={viewerSettings}
             openings={openings}
             candidates={activeCandidates}
@@ -950,8 +909,6 @@ export default function ProjectEditor() {
             settings={viewerSettings}
             onSettingsChange={setViewerSettings}
             onFitView={fitView}
-            dxfTransform={dxfTransform}
-            onDxfTransformChange={handleDxfTransformChange}
           />
           
           {/* Selection Mode Indicator */}
