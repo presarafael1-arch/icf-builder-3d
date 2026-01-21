@@ -437,6 +437,7 @@ export default function ProjectEditor() {
         rowIndex: panel.rowIndex || 0,
         rowParity: ((panel.rowIndex || 0) % 2 === 0) ? 1 : 2,
         side: parsed?.side || 'exterior',
+        chainClassification: panel.chainClassification || 'UNRESOLVED',
         seedOrigin: panel.seedOrigin || 'none',
         nearestNodeId: panel.nearestNodeId || null,
         nearestNodeType: panel.nearestNodeType || null,

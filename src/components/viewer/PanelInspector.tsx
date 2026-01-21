@@ -704,7 +704,31 @@ export function PanelInspector({
               
               <div>
                 <Label className="text-xs text-muted-foreground">Lado</Label>
-                <span>{panelData.side}</span>
+                <Badge variant={panelData.side === 'exterior' ? 'default' : 'secondary'}>
+                  {panelData.side === 'exterior' ? 'EXT' : panelData.side === 'interior' ? 'INT' : panelData.side}
+                </Badge>
+              </div>
+              
+              <div className="col-span-2">
+                <Label className="text-xs text-muted-foreground">Classificação Chain</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <Badge 
+                    variant="outline" 
+                    className={
+                      (panelData as any).chainClassification === 'PERIMETER' ? 'border-blue-500 text-blue-500' :
+                      (panelData as any).chainClassification === 'PARTITION' ? 'border-gray-500 text-gray-500' :
+                      (panelData as any).chainClassification === 'OUTSIDE' ? 'border-orange-500 text-orange-500' :
+                      'border-red-500 text-red-500'
+                    }
+                  >
+                    {(panelData as any).chainClassification || 'UNRESOLVED'}
+                  </Badge>
+                  {isChainFlipped?.(panelData.chainId) && (
+                    <Badge variant="outline" className="border-orange-500 text-orange-500">
+                      FLIP
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
             
