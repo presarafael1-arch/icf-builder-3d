@@ -362,10 +362,6 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   const outsideIds = footprint.outsideChainIds || [];
   const partitionIds = footprint.partitionChainIds || [];
   
-  // Sanity check: if outside ratio > 40%, warn about potential footprint issue
-  const outsideRatio = total > 0 ? outsideFootprint / total : 0;
-  const hasHighOutsideRatio = outsideRatio > 0.4;
-  
   // Build detailed unresolved info with reasons and segment stats
   const unresolvedDetails = unresolvedIds.map(id => {
     const sideInfo = footprintResult?.chainSides?.get(id);
@@ -383,8 +379,8 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
   });
   
   // Determine status indicator
-  const statusOK = footprint.outerPolygon.length >= 3 && unresolved === 0 && !hasHighOutsideRatio;
-  const statusPartial = footprint.outerPolygon.length >= 3 && (unresolved > 0 || hasHighOutsideRatio);
+  const statusOK = footprint.outerPolygon.length >= 3 && unresolved === 0;
+  const statusPartial = footprint.outerPolygon.length >= 3 && unresolved > 0;
   
   return (
     <div className="absolute top-16 left-4 z-20 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-2 shadow-lg max-w-xs max-h-[80vh] overflow-y-auto">
@@ -395,17 +391,6 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
           {statusOK ? 'OK' : statusPartial ? 'PARTIAL' : 'UNRESOLVED'}
         </span>
       </div>
-      
-      {/* Sanity check warning */}
-      {hasHighOutsideRatio && (
-        <div className="bg-yellow-500/20 border border-yellow-500/40 rounded p-2 text-yellow-300 text-[10px]">
-          <span className="font-bold">⚠️ Footprint pode estar incorreto</span>
-          <div className="mt-1 text-yellow-400/80">
-            {(outsideRatio * 100).toFixed(0)}% das chains estão "fora do footprint".
-            <br />Verifique transformação DXF (Inverter Y/X) ou escolha de footprint.
-          </div>
-        </div>
-      )}
       
       <div className="space-y-1 text-muted-foreground">
         <div className="flex justify-between">
