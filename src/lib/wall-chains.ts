@@ -27,7 +27,7 @@ export interface WallChain {
   endNodeId: string | null;
   // Side classification from footprint detection (AUTO)
   // Determines which perpendicular direction is exterior vs interior
-  sideClassification?: SideClassification;
+  sideClassification?: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
 }
 
 export interface ChainNode {
@@ -62,13 +62,10 @@ export interface ChainsResult {
     stats: {
       exteriorChains: number;
       interiorPartitions: number;
-      outsideFeatures: number;
       unresolved: number;
     };
-    // List of unresolved chain IDs for diagnostic display (real errors)
+    // List of unresolved chain IDs for diagnostic display
     unresolvedChainIds: string[];
-    // List of chains outside footprint (not errors)
-    outsideChainIds: string[];
   };
   stats: {
     originalSegments: number;
@@ -1230,11 +1227,9 @@ export function buildWallChains(walls: WallSegment[], options: WallChainOptions 
       stats: {
         exteriorChains: footprintResult.stats.exteriorChains,
         interiorPartitions: footprintResult.stats.interiorPartitions,
-        outsideFeatures: footprintResult.stats.outsideFeatures,
         unresolved: footprintResult.stats.unresolved,
       },
       unresolvedChainIds: footprintResult.unresolvedChainIds,
-      outsideChainIds: footprintResult.outsideChainIds,
     },
     stats,
     junctionCounts,

@@ -44,7 +44,7 @@ export type PanelType = 'FULL' | 'CUT_SINGLE' | 'CORNER_CUT' | 'TOPO' | 'END_CUT
 export type WallSide = 'exterior' | 'interior';
 
 // Chain classification type (from footprint detection)
-export type ChainClassification = 'PERIMETER' | 'PARTITION' | 'OUTSIDE' | 'UNRESOLVED';
+export type ChainClassification = 'PERIMETER' | 'PARTITION' | 'UNRESOLVED';
 
 // Classified panel placement (with stable ID support)
 export interface ClassifiedPanel {
@@ -191,9 +191,8 @@ function computeCornerNodes(
     : { x: (secondaryChain.startX - secondaryChain.endX) / secondaryChain.lengthMm, y: (secondaryChain.startY - secondaryChain.endY) / secondaryChain.lengthMm };
   
   // Perpendicular directions (90° CW = "right" side when looking along wall)
-  // Convention: perp = (dirY, -dirX) for 2D, matching footprint-detection.ts
-  const primaryPerp = { x: primaryDir.y, y: -primaryDir.x };
-  const secondaryPerp = { x: secondaryDir.y, y: -secondaryDir.x };
+  const primaryPerp = { x: -primaryDir.y, y: primaryDir.x };
+  const secondaryPerp = { x: -secondaryDir.y, y: secondaryDir.x };
   
   // Determine which perpendicular direction is "exterior" vs "interior"
   // Use footprint-based classification if available, otherwise fall back to cross-product heuristic
@@ -687,9 +686,8 @@ function getChainEndpointInfo(
       const chainDirX = (chain.endX - chain.startX) / chain.lengthMm;
       const chainDirY = (chain.endY - chain.startY) / chain.lengthMm;
       // Perpendicular (90° CW) = "right" side when looking along chain
-      // Convention: perp = (dirY, -dirX), matching footprint-detection.ts
-      const perpX = chainDirY;
-      const perpY = -chainDirX;
+      const perpX = -chainDirY;
+      const perpY = chainDirX;
       
       // Get the other arm's direction (at the same junction)
       const otherChainId = isPrimaryAtStart ? lj.secondaryChainId : lj.primaryChainId;
@@ -713,9 +711,8 @@ function getChainEndpointInfo(
       // Same logic for chain END (but direction is reversed - pointing toward corner)
       const chainDirX = (chain.startX - chain.endX) / chain.lengthMm; // Reversed for END
       const chainDirY = (chain.startY - chain.endY) / chain.lengthMm;
-      // Perpendicular (90° CW), matching footprint-detection.ts convention
-      const perpX = chainDirY;
-      const perpY = -chainDirX;
+      const perpX = -chainDirY;
+      const perpY = chainDirX;
       
       const otherAngle = isPrimaryAtEnd ? lj.secondaryAngle : lj.primaryAngle;
       const otherDirX = Math.cos(otherAngle);
@@ -1055,10 +1052,8 @@ export function layoutPanelsForChainWithJunctions(
     
     // Perpendicular unit vector (90° CW from wall direction)
     // Positive perpendicular = "right" side when looking along wall direction
-    // MUST match footprint-detection.ts convention: perp = (dirY, -dirX) in 2D
-    // In 3D (XZ plane), this becomes: perpX = dirY, perpZ = -dirX
-    const perpX = dirY;  // dirY here is actually the Z component in 2D coordinates
-    const perpZ = -dirX;
+    const perpX = -dirY;
+    const perpZ = dirX;
     
     // effectiveSide is already calculated above (at function level) with flip applied
     
@@ -1134,8 +1129,6 @@ export function layoutPanelsForChainWithJunctions(
       chainClassification = 'PERIMETER';
     } else if (chain.sideClassification === 'BOTH_INT') {
       chainClassification = 'PARTITION';
-    } else if (chain.sideClassification === 'OUTSIDE') {
-      chainClassification = 'OUTSIDE';
     }
 
     return { 
@@ -1200,9 +1193,8 @@ export function layoutPanelsForChainWithJunctions(
     const posY = row * PANEL_HEIGHT + PANEL_HEIGHT / 2;
     
     // Perpendicular direction (for offset)
-    // Convention: perp = (dirY, -dirX) in 2D, which becomes (dirY, -dirX) in 3D XZ
-    const perpX = dirY;
-    const perpZ = -dirX;
+    const perpX = -dirY;
+    const perpZ = dirX;
     
     // For closing TOPO at free ends: positioned at CENTER of wall (on DXF line)
     // For side-specific TOPOs: offset like panels

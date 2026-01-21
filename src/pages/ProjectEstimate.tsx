@@ -63,7 +63,6 @@ export default function ProjectEstimate() {
     showExteriorPanels: true,
     showInteriorPanels: true,
     showPartitionPanels: true, // Partition panels
-    showOutsidePanels: true, // Panels outside footprint
     showUnknownPanels: true, // Unresolved panels
     showTopos: true,
     showWebs: true,

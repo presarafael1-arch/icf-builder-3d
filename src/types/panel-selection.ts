@@ -4,7 +4,7 @@
  * Provides stable panel IDs, overrides, and selection capabilities
  */
 
-import { PanelType, ChainClassification } from '@/lib/panel-layout';
+import { PanelType } from '@/lib/panel-layout';
 
 // Core thickness detection from DXF wall spacing
 export type CoreConcreteMm = 150 | 220;
@@ -61,7 +61,6 @@ export interface ExtendedPanelData {
   rowIndex: number;
   rowParity: 1 | 2; // 1 = odd rows (0,2,4...), 2 = even rows (1,3,5...)
   side: PanelSide;
-  chainClassification: ChainClassification;
   
   // Junction context
   seedOrigin: SeedOrigin;
