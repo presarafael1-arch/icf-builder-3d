@@ -567,8 +567,9 @@ export function detectFootprintAndClassify(
   // Step 1: Try half-edge face-walking first (more robust for T-junctions)
   const { faces, faceMeta } = findClosedLoopsHalfEdge(chains, tolerance);
   
-  // Step 2: Select outer polygon
-  // The face with highest containsCount is most likely the outer building perimeter
+  // Step 2: Select outer polygon using SCORING SYSTEM
+  // Score = containsCount * 1e6 + area + perimeter * 0.001 - outsideCount * 1e7
+  // The face with highest score after validation is the building perimeter
   let outerPolygon: Array<{ x: number; y: number }> = [];
   let outerArea = 0;
   let usedFallback = false;
@@ -576,8 +577,22 @@ export function detectFootprintAndClassify(
   let footprintOrientation: 'CW' | 'CCW' = 'CCW';
   
   if (faces.length > 0) {
-    // Try each candidate starting from highest containsCount
-    for (let i = 0; i < faces.length; i++) {
+    // Score each candidate
+    interface CandidateScore {
+      index: number;
+      polygon: Array<{ x: number; y: number }>;
+      area: number;
+      containsCount: number;
+      outsideCount: number;
+      perimeterCount: number;
+      perimeterLength: number;
+      score: number;
+      orientation: 'CW' | 'CCW';
+    }
+    
+    const candidates: CandidateScore[] = [];
+    
+    for (let i = 0; i < Math.min(faces.length, 10); i++) { // Check top 10 candidates
       const candidate = faces[i];
       const meta = faceMeta[i];
       const absArea = meta.area;
@@ -585,12 +600,22 @@ export function detectFootprintAndClassify(
       // Skip very small faces (likely artifacts)
       if (absArea < 10000) continue; // < 0.01 m²
       
-      // Temporarily use this as outer polygon
+      // Normalize orientation for testing
       const testPolygon = meta.orientation === 'CCW' ? candidate : [...candidate].reverse();
       
-      // Validate: count how many chains would be "outside"
+      // Calculate perimeter length
+      let perimeterLength = 0;
+      for (let j = 0; j < testPolygon.length; j++) {
+        const p1 = testPolygon[j];
+        const p2 = testPolygon[(j + 1) % testPolygon.length];
+        perimeterLength += Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+      }
+      
+      // Validate: count chains by classification
       let outsideCount = 0;
       let perimeterCount = 0;
+      let partitionCount = 0;
+      let perimeterChainsLength = 0;
       
       for (const chain of chains) {
         const midX = (chain.startX + chain.endX) / 2;
@@ -604,39 +629,99 @@ export function detectFootprintAndClassify(
         const perpX = dy / len;
         const perpY = -dx / len;
         
-        const eps = 150;
-        const pPlus = { x: midX + perpX * eps, y: midY + perpY * eps };
-        const pMinus = { x: midX - perpX * eps, y: midY - perpY * eps };
+        // Test at multiple eps values for robustness
+        let plusInside = false;
+        let minusInside = false;
         
-        const plusInside = pointInPolygon(pPlus.x, pPlus.y, testPolygon);
-        const minusInside = pointInPolygon(pMinus.x, pMinus.y, testPolygon);
+        for (const eps of [50, 150, 300]) {
+          const pPlus = { x: midX + perpX * eps, y: midY + perpY * eps };
+          const pMinus = { x: midX - perpX * eps, y: midY - perpY * eps };
+          
+          const testPlus = robustPointInPolygon(pPlus.x, pPlus.y, testPolygon, 5);
+          const testMinus = robustPointInPolygon(pMinus.x, pMinus.y, testPolygon, 5);
+          
+          if (testPlus === 'inside') plusInside = true;
+          if (testMinus === 'inside') minusInside = true;
+          
+          // If we have a clear answer, stop testing
+          if ((plusInside || testPlus === 'outside') && (minusInside || testMinus === 'outside')) {
+            break;
+          }
+        }
         
         if (!plusInside && !minusInside) {
           outsideCount++;
         } else if (plusInside !== minusInside) {
           perimeterCount++;
+          perimeterChainsLength += len;
+        } else if (plusInside && minusInside) {
+          partitionCount++;
         }
       }
       
-      const outsideRatio = outsideCount / chains.length;
-      const perimeterRatio = perimeterCount / chains.length;
+      // Calculate score:
+      // - High containsCount = likely outer (contains more interior rooms)
+      // - High perimeterCount = good coverage of building perimeter
+      // - Low outsideCount = not selecting an interior courtyard
+      // - Large area = encompasses more of the building
+      const score = 
+        meta.containsCount * 1000000 +   // Primary: contains more faces
+        perimeterChainsLength * 10 +     // Secondary: covers more perimeter length
+        perimeterCount * 5000 +          // Tertiary: covers more chains as perimeter
+        absArea / 1000000 -              // Quaternary: larger area preferred
+        outsideCount * 500000;           // Penalty: chains outside this footprint
       
-      console.log(`[FootprintDetection] Candidate ${i}: area=${(absArea / 1e6).toFixed(2)}m², contains=${meta.containsCount}, outsideRatio=${(outsideRatio * 100).toFixed(1)}%, perimeterRatio=${(perimeterRatio * 100).toFixed(1)}%`);
+      console.log(`[FootprintDetection] Candidate ${i}: area=${(absArea / 1e6).toFixed(2)}m², contains=${meta.containsCount}, perimeter=${perimeterCount}/${chains.length}, outside=${outsideCount}, score=${score.toFixed(0)}`);
       
-      // Reject if too many chains are outside (bad footprint) or too few are perimeter
-      if (outsideRatio > 0.25 || perimeterRatio < 0.15) {
-        console.log(`[FootprintDetection] Rejecting candidate ${i}: outsideRatio=${outsideRatio.toFixed(2)}, perimeterRatio=${perimeterRatio.toFixed(2)}`);
+      candidates.push({
+        index: i,
+        polygon: testPolygon,
+        area: absArea,
+        containsCount: meta.containsCount,
+        outsideCount,
+        perimeterCount,
+        perimeterLength: perimeterChainsLength,
+        score,
+        orientation: meta.orientation,
+      });
+    }
+    
+    // Sort by score (highest first)
+    candidates.sort((a, b) => b.score - a.score);
+    
+    // Select best candidate that passes validation
+    for (const cand of candidates) {
+      const outsideRatio = cand.outsideCount / chains.length;
+      const perimeterRatio = cand.perimeterCount / chains.length;
+      
+      // More lenient thresholds for high-scoring candidates
+      const scoreThreshold = candidates[0].score * 0.5;
+      const isHighScorer = cand.score >= scoreThreshold;
+      
+      // Relaxed thresholds for high scorers
+      const maxOutsideRatio = isHighScorer ? 0.35 : 0.25;
+      const minPerimeterRatio = isHighScorer ? 0.10 : 0.15;
+      
+      if (outsideRatio > maxOutsideRatio) {
+        console.log(`[FootprintDetection] Rejecting candidate ${cand.index}: outsideRatio=${outsideRatio.toFixed(2)} > ${maxOutsideRatio}`);
+        continue;
+      }
+      
+      if (perimeterRatio < minPerimeterRatio) {
+        console.log(`[FootprintDetection] Rejecting candidate ${cand.index}: perimeterRatio=${perimeterRatio.toFixed(2)} < ${minPerimeterRatio}`);
         continue;
       }
       
       // Accept this candidate
-      outerPolygon = testPolygon;
-      outerArea = absArea;
-      footprintOrientation = meta.orientation;
+      console.log(`[FootprintDetection] Selected candidate ${cand.index} with score=${cand.score.toFixed(0)}`);
+      outerPolygon = cand.polygon;
+      outerArea = cand.area;
+      footprintOrientation = cand.orientation;
       
       // Collect interior loops (all other faces that are inside this one)
-      for (let j = i + 1; j < faces.length; j++) {
-        if (faceMeta[j].area > 1000) { // Skip tiny faces
+      for (let j = 0; j < faces.length; j++) {
+        if (j === cand.index) continue;
+        if (faceMeta[j].area > 1000 && containsCentroid(outerPolygon, faces[j])) {
           interiorLoops.push(faces[j]);
         }
       }
