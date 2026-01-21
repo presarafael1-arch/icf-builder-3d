@@ -394,20 +394,12 @@ function FootprintStatsOverlay({ walls }: FootprintStatsOverlayProps) {
       
       <div className="space-y-1 text-muted-foreground">
         <div className="flex justify-between">
-          <span>Faces detetadas:</span>
-          <span className="font-mono text-foreground">{footprintResult?.facesFound?.length ?? 0}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Vértices footprint:</span>
-          <span className="font-mono text-foreground">{footprint.outerPolygon.length}</span>
+          <span>Loops encontrados:</span>
+          <span className="font-mono text-foreground">{footprint.outerPolygon.length >= 3 ? '1' : '0'}</span>
         </div>
         <div className="flex justify-between">
           <span>Área footprint:</span>
           <span className="font-mono text-foreground">{areaM2.toFixed(2)} m²</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Orientação:</span>
-          <span className="font-mono text-foreground">{footprintResult?.facesFound?.[0]?.orientation ?? 'N/A'}</span>
         </div>
       </div>
       
@@ -988,26 +980,14 @@ function BatchedPanelInstances({
     outlineMeshRef.current.instanceMatrix.needsUpdate = true;
   }, [allPanels, outlineGeometry, showOutlines]);
 
-  // Filter TOPOS by chain visibility (hide topos from outside chains)
-  const outsideChainSet = useMemo(() => new Set(outsideChainIds), [outsideChainIds]);
-  const filteredTopos = useMemo(() => {
-    return allTopos.filter(topo => {
-      // Hide topos from outside chains when toggle is off
-      if (topo.chainId && outsideChainSet.has(topo.chainId) && !settings.showOutsideFootprint) {
-        return false;
-      }
-      return true;
-    });
-  }, [allTopos, outsideChainSet, settings.showOutsideFootprint]);
-
   // Update TOPO mesh (T-junction topos)
   useEffect(() => {
-    if (!topoMeshRef.current || filteredTopos.length === 0) return;
-    filteredTopos.forEach((topo, i) => {
+    if (!topoMeshRef.current || allTopos.length === 0) return;
+    allTopos.forEach((topo, i) => {
       topoMeshRef.current!.setMatrixAt(i, topo.matrix);
     });
     topoMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [filteredTopos]);
+  }, [allTopos]);
 
   const wireframe = settings.wireframe;
 
@@ -1127,11 +1107,11 @@ function BatchedPanelInstances({
         </instancedMesh>
       )}
 
-      {/* TOPO mesh - Dark green blocks at T-junctions (filtered by chain visibility) */}
-      {settings.showTopos && filteredTopos.length > 0 && (
+      {/* TOPO mesh - Dark green blocks at T-junctions */}
+      {settings.showTopos && allTopos.length > 0 && (
         <instancedMesh 
           ref={topoMeshRef} 
-          args={[topoGeometry, undefined, filteredTopos.length]} 
+          args={[topoGeometry, undefined, allTopos.length]} 
           frustumCulled={false}
         >
           <meshStandardMaterial 
