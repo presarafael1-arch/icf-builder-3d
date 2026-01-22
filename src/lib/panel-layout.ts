@@ -1010,19 +1010,27 @@ export function layoutPanelsForChainWithJunctions(
   // We need to translate this to actual offset direction (positive or negative perp)
   // and determine the final effectiveSide for the ID
   
-  // If we're asked to place an "exterior" panel:
-  // - If positiveIsExterior, we offset positive and it IS exterior
-  // - If !positiveIsExterior, we offset positive but it's actually interior
-  //   So we need to offset negative to get exterior
+  // CRITICAL FIX: When flip is active, we need to SWAP positions, not just labels.
+  // The 'side' parameter tells us which geometric position we're generating (positive or negative perp).
+  // The 'effectiveSide' is the LOGICAL side after flip is applied.
+  // 
+  // When isChainFlipped is true:
+  // - A panel at "exterior" position should be labeled "interior" AND vice versa
+  // - This is achieved by swapping effectiveSide relative to the requested 'side'
   
-  // Actually, let's simplify: the 'side' parameter directly becomes effectiveSide,
-  // but we need to adjust which perpendicular direction to use in createPanel
-  const effectiveSide: WallSide = side; // Keep the requested side as-is
+  // Apply flip to get the LOGICAL side for this panel
+  // If flipped: exterior position → interior label, interior position → exterior label
+  const effectiveSide: WallSide = isChainFlipped 
+    ? (side === 'exterior' ? 'interior' : 'exterior')
+    : side;
   
-  // But we'll track whether we need to invert the offset direction
+  // The offset direction is based on the GEOMETRIC 'side' parameter, not effectiveSide
+  // - 'exterior' side param → use positive/negative perp based on chain classification
+  // - 'interior' side param → use opposite direction
+  // The chain classification (positiveIsExterior) tells us which perp direction is "exterior" geometrically
   const invertOffset = !positiveIsExterior;
   
-  // Side short code for IDs - uses the requested side
+  // Side short code for IDs - uses the EFFECTIVE side (after flip)
   const sideCode = effectiveSide === 'exterior' ? 'ext' : 'int';
   
   // Helper to determine seed origin
