@@ -3,17 +3,19 @@
  * 
  * Shows:
  * - Engine mode toggle (External/Internal)
+ * - Test Connection button
  * - Counters (walls, nodes, courses)
  * - Selected wall details
  * - Engine configuration
  */
 
-import { Server, Home, Layers, GitBranch, Box, Settings, AlertCircle, Loader2 } from 'lucide-react';
+import { Server, Home, Layers, Box, Settings, AlertCircle, Loader2, CheckCircle2, XCircle, Wifi } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -29,6 +31,8 @@ interface ExternalEnginePanelProps {
   selectedWallId: string | null;
   config: EngineConfig;
   onConfigChange: (config: Partial<EngineConfig>) => void;
+  onTestConnection: () => Promise<boolean>;
+  connectionStatus: 'idle' | 'testing' | 'connected' | 'error';
 }
 
 export function ExternalEnginePanel({
@@ -40,6 +44,8 @@ export function ExternalEnginePanel({
   selectedWallId,
   config,
   onConfigChange,
+  onTestConnection,
+  connectionStatus,
 }: ExternalEnginePanelProps) {
   const isExternal = engineMode === 'external';
 
@@ -47,6 +53,32 @@ export function ExternalEnginePanel({
   const selectedWall: GraphWall | undefined = analysis?.graph.walls.find(
     (w) => w.id === selectedWallId
   );
+
+  const getConnectionIcon = () => {
+    switch (connectionStatus) {
+      case 'testing':
+        return <Loader2 className="h-4 w-4 animate-spin" />;
+      case 'connected':
+        return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      case 'error':
+        return <XCircle className="h-4 w-4 text-destructive" />;
+      default:
+        return <Wifi className="h-4 w-4" />;
+    }
+  };
+
+  const getConnectionText = () => {
+    switch (connectionStatus) {
+      case 'testing':
+        return 'A testar...';
+      case 'connected':
+        return 'Connected';
+      case 'error':
+        return 'Erro';
+      default:
+        return 'Test Connection';
+    }
+  };
 
   return (
     <Card className="w-full">
@@ -66,7 +98,7 @@ export function ExternalEnginePanel({
               <Home className="h-4 w-4 text-muted-foreground" />
             )}
             <Label htmlFor="engine-mode" className="text-sm">
-              {isExternal ? 'External (FastAPI)' : 'Internal (Lovable)'}
+              {isExternal ? 'External Engine' : 'Internal (Lovable)'}
             </Label>
           </div>
           <Switch
@@ -96,6 +128,32 @@ export function ExternalEnginePanel({
         {isExternal && (
           <>
             <Separator />
+
+            {/* API Base URL */}
+            <div className="space-y-2">
+              <Label htmlFor="base-url" className="text-xs">
+                API Base URL
+              </Label>
+              <Input
+                id="base-url"
+                value={config.baseUrl}
+                onChange={(e) => onConfigChange({ baseUrl: e.target.value })}
+                placeholder="https://xxxxx.trycloudflare.com"
+                className="h-8 text-xs"
+              />
+            </div>
+
+            {/* Test Connection Button */}
+            <Button
+              variant={connectionStatus === 'connected' ? 'outline' : 'secondary'}
+              size="sm"
+              className="w-full"
+              onClick={onTestConnection}
+              disabled={connectionStatus === 'testing'}
+            >
+              {getConnectionIcon()}
+              <span className="ml-2">{getConnectionText()}</span>
+            </Button>
 
             {/* Counters */}
             {analysis && (
@@ -164,25 +222,9 @@ export function ExternalEnginePanel({
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
                 <Settings className="h-4 w-4" />
-                Configuração do Motor
+                Parâmetros do Motor
               </CollapsibleTrigger>
               <CollapsibleContent className="pt-3 space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="base-url" className="text-xs">
-                    URL Base (HTTP ou HTTPS)
-                  </Label>
-                  <Input
-                    id="base-url"
-                    value={config.baseUrl}
-                    onChange={(e) => onConfigChange({ baseUrl: e.target.value })}
-                    placeholder="https://xxxxx.ngrok-free.app"
-                    className="h-8 text-xs"
-                  />
-                  <p className="text-[10px] text-muted-foreground">
-                    Ex: http://127.0.0.1:8001 ou https://xxxxx.ngrok-free.app
-                  </p>
-                </div>
-
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <Label htmlFor="thickness" className="text-xs">
@@ -235,6 +277,19 @@ export function ExternalEnginePanel({
                       className="h-8 text-xs"
                     />
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="offset-even" className="text-xs">
+                    Offset Par (mm)
+                  </Label>
+                  <Input
+                    id="offset-even"
+                    type="number"
+                    value={config.offsetEven}
+                    onChange={(e) => onConfigChange({ offsetEven: Number(e.target.value) })}
+                    className="h-8 text-xs"
+                  />
                 </div>
               </CollapsibleContent>
             </Collapsible>

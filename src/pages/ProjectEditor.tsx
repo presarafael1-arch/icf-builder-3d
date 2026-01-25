@@ -279,6 +279,8 @@ export default function ProjectEditor() {
     clearAnalysis,
     config: externalConfig,
     setConfig: setExternalConfig,
+    testConnection,
+    connectionStatus,
   } = useExternalEngine();
   
   // DXF file reference for external engine upload
@@ -1059,6 +1061,8 @@ export default function ProjectEditor() {
               selectedWallId={externalSelectedWallId}
               config={externalConfig}
               onConfigChange={setExternalConfig}
+              onTestConnection={testConnection}
+              connectionStatus={connectionStatus}
             />
           </div>
           

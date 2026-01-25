@@ -89,10 +89,10 @@ export interface EngineConfig {
 }
 
 export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
-  baseUrl: 'http://127.0.0.1:8001',
-  thickness: 220,
+  baseUrl: 'https://museums-usual-township-realm.trycloudflare.com',
+  thickness: 280,
   wallHeight: 2800,
   courseHeight: 400,
   offsetEven: 0,
-  offsetOdd: 600,
+  offsetOdd: 200,
 };
