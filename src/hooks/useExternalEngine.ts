@@ -168,6 +168,8 @@ export function useExternalEngine(): UseExternalEngineResult {
 
       const params = new URLSearchParams({
         units: 'm',
+        pt_tol: '0.01',
+        ang_tol_deg: '2',
         thickness: thicknessM.toString(),
         wall_height: wallHeightM.toString(),
         course_height: courseHeightM.toString(),
