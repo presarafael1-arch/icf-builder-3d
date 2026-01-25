@@ -169,15 +169,18 @@ export function ExternalEnginePanel({
               <CollapsibleContent className="pt-3 space-y-3">
                 <div className="space-y-2">
                   <Label htmlFor="base-url" className="text-xs">
-                    URL Base
+                    URL Base (HTTP ou HTTPS)
                   </Label>
                   <Input
                     id="base-url"
                     value={config.baseUrl}
                     onChange={(e) => onConfigChange({ baseUrl: e.target.value })}
-                    placeholder="http://127.0.0.1:8001"
+                    placeholder="https://xxxxx.ngrok-free.app"
                     className="h-8 text-xs"
                   />
+                  <p className="text-[10px] text-muted-foreground">
+                    Ex: http://127.0.0.1:8001 ou https://xxxxx.ngrok-free.app
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
