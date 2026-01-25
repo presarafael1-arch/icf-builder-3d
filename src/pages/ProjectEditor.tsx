@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Box, Upload, Plus, Trash2, ArrowRight, Layers, MousePointer, Link2, AlertTriangle, DoorOpen, Crosshair } from 'lucide-react';
 import { MainLayout } from '@/components/layout/MainLayout';
@@ -8,6 +8,7 @@ import { DXFImportDialog } from '@/components/dxf/DXFImportDialog';
 import { OpeningsPanel } from '@/components/openings/OpeningsPanel';
 import { PanelInspector } from '@/components/viewer/PanelInspector';
 import { CornerNodeInspector } from '@/components/viewer/CornerNodeInspector';
+import { ExternalEnginePanel } from '@/components/viewer/ExternalEnginePanel';
 import { Button } from '@/components/ui/button';
 // Card components imported but conditionally used
 import { Input } from '@/components/ui/input';
@@ -20,6 +21,7 @@ import { useOpenings } from '@/hooks/useOpenings';
 import { usePanelSelection } from '@/hooks/usePanelSelection';
 import { usePanelOverrides } from '@/hooks/usePanelOverrides';
 import { useChainOverrides } from '@/hooks/useChainOverrides';
+import { useExternalEngine } from '@/hooks/useExternalEngine';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing, DXFRotation } from '@/types/icf';
 import { OpeningData, OpeningCandidate } from '@/types/openings';
 import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType, ThicknessDetectionResult } from '@/types/panel-selection';
@@ -263,6 +265,24 @@ export default function ProjectEditor() {
     toggleFlip: toggleChainFlipBase,
     overrides: chainOverrides 
   } = useChainOverrides(id);
+  
+  // External engine integration
+  const {
+    engineMode,
+    setEngineMode,
+    analysis: externalAnalysis,
+    isLoading: externalLoading,
+    error: externalError,
+    selectedWallId: externalSelectedWallId,
+    setSelectedWallId: setExternalSelectedWallId,
+    uploadAndAnalyze,
+    clearAnalysis,
+    config: externalConfig,
+    setConfig: setExternalConfig,
+  } = useExternalEngine();
+  
+  // DXF file reference for external engine upload
+  const dxfFileRef = useRef<File | null>(null);
   
   // Wrapped toggleChainFlip that also migrates panel overrides
   // This ensures that when a chain is flipped, all panel overrides for that chain
@@ -716,11 +736,17 @@ export default function ProjectEditor() {
     segments: DXFSegment[], 
     selectedLayers: string[], 
     stats: NormalizedDXFResult['stats'],
-    detectedThickness?: ThicknessDetectionResult
+    detectedThickness?: ThicknessDetectionResult,
+    originalFile?: File
   ) => {
     if (!id || segments.length === 0) return;
     
     setImportingDXF(true);
+    
+    // Store the original file for external engine
+    if (originalFile) {
+      dxfFileRef.current = originalFile;
+    }
     
     try {
       // Replace mode: clear any previous walls for this project (avoid duplicates / accumulation)
@@ -815,6 +841,28 @@ export default function ProjectEditor() {
         title: 'DXF importado e normalizado',
         description: `${newWalls.length} paredes (${totalMeters.toFixed(1)}m) | ${L}L ${T}T ${X}X junções`
       });
+      
+      // If in external engine mode and we have the file, upload to external engine
+      if (engineMode === 'external' && originalFile) {
+        // Clear previous analysis first
+        clearAnalysis();
+        
+        // Upload to external engine with current project settings
+        const analysisResult = await uploadAndAnalyze(originalFile, {
+          thickness: coreConcreteMm,
+          wallHeight: project?.wall_height_mm || 2800,
+          courseHeight: 400, // Standard course height
+          offsetEven: 0,
+          offsetOdd: 600, // Half panel offset for pattern B
+        });
+        
+        if (analysisResult) {
+          toast({
+            title: 'Motor externo',
+            description: `Análise concluída: ${analysisResult.graph.walls.length} paredes, ${analysisResult.graph.nodes.length} nós, ${analysisResult.courses.count} fiadas`
+          });
+        }
+      }
     } catch (error) {
       console.error('Error importing DXF:', error);
       toast({
@@ -988,6 +1036,11 @@ export default function ProjectEditor() {
             onSelectCornerNode={setSelectedCornerNode}
             cornerNodeOffsets={cornerNodeOffsets}
             flippedChains={flippedChains}
+            // External engine props
+            engineMode={engineMode}
+            externalAnalysis={externalAnalysis}
+            externalSelectedWallId={externalSelectedWallId}
+            onExternalWallClick={setExternalSelectedWallId}
           />
           <ViewerControls 
             settings={viewerSettings}
@@ -995,8 +1048,22 @@ export default function ProjectEditor() {
             onFitView={fitView}
           />
           
+          {/* External Engine Panel */}
+          <div className="absolute bottom-4 left-4 z-10 w-72">
+            <ExternalEnginePanel
+              engineMode={engineMode}
+              onEngineModeChange={setEngineMode}
+              analysis={externalAnalysis}
+              isLoading={externalLoading}
+              error={externalError}
+              selectedWallId={externalSelectedWallId}
+              config={externalConfig}
+              onConfigChange={setExternalConfig}
+            />
+          </div>
+          
           {/* Selection Mode Indicator */}
-          {selection.selectedPanelId && (
+          {selection.selectedPanelId && engineMode === 'internal' && (
             <div className="absolute top-4 right-4 toolbar">
               <Crosshair className="h-4 w-4 text-cyan-400" />
               <span className="text-xs text-cyan-400">Painel selecionado</span>
