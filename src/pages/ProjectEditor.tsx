@@ -1046,14 +1046,17 @@ export default function ProjectEditor() {
             externalSelectedWallId={externalSelectedWallId}
             onExternalWallClick={setExternalSelectedWallId}
           />
-          <ViewerControls 
-            settings={viewerSettings}
-            onSettingsChange={setViewerSettings}
-            onFitView={fitView}
-          />
+          {/* Show ViewerControls in Internal mode */}
+          {engineMode === 'internal' && (
+            <ViewerControls 
+              settings={viewerSettings}
+              onSettingsChange={setViewerSettings}
+              onFitView={fitView}
+            />
+          )}
           
-          {/* External Engine Panel */}
-          <div className="absolute bottom-4 left-4 z-10 w-72">
+          {/* External Engine Panel - always visible but position changes based on mode */}
+          <div className={`absolute z-10 w-72 ${engineMode === 'external' ? 'bottom-4 left-4' : 'bottom-4 right-4'}`}>
             <ExternalEnginePanel
               engineMode={engineMode}
               onEngineModeChange={setEngineMode}
