@@ -23,8 +23,10 @@ import { DiagnosticsHUD } from './DiagnosticsHUD';
 import { PanelLegend } from './PanelLegend';
 import { DebugVisualizations } from './DebugVisualizations';
 import { SideStripeOverlays } from './SideStripeOverlays';
+import { ExternalEngineRenderer } from './ExternalEngineRenderer';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
 import { CoreConcreteMm, ExtendedPanelData, PanelOverride } from '@/types/panel-selection';
+import { EngineMode, ExternalEngineAnalysis } from '@/types/external-engine';
 
 // Panel counts by type for legend
 export interface PanelCounts {
@@ -1921,9 +1923,14 @@ interface ICFViewer3DProps {
   cornerNodeOffsets?: Map<string, { nodeId: string; offsetX: number; offsetY: number }>;
   // Chain overrides (side flip)
   flippedChains?: Set<string>;
+  // External engine mode
+  engineMode?: EngineMode;
+  externalAnalysis?: ExternalEngineAnalysis | null;
+  externalSelectedWallId?: string | null;
+  onExternalWallClick?: (wallId: string) => void;
 }
 
-export function ICFViewer3D({ 
+export function ICFViewer3D({
   walls, 
   settings, 
   openings = [], 
@@ -1938,6 +1945,11 @@ export function ICFViewer3D({
   onSelectCornerNode,
   cornerNodeOffsets,
   flippedChains = new Set(),
+  // External engine props
+  engineMode = 'internal',
+  externalAnalysis,
+  externalSelectedWallId,
+  onExternalWallClick,
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
@@ -1960,6 +1972,9 @@ export function ICFViewer3D({
 
   const showPanelsMode = settings.viewMode === 'panels' || settings.viewMode === 'both';
 
+  // Check if we're in external engine mode with valid analysis
+  const isExternalMode = engineMode === 'external' && externalAnalysis !== null && externalAnalysis !== undefined;
+
   return (
     <div className={`viewer-container ${className} relative`}>
       <Canvas
@@ -1967,35 +1982,83 @@ export function ICFViewer3D({
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3 }}
         style={{ background: 'transparent' }}
       >
-        <Scene 
-          walls={walls} 
-          settings={settings} 
-          openings={openings}
-          candidates={candidates}
-          selectedPanelId={selectedPanelId}
-          panelOverrides={panelOverrides}
-          previewColor={previewColor}
-          onPanelClick={onPanelClick}
-          onPanelDataReady={onPanelDataReady}
-          onPanelCountChange={setPanelInstancesCount}
-          onPanelCountsChange={setPanelCounts}
-          onGeometrySourceChange={setGeometrySource}
-          onGeometryMetaChange={({ geometryBBoxM, geometryScaleApplied, panelMeshVisible, panelMeshBBoxSizeM, instancePosRangeM }) => {
-            setGeometryBBoxM(geometryBBoxM);
-            setGeometryScaleApplied(geometryScaleApplied);
-            setPanelMeshVisible(panelMeshVisible);
-            setPanelMeshBBoxSizeM(panelMeshBBoxSizeM);
-            setInstancePosRangeM(instancePosRangeM);
-          }}
-          onLayoutStatsChange={setLayoutStats}
-          selectedCornerNode={selectedCornerNode}
-          onSelectCornerNode={onSelectCornerNode}
-          cornerNodeOffsets={cornerNodeOffsets}
-          flippedChains={flippedChains}
-        />
+        {/* Render external engine geometry when in external mode */}
+        {isExternalMode ? (
+          <>
+            <PerspectiveCamera makeDefault position={[20, 15, 20]} fov={50} />
+            <OrbitControls
+              makeDefault
+              enableDamping
+              dampingFactor={0.05}
+              minDistance={1}
+              maxDistance={2000}
+            />
+            
+            {/* LIGHTING */}
+            <ambientLight intensity={1.2} />
+            <directionalLight position={[10, 20, 10]} intensity={1.5} castShadow shadow-mapSize={[2048, 2048]} />
+            <directionalLight position={[-10, 10, -10]} intensity={0.8} />
+            <hemisphereLight intensity={0.6} />
+
+            {settings.showGrid && (
+              <Grid
+                position={[0, 0, 0]}
+                args={[100, 100]}
+                cellSize={1}
+                cellThickness={0.5}
+                cellColor="#1e3a5f"
+                sectionSize={5}
+                sectionThickness={1}
+                sectionColor="#2a5280"
+                fadeDistance={100}
+                fadeStrength={1}
+                followCamera={false}
+              />
+            )}
+
+            <ExternalEngineRenderer
+              analysis={externalAnalysis}
+              selectedWallId={externalSelectedWallId || null}
+              onWallClick={onExternalWallClick}
+              showCourseMarkers={true}
+              showShiftArrows={true}
+            />
+
+            <Environment preset="city" />
+          </>
+        ) : (
+          /* Internal mode - standard rendering */
+          <Scene 
+            walls={walls} 
+            settings={settings} 
+            openings={openings}
+            candidates={candidates}
+            selectedPanelId={selectedPanelId}
+            panelOverrides={panelOverrides}
+            previewColor={previewColor}
+            onPanelClick={onPanelClick}
+            onPanelDataReady={onPanelDataReady}
+            onPanelCountChange={setPanelInstancesCount}
+            onPanelCountsChange={setPanelCounts}
+            onGeometrySourceChange={setGeometrySource}
+            onGeometryMetaChange={({ geometryBBoxM, geometryScaleApplied, panelMeshVisible, panelMeshBBoxSizeM, instancePosRangeM }) => {
+              setGeometryBBoxM(geometryBBoxM);
+              setGeometryScaleApplied(geometryScaleApplied);
+              setPanelMeshVisible(panelMeshVisible);
+              setPanelMeshBBoxSizeM(panelMeshBBoxSizeM);
+              setInstancePosRangeM(instancePosRangeM);
+            }}
+            onLayoutStatsChange={setLayoutStats}
+            selectedCornerNode={selectedCornerNode}
+            onSelectCornerNode={onSelectCornerNode}
+            cornerNodeOffsets={cornerNodeOffsets}
+            flippedChains={flippedChains}
+          />
+        )}
       </Canvas>
 
-      {showPanelsMode && panelInstancesCount > 0 && (
+      {/* Only show panel legend in internal mode */}
+      {!isExternalMode && showPanelsMode && panelInstancesCount > 0 && (
         <PanelLegend 
           visible={showLegend}
           onToggle={() => setShowLegend(!showLegend)}
@@ -2005,28 +2068,43 @@ export function ICFViewer3D({
         />
       )}
 
+      {/* External mode indicator */}
+      {isExternalMode && (
+        <div className="absolute top-4 right-4 z-10 rounded-md bg-primary/20 backdrop-blur px-3 py-2 text-xs font-mono text-primary border border-primary/30">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+            Motor Externo
+          </div>
+          <div className="mt-1 text-muted-foreground">
+            {externalAnalysis.graph.walls.length} paredes | {externalAnalysis.courses.count} fiadas
+          </div>
+        </div>
+      )}
+
       {/* Footprint Stats Overlay */}
-      {settings.showFootprintStats && walls.length > 0 && (
+      {!isExternalMode && settings.showFootprintStats && walls.length > 0 && (
         <FootprintStatsOverlay walls={walls} />
       )}
 
-      <DiagnosticsHUD 
-        walls={walls} 
-        settings={settings} 
-        openings={openings}
-        candidates={candidates}
-        panelInstancesCount={panelInstancesCount}
-        geometrySource={geometrySource}
-        geometryBBoxM={geometryBBoxM}
-        geometryScaleApplied={geometryScaleApplied}
-        panelMeshVisible={panelMeshVisible}
-        panelMeshBBoxSizeM={panelMeshBBoxSizeM}
-        instancePosRangeM={instancePosRangeM}
-        layoutStats={layoutStats}
-        panelCountsByType={panelCounts}
-      />
+      {!isExternalMode && (
+        <DiagnosticsHUD 
+          walls={walls} 
+          settings={settings} 
+          openings={openings}
+          candidates={candidates}
+          panelInstancesCount={panelInstancesCount}
+          geometrySource={geometrySource}
+          geometryBBoxM={geometryBBoxM}
+          geometryScaleApplied={geometryScaleApplied}
+          panelMeshVisible={panelMeshVisible}
+          panelMeshBBoxSizeM={panelMeshBBoxSizeM}
+          instancePosRangeM={instancePosRangeM}
+          layoutStats={layoutStats}
+          panelCountsByType={panelCounts}
+        />
+      )}
 
-      {bboxInfo && settings.showHelpers && (
+      {!isExternalMode && bboxInfo && settings.showHelpers && (
         <div className="absolute top-4 left-4 z-10 rounded-md bg-background/80 backdrop-blur px-3 py-2 text-xs font-mono text-foreground border border-border">
           <div>bbox: {bboxInfo.widthM.toFixed(2)}m × {bboxInfo.heightM.toFixed(2)}m</div>
           <div>paredes: {walls.length}</div>

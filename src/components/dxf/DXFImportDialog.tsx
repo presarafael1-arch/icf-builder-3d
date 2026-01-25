@@ -30,7 +30,7 @@ import { ThicknessDetectionResult, CoreConcreteMm } from '@/types/panel-selectio
 interface DXFImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImport: (segments: DXFSegment[], selectedLayers: string[], stats: NormalizedDXFResult['stats'], detectedThickness?: ThicknessDetectionResult) => void;
+  onImport: (segments: DXFSegment[], selectedLayers: string[], stats: NormalizedDXFResult['stats'], detectedThickness?: ThicknessDetectionResult, originalFile?: File) => void;
 }
 
 type ImportStep = 'upload' | 'layers' | 'preview';
@@ -177,11 +177,13 @@ export function DXFImportDialog({ open, onOpenChange, onImport }: DXFImportDialo
       };
     }
     
+    // Pass original file for external engine upload
     onImport(
       processedResult.finalSegments, 
       selectedLayers, 
       processedResult.stats,
-      finalThickness || undefined
+      finalThickness || undefined,
+      file || undefined
     );
     handleClose();
   };
