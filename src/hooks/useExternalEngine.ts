@@ -53,6 +53,7 @@ export function useExternalEngine(): UseExternalEngineResult {
   }, []);
 
   // Upload DXF and get analysis from external engine
+  // Config values are in mm, API expects meters - we convert here
   const uploadAndAnalyze = useCallback(async (
     file: File,
     configOverride?: Partial<EngineConfig>
@@ -66,18 +67,34 @@ export function useExternalEngine(): UseExternalEngineResult {
       const formData = new FormData();
       formData.append('file', file);
 
+      // Convert mm to m for API (divide by 1000)
+      const thicknessM = finalConfig.thickness / 1000;
+      const wallHeightM = finalConfig.wallHeight / 1000;
+      const courseHeightM = finalConfig.courseHeight / 1000;
+      const offsetEvenM = finalConfig.offsetEven / 1000;
+      const offsetOddM = finalConfig.offsetOdd / 1000;
+
       const params = new URLSearchParams({
-        units: finalConfig.units,
-        thickness: finalConfig.thickness.toString(),
-        wall_height: finalConfig.wallHeight.toString(),
-        course_height: finalConfig.courseHeight.toString(),
-        offset_even: finalConfig.offsetEven.toString(),
-        offset_odd: finalConfig.offsetOdd.toString(),
+        units: 'm',
+        thickness: thicknessM.toString(),
+        wall_height: wallHeightM.toString(),
+        course_height: courseHeightM.toString(),
+        offset_even: offsetEvenM.toString(),
+        offset_odd: offsetOddM.toString(),
       });
 
-      const url = `${finalConfig.baseUrl}/project/layout?${params.toString()}`;
+      // Ensure baseUrl doesn't have trailing slash
+      const baseUrl = finalConfig.baseUrl.replace(/\/+$/, '');
+      const url = `${baseUrl}/project/layout?${params.toString()}`;
       
       console.log('[ExternalEngine] Uploading to:', url);
+      console.log('[ExternalEngine] Params (m):', {
+        thickness: thicknessM,
+        wall_height: wallHeightM,
+        course_height: courseHeightM,
+        offset_even: offsetEvenM,
+        offset_odd: offsetOddM,
+      });
       
       const response = await fetch(url, {
         method: 'POST',
@@ -85,8 +102,13 @@ export function useExternalEngine(): UseExternalEngineResult {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Engine error (${response.status}): ${errorText}`);
+        let errorText = '';
+        try {
+          errorText = await response.text();
+        } catch {
+          errorText = 'Não foi possível ler a resposta do servidor';
+        }
+        throw new Error(`Erro do motor (${response.status}): ${errorText}`);
       }
 
       const result: ExternalEngineAnalysis = await response.json();
@@ -101,7 +123,14 @@ export function useExternalEngine(): UseExternalEngineResult {
       setAnalysis(result);
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      let message: string;
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        message = `Falha na ligação: verifique se o motor está a correr em ${config.baseUrl}`;
+      } else if (err instanceof Error) {
+        message = err.message;
+      } else {
+        message = 'Erro desconhecido';
+      }
       console.error('[ExternalEngine] Error:', message);
       setError(message);
       return null;

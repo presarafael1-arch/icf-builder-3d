@@ -77,20 +77,19 @@ export interface ExternalEngineAnalysis {
   courses: CoursesInfo;
 }
 
-// Default engine configuration
+// Engine configuration
+// Note: All values are stored in mm in the UI, converted to m when calling API
 export interface EngineConfig {
   baseUrl: string;
-  units: 'mm' | 'm';
-  thickness: number;
-  wallHeight: number;
-  courseHeight: number;
-  offsetEven: number;
-  offsetOdd: number;
+  thickness: number;      // mm
+  wallHeight: number;     // mm
+  courseHeight: number;   // mm
+  offsetEven: number;     // mm
+  offsetOdd: number;      // mm
 }
 
 export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   baseUrl: 'http://127.0.0.1:8001',
-  units: 'm',
   thickness: 220,
   wallHeight: 2800,
   courseHeight: 400,
