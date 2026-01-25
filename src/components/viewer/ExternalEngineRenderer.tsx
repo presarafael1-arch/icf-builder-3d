@@ -25,9 +25,12 @@ interface ExternalEngineRendererProps {
   showShiftArrows?: boolean;
 }
 
-// Convert Vec3 to THREE.Vector3
-function toVector3(v: Vec3): THREE.Vector3 {
-  return new THREE.Vector3(v.x, v.z, v.y); // Swap Y/Z for Three.js coordinate system
+// Convert Vec3 to THREE.Vector3 (with validation)
+function toVector3(v: Vec3 | undefined | null): THREE.Vector3 | null {
+  if (!v || typeof v.x !== 'number' || typeof v.y !== 'number') {
+    return null;
+  }
+  return new THREE.Vector3(v.x, v.z ?? 0, v.y); // Swap Y/Z for Three.js coordinate system
 }
 
 // Create wall mesh from offsets (left + reverse(right) = closed loop)
@@ -36,15 +39,21 @@ function createWallMeshFromOffsets(
   wallHeight: number,
   isSelected: boolean
 ): THREE.Mesh | null {
-  if (!wall.offsets || wall.offsets.left.length < 2 || wall.offsets.right.length < 2) {
+  // Validate offsets exist and have valid points
+  if (!wall.offsets || !wall.offsets.left || !wall.offsets.right) {
+    return null;
+  }
+  
+  const leftPoints = wall.offsets.left.filter(p => p && typeof p.x === 'number' && typeof p.y === 'number');
+  const rightPoints = wall.offsets.right.filter(p => p && typeof p.x === 'number' && typeof p.y === 'number');
+  
+  if (leftPoints.length < 2 || rightPoints.length < 2) {
     return null;
   }
 
   // Build 2D closed shape from left + reverse(right)
   const shape = new THREE.Shape();
-  
-  const leftPoints = wall.offsets.left;
-  const rightPoints = [...wall.offsets.right].reverse();
+  const reversedRight = [...rightPoints].reverse();
   
   // Start at first left point
   shape.moveTo(leftPoints[0].x, leftPoints[0].y);
@@ -55,7 +64,7 @@ function createWallMeshFromOffsets(
   }
   
   // Continue to right side (reversed)
-  for (const p of rightPoints) {
+  for (const p of reversedRight) {
     shape.lineTo(p.x, p.y);
   }
   
@@ -99,8 +108,15 @@ function createWallMeshFromAxis(
   const start = toVector3(startNode);
   const end = toVector3(endNode);
   
+  // Validate conversion succeeded
+  if (!start || !end) return null;
+  
   const direction = new THREE.Vector3().subVectors(end, start);
   const length = direction.length();
+  
+  // Skip zero-length walls
+  if (length < 0.001) return null;
+  
   direction.normalize();
 
   // Create box geometry
@@ -196,17 +212,22 @@ function ShiftArrows({
             if (!startNode) return null;
 
             const start = toVector3(startNode);
+            if (!start) return null;
+            
+            // Validate wall.axis exists
+            if (!wall.axis || !wall.axis.u) return null;
+            
             const shiftAmount = course.shift_along_wall || 0;
             
             // Position arrow at wall midpoint, at course center height
-            const arrowY = (course.z0 + course.z1) / 2;
+            const arrowY = ((course.z0 ?? 0) + (course.z1 ?? 0)) / 2;
             
             // Calculate arrow position along wall
             const u = wall.axis.u;
             const arrowPos = new THREE.Vector3(
-              start.x + u.x * (wall.length / 2),
+              start.x + (u.x ?? 0) * (wall.length / 2),
               arrowY,
-              start.z + u.y * (wall.length / 2) // Note: u.y maps to z in Three.js
+              start.z + (u.y ?? 0) * (wall.length / 2) // Note: u.y maps to z in Three.js
             );
 
             return (
