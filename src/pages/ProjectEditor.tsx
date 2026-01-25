@@ -271,6 +271,7 @@ export default function ProjectEditor() {
     engineMode,
     setEngineMode,
     analysis: externalAnalysis,
+    normalizedAnalysis: normalizedExternalAnalysis,
     isLoading: externalLoading,
     error: externalError,
     selectedWallId: externalSelectedWallId,
@@ -1041,6 +1042,7 @@ export default function ProjectEditor() {
             // External engine props
             engineMode={engineMode}
             externalAnalysis={externalAnalysis}
+            normalizedExternalAnalysis={normalizedExternalAnalysis}
             externalSelectedWallId={externalSelectedWallId}
             onExternalWallClick={setExternalSelectedWallId}
           />

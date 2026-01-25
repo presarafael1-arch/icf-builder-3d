@@ -77,6 +77,33 @@ export interface ExternalEngineAnalysis {
   courses: CoursesInfo;
 }
 
+// Normalized analysis with safe defaults (never undefined)
+export interface NormalizedExternalAnalysis {
+  nodes: GraphNode[];
+  walls: GraphWall[];
+  courses: Course[];
+  wallHeight: number;
+  courseHeight: number;
+  thickness: number;
+}
+
+/**
+ * Normalize the raw API response to ensure all fields have safe defaults.
+ * This handles the nested structure: data.analysis.graph.nodes, etc.
+ */
+export function normalizeExternalAnalysis(data: unknown): NormalizedExternalAnalysis {
+  const analysis = (data as { analysis?: ExternalEngineAnalysis })?.analysis;
+  
+  return {
+    nodes: analysis?.graph?.nodes ?? [],
+    walls: analysis?.graph?.walls ?? [],
+    courses: analysis?.courses?.courses ?? [],
+    wallHeight: analysis?.courses?.wall_height ?? 0,
+    courseHeight: analysis?.courses?.course_height ?? 0,
+    thickness: analysis?.graph?.thickness ?? 0,
+  };
+}
+
 // Engine configuration
 // Note: All values are stored in mm in the UI, converted to m when calling API
 export interface EngineConfig {

@@ -1,10 +1,13 @@
 /**
  * ExternalEngineRenderer - Renders 3D geometry from external ICF engine analysis
  * 
- * This component:
- * 1. Renders walls from analysis.graph.walls[] using offsets.left/right or fallback to axis.u
- * 2. Renders course bands/markers at each course.z1
- * 3. Shows shift markers for pattern "B" courses
+ * This component renders ONLY from normalized external engine data.
+ * No fallback to internal calculations - if data is empty, nothing renders.
+ * 
+ * It renders:
+ * 1. Walls from normalizedAnalysis.walls[] using offsets.left/right or fallback to axis.u
+ * 2. Course bands/markers at each course height
+ * 3. Shift markers for pattern "B" courses
  * 4. Handles wall selection on click
  */
 
@@ -12,10 +15,10 @@ import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { ThreeEvent } from '@react-three/fiber';
 import { Text } from '@react-three/drei';
-import { ExternalEngineAnalysis, GraphWall, Course, Vec3 } from '@/types/external-engine';
+import { NormalizedExternalAnalysis, GraphWall, Course, Vec3 } from '@/types/external-engine';
 
 interface ExternalEngineRendererProps {
-  analysis: ExternalEngineAnalysis;
+  normalizedAnalysis: NormalizedExternalAnalysis;
   selectedWallId: string | null;
   onWallClick?: (wallId: string) => void;
   showCourseMarkers?: boolean;
@@ -233,7 +236,7 @@ function ShiftArrows({
 }
 
 export function ExternalEngineRenderer({
-  analysis,
+  normalizedAnalysis,
   selectedWallId,
   onWallClick,
   showCourseMarkers = true,
@@ -241,21 +244,28 @@ export function ExternalEngineRenderer({
 }: ExternalEngineRendererProps) {
   const groupRef = useRef<THREE.Group>(null);
 
+  // Destructure normalized data (all have safe defaults)
+  const { nodes, walls, courses, wallHeight, thickness } = normalizedAnalysis;
+
   // Build node position map
   const nodesMap = useMemo(() => {
     const map = new Map<string, Vec3>();
-    for (const node of analysis.graph.nodes) {
+    for (const node of nodes) {
       map.set(node.id, node.position);
     }
     return map;
-  }, [analysis.graph.nodes]);
+  }, [nodes]);
 
   // Calculate bounds for course bands
   const bounds = useMemo(() => {
+    if (nodes.length === 0) {
+      return { minX: 0, maxX: 10, minZ: 0, maxZ: 10 };
+    }
+
     let minX = Infinity, maxX = -Infinity;
     let minZ = Infinity, maxZ = -Infinity;
 
-    for (const node of analysis.graph.nodes) {
+    for (const node of nodes) {
       minX = Math.min(minX, node.position.x);
       maxX = Math.max(maxX, node.position.x);
       minZ = Math.min(minZ, node.position.y); // y in 2D = z in 3D
@@ -263,12 +273,10 @@ export function ExternalEngineRenderer({
     }
 
     return { minX, maxX, minZ, maxZ };
-  }, [analysis.graph.nodes]);
+  }, [nodes]);
 
   // Scale factor based on units (assume meters for now)
   const scale = 1;
-  const wallHeight = analysis.courses.wall_height * scale;
-  const thickness = analysis.graph.thickness * scale;
 
   // Handle wall click
   const handleClick = (e: ThreeEvent<MouseEvent>, wallId: string) => {
@@ -279,7 +287,7 @@ export function ExternalEngineRenderer({
   return (
     <group ref={groupRef} scale={[scale, scale, scale]}>
       {/* Render walls */}
-      {analysis.graph.walls.map((wall) => {
+      {walls.map((wall) => {
         const isSelected = wall.id === selectedWallId;
         
         // Try to create mesh from offsets first
@@ -312,7 +320,7 @@ export function ExternalEngineRenderer({
       })}
 
       {/* Render node spheres */}
-      {analysis.graph.nodes.map((node) => (
+      {nodes.map((node) => (
         <mesh
           key={node.id}
           position={[node.position.x, 0.1, node.position.y]}
@@ -323,15 +331,15 @@ export function ExternalEngineRenderer({
       ))}
 
       {/* Course bands */}
-      {showCourseMarkers && (
-        <CourseBands courses={analysis.courses.courses} bounds={bounds} />
+      {showCourseMarkers && courses.length > 0 && (
+        <CourseBands courses={courses} bounds={bounds} />
       )}
 
       {/* Shift arrows for pattern B */}
-      {showShiftArrows && (
+      {showShiftArrows && courses.length > 0 && (
         <ShiftArrows
-          walls={analysis.graph.walls}
-          courses={analysis.courses.courses}
+          walls={walls}
+          courses={courses}
           nodes={nodesMap}
         />
       )}

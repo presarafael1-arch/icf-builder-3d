@@ -1,19 +1,24 @@
 /**
  * Hook for managing external ICF engine state and API calls
+ * 
+ * External Engine is the "source of truth" - no fallback to internal rendering.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   EngineMode,
   ExternalEngineAnalysis,
+  NormalizedExternalAnalysis,
   EngineConfig,
   DEFAULT_ENGINE_CONFIG,
+  normalizeExternalAnalysis,
 } from '@/types/external-engine';
 
 interface UseExternalEngineResult {
   engineMode: EngineMode;
   setEngineMode: (mode: EngineMode) => void;
   analysis: ExternalEngineAnalysis | null;
+  normalizedAnalysis: NormalizedExternalAnalysis;
   isLoading: boolean;
   error: string | null;
   selectedWallId: string | null;
@@ -29,6 +34,16 @@ interface UseExternalEngineResult {
 // Persistence keys for localStorage
 const ENGINE_MODE_KEY = 'omni-icf-engine-mode';
 const ENGINE_CONFIG_KEY = 'omni-icf-engine-config';
+
+// Empty normalized analysis (safe defaults)
+const EMPTY_NORMALIZED: NormalizedExternalAnalysis = {
+  nodes: [],
+  walls: [],
+  courses: [],
+  wallHeight: 0,
+  courseHeight: 0,
+  thickness: 0,
+};
 
 // Load config from localStorage or use defaults
 function loadPersistedConfig(): EngineConfig {
@@ -54,11 +69,20 @@ export function useExternalEngine(): UseExternalEngineResult {
   });
 
   const [analysis, setAnalysis] = useState<ExternalEngineAnalysis | null>(null);
+  const [normalizedAnalysis, setNormalizedAnalysis] = useState<NormalizedExternalAnalysis>(EMPTY_NORMALIZED);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [config, setConfigState] = useState<EngineConfig>(loadPersistedConfig);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
+
+  // Clear analysis when switching to external mode (no fallback to old data)
+  useEffect(() => {
+    if (engineMode === 'external') {
+      // When switching to external mode, clear any stale analysis to force fresh import
+      console.log('[ExternalEngine] Mode changed to external, ensuring clean state');
+    }
+  }, [engineMode]);
 
   // Persist engine mode
   const setEngineMode = useCallback((mode: EngineMode) => {
@@ -179,16 +203,23 @@ export function useExternalEngine(): UseExternalEngineResult {
         throw new Error(`Erro do motor (${response.status}): ${errorText}`);
       }
 
-      const result: ExternalEngineAnalysis = await response.json();
+      const rawData = await response.json();
       
-      console.log('[ExternalEngine] Analysis received:', {
-        nodesCount: result.graph.nodes.length,
-        wallsCount: result.graph.walls.length,
-        coursesCount: result.courses.count,
-        thickness: result.graph.thickness,
+      // Normalize the response using the wrapper structure: data.analysis.graph/courses
+      const normalized = normalizeExternalAnalysis(rawData);
+      
+      console.log('[ExternalEngine] Analysis received (normalized):', {
+        nodesCount: normalized.nodes.length,
+        wallsCount: normalized.walls.length,
+        coursesCount: normalized.courses.length,
+        wallHeight: normalized.wallHeight,
+        thickness: normalized.thickness,
       });
 
+      // Store both raw and normalized
+      const result: ExternalEngineAnalysis = rawData.analysis || rawData;
       setAnalysis(result);
+      setNormalizedAnalysis(normalized);
       return result;
     } catch (err) {
       let message: string;
@@ -210,6 +241,7 @@ export function useExternalEngine(): UseExternalEngineResult {
   // Clear analysis data
   const clearAnalysis = useCallback(() => {
     setAnalysis(null);
+    setNormalizedAnalysis(EMPTY_NORMALIZED);
     setSelectedWallId(null);
     setError(null);
   }, []);
@@ -218,6 +250,7 @@ export function useExternalEngine(): UseExternalEngineResult {
     engineMode,
     setEngineMode,
     analysis,
+    normalizedAnalysis,
     isLoading,
     error,
     selectedWallId,
