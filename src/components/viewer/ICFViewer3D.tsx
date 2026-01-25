@@ -26,7 +26,7 @@ import { SideStripeOverlays } from './SideStripeOverlays';
 import { ExternalEngineRenderer } from './ExternalEngineRenderer';
 import { usePanelGeometry } from '@/hooks/usePanelGeometry';
 import { CoreConcreteMm, ExtendedPanelData, PanelOverride } from '@/types/panel-selection';
-import { EngineMode, ExternalEngineAnalysis } from '@/types/external-engine';
+import { EngineMode, ExternalEngineAnalysis, NormalizedExternalAnalysis } from '@/types/external-engine';
 
 // Panel counts by type for legend
 export interface PanelCounts {
@@ -1926,6 +1926,7 @@ interface ICFViewer3DProps {
   // External engine mode
   engineMode?: EngineMode;
   externalAnalysis?: ExternalEngineAnalysis | null;
+  normalizedExternalAnalysis?: NormalizedExternalAnalysis;
   externalSelectedWallId?: string | null;
   onExternalWallClick?: (wallId: string) => void;
 }
@@ -1948,6 +1949,7 @@ export function ICFViewer3D({
   // External engine props
   engineMode = 'internal',
   externalAnalysis,
+  normalizedExternalAnalysis,
   externalSelectedWallId,
   onExternalWallClick,
 }: ICFViewer3DProps) {
@@ -1972,8 +1974,11 @@ export function ICFViewer3D({
 
   const showPanelsMode = settings.viewMode === 'panels' || settings.viewMode === 'both';
 
-  // Check if we're in external engine mode with valid analysis
-  const isExternalMode = engineMode === 'external' && externalAnalysis !== null && externalAnalysis !== undefined;
+  // External mode: ONLY render from external engine - NO fallback to internal
+  const isExternalMode = engineMode === 'external';
+  
+  // Check if we have external data to render
+  const hasExternalData = normalizedExternalAnalysis && normalizedExternalAnalysis.walls.length > 0;
 
   return (
     <div className={`viewer-container ${className} relative`}>
@@ -1982,7 +1987,7 @@ export function ICFViewer3D({
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3 }}
         style={{ background: 'transparent' }}
       >
-        {/* Render external engine geometry when in external mode */}
+        {/* External mode: render ONLY from external engine or show empty state */}
         {isExternalMode ? (
           <>
             <PerspectiveCamera makeDefault position={[20, 15, 20]} fov={50} />
@@ -2016,13 +2021,16 @@ export function ICFViewer3D({
               />
             )}
 
-            <ExternalEngineRenderer
-              analysis={externalAnalysis}
-              selectedWallId={externalSelectedWallId || null}
-              onWallClick={onExternalWallClick}
-              showCourseMarkers={true}
-              showShiftArrows={true}
-            />
+            {/* Only render when we have external data - NO fallback */}
+            {hasExternalData && normalizedExternalAnalysis && (
+              <ExternalEngineRenderer
+                normalizedAnalysis={normalizedExternalAnalysis}
+                selectedWallId={externalSelectedWallId || null}
+                onWallClick={onExternalWallClick}
+                showCourseMarkers={true}
+                showShiftArrows={true}
+              />
+            )}
 
             <Environment preset="city" />
           </>
@@ -2069,14 +2077,29 @@ export function ICFViewer3D({
       )}
 
       {/* External mode indicator */}
-      {isExternalMode && (
+      {isExternalMode && hasExternalData && normalizedExternalAnalysis && (
         <div className="absolute top-4 right-4 z-10 rounded-md bg-primary/20 backdrop-blur px-3 py-2 text-xs font-mono text-primary border border-primary/30">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
             Motor Externo
           </div>
           <div className="mt-1 text-muted-foreground">
-            {externalAnalysis.graph.walls.length} paredes | {externalAnalysis.courses.count} fiadas
+            {normalizedExternalAnalysis.walls.length} paredes | {normalizedExternalAnalysis.courses.length} fiadas
+          </div>
+        </div>
+      )}
+
+      {/* External mode: empty state placeholder */}
+      {isExternalMode && !hasExternalData && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="bg-background/90 backdrop-blur-sm border border-border rounded-lg p-6 text-center max-w-sm">
+            <div className="text-muted-foreground mb-2">
+              <svg className="h-12 w-12 mx-auto opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-foreground">Sem dados do motor externo</p>
+            <p className="text-xs text-muted-foreground mt-1">Importe um ficheiro DXF para visualizar a geometria</p>
           </div>
         </div>
       )}
