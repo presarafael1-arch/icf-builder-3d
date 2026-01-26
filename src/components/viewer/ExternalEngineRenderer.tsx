@@ -701,8 +701,18 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   // Both surfaces use FULL color (yellow) as fallback base color
   const baseColor = COLORS.PANEL_FULL;
   
-  // Stripe color depends on wall type
-  const stripeColor = isExteriorWall ? COLORS.STRIPE_EXTERIOR : COLORS.STRIPE_INTERIOR;
+  // ============= KEY FIX: Stripe colors per-side for fallback =============
+  // EXTERIOR WALL:
+  //   - Exterior side (left or right depending on exteriorSide) → BLUE
+  //   - Interior side → WHITE
+  // INTERIOR WALL:
+  //   - Both sides → WHITE
+  const leftStripeColor = isExteriorWall && exteriorSide === 'left' 
+    ? COLORS.STRIPE_EXTERIOR 
+    : COLORS.STRIPE_INTERIOR;
+  const rightStripeColor = isExteriorWall && exteriorSide === 'right' 
+    ? COLORS.STRIPE_EXTERIOR 
+    : COLORS.STRIPE_INTERIOR;
   
   // Course lines
   const courseLines = courses.map(course => {
@@ -793,7 +803,7 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
         </bufferGeometry>
         <meshBasicMaterial
-          color={stripeColor}
+          color={leftStripeColor}
           transparent
           opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
@@ -821,7 +831,7 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
         </bufferGeometry>
         <meshBasicMaterial
-          color={stripeColor}
+          color={leftStripeColor}
           transparent
           opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
@@ -854,7 +864,7 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
         </bufferGeometry>
         <meshBasicMaterial
-          color={stripeColor}
+          color={rightStripeColor}
           transparent
           opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
@@ -882,7 +892,7 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
         </bufferGeometry>
         <meshBasicMaterial
-          color={stripeColor}
+          color={rightStripeColor}
           transparent
           opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
