@@ -17,17 +17,7 @@ import { useMemo, useRef, useState, useEffect } from 'react';
 import * as THREE from 'three';
 import { ThreeEvent } from '@react-three/fiber';
 import { Text, Html, Line } from '@react-three/drei';
-import { NormalizedExternalAnalysis, GraphWall, Course, GraphNode } from '@/types/external-engine';
-
-// ===== Panel Types (from backend) =====
-interface EnginePanel {
-  wall_id: string;
-  course: number;
-  x0: number;
-  x1: number;
-  type: 'FULL' | 'CUT';
-  cut_reason?: string;
-}
+import { NormalizedExternalAnalysis, GraphWall, Course, GraphNode, EnginePanel, Vec3 } from '@/types/external-engine';
 
 interface ExternalEngineRendererProps {
   normalizedAnalysis: NormalizedExternalAnalysis;
@@ -35,7 +25,6 @@ interface ExternalEngineRendererProps {
   onWallClick?: (wallId: string) => void;
   showCourseMarkers?: boolean;
   showShiftArrows?: boolean;
-  panels?: EnginePanel[];
 }
 
 // ===== Point Format Helpers =====
@@ -809,6 +798,50 @@ function NoDataPlaceholder() {
   );
 }
 
+// ===== Calculate bounding box offset for auto-centering =====
+
+function calculateCenterOffset(
+  nodes: GraphNode[],
+  walls: GraphWall[]
+): { x: number; y: number } {
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+
+  // Check nodes
+  for (const node of nodes) {
+    const x = px(node.position);
+    const y = py(node.position);
+    if (x !== undefined && y !== undefined) {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  // Check wall offset points
+  for (const wall of walls) {
+    const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
+    const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
+    for (const p of [...leftPts, ...rightPts]) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+
+  if (!isFinite(minX) || !isFinite(minY)) {
+    return { x: 0, y: 0 };
+  }
+
+  // Center offset: negative of centroid
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+
+  return { x: -centerX, y: -centerY };
+}
+
 // ===== Main Component =====
 
 export function ExternalEngineRenderer({
@@ -816,19 +849,57 @@ export function ExternalEngineRenderer({
   selectedWallId,
   onWallClick,
   showCourseMarkers = true,
-  panels: externalPanels,
 }: ExternalEngineRendererProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [skippedCount, setSkippedCount] = useState(0);
 
-  const { nodes, walls, courses, wallHeight, thickness } = normalizedAnalysis;
+  const { nodes, walls, courses, panels, wallHeight, thickness } = normalizedAnalysis;
 
-  // Get panels from prop or empty array
-  const panels = externalPanels ?? [];
+  // Get panels from normalized analysis
   const hasPanels = panels.length > 0;
 
+  // Calculate auto-centering offset for large CAD/UTM coordinates
+  const centerOffset = useMemo(
+    () => calculateCenterOffset(nodes, walls),
+    [nodes, walls]
+  );
+
+  // Apply offset to nodes (for centroid calculation)
+  const adjustedNodes = useMemo(() => {
+    if (centerOffset.x === 0 && centerOffset.y === 0) return nodes;
+    return nodes.map(node => ({
+      ...node,
+      position: {
+        x: (px(node.position) ?? 0) + centerOffset.x,
+        y: (py(node.position) ?? 0) + centerOffset.y,
+        z: (node.position as { z?: number })?.z ?? 0,
+      },
+    }));
+  }, [nodes, centerOffset]);
+
+  // Apply offset to walls
+  const adjustedWalls = useMemo((): GraphWall[] => {
+    if (centerOffset.x === 0 && centerOffset.y === 0) return walls;
+    return walls.map(wall => {
+      const adjustPts = (pts: unknown[]): Vec3[] => {
+        return filterValidPoints(pts).map(p => ({
+          x: p.x + centerOffset.x,
+          y: p.y + centerOffset.y,
+          z: 0,
+        }));
+      };
+      return {
+        ...wall,
+        offsets: {
+          left: adjustPts((wall.offsets?.left as unknown[]) || []),
+          right: adjustPts((wall.offsets?.right as unknown[]) || []),
+        },
+      };
+    });
+  }, [walls, centerOffset]);
+
   // Calculate building centroid for exterior/interior detection
-  const centroid = useMemo(() => calculateCentroid(nodes), [nodes]);
+  const centroid = useMemo(() => calculateCentroid(adjustedNodes), [adjustedNodes]);
 
   // Log for debugging
   useEffect(() => {
@@ -839,19 +910,20 @@ export function ExternalEngineRenderer({
       wallHeight,
       thickness,
       centroid,
+      centerOffset,
     });
-  }, [walls, courses, panels, wallHeight, thickness, centroid]);
+  }, [walls, courses, panels, wallHeight, thickness, centroid, centerOffset]);
 
-  // Calculate bounds for labels
+  // Calculate bounds for labels (use adjusted nodes)
   const bounds = useMemo(() => {
-    if (nodes.length === 0) {
+    if (adjustedNodes.length === 0) {
       return { minX: 0, maxX: 10, minZ: 0, maxZ: 10 };
     }
 
     let minX = Infinity, maxX = -Infinity;
     let minZ = Infinity, maxZ = -Infinity;
 
-    for (const node of nodes) {
+    for (const node of adjustedNodes) {
       const x = px(node.position);
       const y = py(node.position);
 
@@ -868,14 +940,14 @@ export function ExternalEngineRenderer({
     if (!isFinite(minX)) return { minX: 0, maxX: 10, minZ: 0, maxZ: 10 };
 
     return { minX, maxX, minZ, maxZ };
-  }, [nodes]);
+  }, [adjustedNodes]);
 
   // Count skipped walls (invalid geometry)
   const validWallsCount = useMemo(() => {
     let valid = 0;
     let skipped = 0;
 
-    for (const wall of walls) {
+    for (const wall of adjustedWalls) {
       const geom = computeWallGeometry(wall, centroid);
       if (!geom) {
         skipped++;
@@ -885,7 +957,7 @@ export function ExternalEngineRenderer({
     }
 
     return { valid, skipped };
-  }, [walls, centroid]);
+  }, [adjustedWalls, centroid]);
 
   useEffect(() => {
     setSkippedCount(validWallsCount.skipped);
@@ -901,8 +973,8 @@ export function ExternalEngineRenderer({
       {/* Skipped walls warning */}
       {skippedCount > 0 && <SkippedWarning count={skippedCount} />}
 
-      {/* Render walls */}
-      {walls.map((wall) => (
+      {/* Render walls with adjusted coordinates */}
+      {adjustedWalls.map((wall) => (
         <WallMesh
           key={wall.id}
           wall={wall}
@@ -916,8 +988,8 @@ export function ExternalEngineRenderer({
         />
       ))}
 
-      {/* Node spheres */}
-      <NodeSpheres nodes={nodes} />
+      {/* Node spheres with adjusted positions */}
+      <NodeSpheres nodes={adjustedNodes} />
 
       {/* Course labels */}
       {showCourseMarkers && courses.length > 0 && (
