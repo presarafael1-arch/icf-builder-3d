@@ -717,6 +717,10 @@ export default function ProjectEditor() {
       if (error) throw error;
 
       setWalls([]);
+      
+      // Also clear external engine analysis data
+      clearAnalysis();
+      
       toast({
         title: 'Paredes limpas',
         description: 'O projeto ficou sem paredes. Pode reimportar um DXF.'
