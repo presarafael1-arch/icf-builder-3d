@@ -212,6 +212,34 @@ interface WallGeometryData {
 }
 
 // Determine wall exterior status using footprint hull
+// Robust exterior detection using multiple test offsets
+// Tests at 0.25m and 0.5m to handle walls near the footprint boundary
+function chooseOutNormal(
+  mid: Point2D,
+  n: Point2D,
+  outerPoly: Point2D[]
+): { isExterior: boolean; outN: Point2D } {
+  const testEps = [0.25, 0.5]; // meters - test at multiple distances
+  
+  for (const eps of testEps) {
+    const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
+    const pMinus = { x: mid.x - n.x * eps, y: mid.y - n.y * eps };
+    
+    const inPlus = pointInPolygon(pPlus, outerPoly);
+    const inMinus = pointInPolygon(pMinus, outerPoly);
+    
+    if (inPlus !== inMinus) {
+      // If pPlus is INSIDE, then outN points in the opposite direction (-n)
+      // If pMinus is INSIDE, then outN = n
+      const outN = inPlus ? { x: -n.x, y: -n.y } : n;
+      return { isExterior: true, outN };
+    }
+  }
+  
+  // Both sides equal at all offsets → interior partition wall
+  return { isExterior: false, outN: n };
+}
+
 // A wall is exterior if one side is outside the footprint hull
 // Interior/partition walls have both sides inside the hull
 function computeWallGeometry(
@@ -252,45 +280,20 @@ function computeWallGeometry(
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
   
-  // Test points: offset from wall center along the normal
-  const testOffset = 0.05; // 50mm offset to test each side
-  const testLeft = {
-    x: wallCenterMid.x + n2.x * testOffset,
-    y: wallCenterMid.y + n2.y * testOffset,
-  };
-  const testRight = {
-    x: wallCenterMid.x - n2.x * testOffset,
-    y: wallCenterMid.y - n2.y * testOffset,
-  };
+  // Use robust multi-offset detection
+  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull);
   
-  // Check if test points are inside the footprint hull
-  const leftInside = pointInPolygon(testLeft, footprintHull);
-  const rightInside = pointInPolygon(testRight, footprintHull);
-  
-  let isExteriorWall = false;
+  let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
   
-  if (footprintHull.length >= 3) {
-    if (!leftInside && rightInside) {
-      // Left side is outside hull = exterior wall, left is exterior
-      isExteriorWall = true;
-      exteriorSide = 'left';
-    } else if (leftInside && !rightInside) {
-      // Right side is outside hull = exterior wall, right is exterior
-      isExteriorWall = true;
-      exteriorSide = 'right';
-    } else if (!leftInside && !rightInside) {
-      // Both outside (edge case for very thin hull) - use distance to centroid
-      const leftDist = Math.sqrt((testLeft.x - buildingCentroid.x) ** 2 + (testLeft.y - buildingCentroid.y) ** 2);
-      const rightDist = Math.sqrt((testRight.x - buildingCentroid.x) ** 2 + (testRight.y - buildingCentroid.y) ** 2);
-      isExteriorWall = true;
-      exteriorSide = leftDist > rightDist ? 'left' : 'right';
-    }
-    // else: both inside = interior partition wall (isExteriorWall = false)
+  if (isExteriorWall && footprintHull.length >= 3) {
+    // outN points OUTSIDE - compare with n2 to determine which side
+    const dot = outN.x * n2.x + outN.y * n2.y;
+    exteriorSide = dot > 0 ? 'left' : 'right';
   }
   
   // Debug logging
-  console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall}, side: ${exteriorSide}, leftIn: ${leftInside}, rightIn: ${rightInside}`);
+  console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall}, side: ${exteriorSide}, outN: (${outN.x.toFixed(3)}, ${outN.y.toFixed(3)})`);
   
   return {
     leftPts,
@@ -382,10 +385,12 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkin
   const displayColor = isSelected ? COLORS.SELECTED : color;
   
   return (
-    <mesh geometry={geometry}>
+    <mesh geometry={geometry} renderOrder={5}>
       <meshStandardMaterial
         color={displayColor}
         side={THREE.DoubleSide}
+        depthWrite={true}
+        depthTest={true}
       />
     </mesh>
   );
@@ -488,11 +493,11 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
       <meshBasicMaterial
         color={color}
         side={THREE.DoubleSide}
-        depthTest={false}
-        depthWrite={false}
+        depthTest={true}
+        depthWrite={true}
         polygonOffset
-        polygonOffsetFactor={-1}
-        polygonOffsetUnits={-1}
+        polygonOffsetFactor={-2}
+        polygonOffsetUnits={-2}
       />
     </mesh>
   );
@@ -800,10 +805,11 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         <meshBasicMaterial
           color={leftStripeColor}
           side={THREE.DoubleSide}
-          depthWrite={false}
+          depthWrite={true}
+          depthTest={true}
           polygonOffset
-          polygonOffsetFactor={-1}
-          polygonOffsetUnits={-1}
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
         />
       </mesh>
     );
@@ -826,10 +832,11 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         <meshBasicMaterial
           color={leftStripeColor}
           side={THREE.DoubleSide}
-          depthWrite={false}
+          depthWrite={true}
+          depthTest={true}
           polygonOffset
-          polygonOffsetFactor={-1}
-          polygonOffsetUnits={-1}
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
         />
       </mesh>
     );
@@ -857,10 +864,11 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         <meshBasicMaterial
           color={rightStripeColor}
           side={THREE.DoubleSide}
-          depthWrite={false}
+          depthWrite={true}
+          depthTest={true}
           polygonOffset
-          polygonOffsetFactor={-1}
-          polygonOffsetUnits={-1}
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
         />
       </mesh>
     );
@@ -883,10 +891,11 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         <meshBasicMaterial
           color={rightStripeColor}
           side={THREE.DoubleSide}
-          depthWrite={false}
+          depthWrite={true}
+          depthTest={true}
           polygonOffset
-          polygonOffsetFactor={-1}
-          polygonOffsetUnits={-1}
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
         />
       </mesh>
     );
@@ -897,13 +906,13 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   return (
     <group>
       {/* Left surface */}
-      <mesh geometry={leftGeom}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} />
+      <mesh geometry={leftGeom} renderOrder={5}>
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} />
       </mesh>
       
       {/* Right surface */}
-      <mesh geometry={rightGeom}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} />
+      <mesh geometry={rightGeom} renderOrder={5}>
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} />
       </mesh>
       
       {/* Course lines */}
