@@ -41,6 +41,7 @@ const EMPTY_NORMALIZED: NormalizedExternalAnalysis = {
   nodes: [],
   walls: [],
   courses: [],
+  panels: [],
   wallHeight: 0,
   courseHeight: 0,
   thickness: 0,

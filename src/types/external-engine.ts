@@ -71,10 +71,23 @@ export interface CoursesInfo {
   courses: Course[];
 }
 
+// Panel from backend (for panel-level rendering)
+export interface EnginePanel {
+  wall_id: string;
+  course: number;
+  x0: number;
+  x1: number;
+  type: 'FULL' | 'CUT';
+  cut_reason?: string;
+}
+
 // Full analysis result from the external engine
 export interface ExternalEngineAnalysis {
-  graph: LayoutGraph;
-  courses: CoursesInfo;
+  graph?: LayoutGraph;
+  courses?: CoursesInfo;
+  walls?: GraphWall[];
+  panels?: EnginePanel[];
+  meta?: { units?: string };
 }
 
 // Normalized analysis with safe defaults (never undefined)
@@ -82,25 +95,68 @@ export interface NormalizedExternalAnalysis {
   nodes: GraphNode[];
   walls: GraphWall[];
   courses: Course[];
+  panels: EnginePanel[];
   wallHeight: number;
   courseHeight: number;
   thickness: number;
 }
 
 /**
- * Normalize the raw API response to ensure all fields have safe defaults.
- * This handles the nested structure: data.analysis.graph.nodes, etc.
+ * Robust normalizer for the raw API response.
+ * Supports multiple response formats:
+ * - walls at: analysis.graph.walls, analysis.walls, root.walls
+ * - panels at: analysis.panels, root.panels
+ * - courses at: analysis.courses, root.courses
+ * - nodes at: analysis.graph.nodes, root.nodes
  */
 export function normalizeExternalAnalysis(data: unknown): NormalizedExternalAnalysis {
-  const analysis = (data as { analysis?: ExternalEngineAnalysis })?.analysis;
-  
+  const root = (data ?? {}) as Record<string, unknown>;
+  const analysis = (root.analysis ?? {}) as Record<string, unknown>;
+  const graph = (analysis.graph ?? {}) as Record<string, unknown>;
+  const coursesObj = (analysis.courses ?? root.courses ?? {}) as Record<string, unknown>;
+
+  // Walls: try analysis.graph.walls -> analysis.walls -> root.walls
+  const walls = (
+    (graph.walls as GraphWall[]) ??
+    (analysis.walls as GraphWall[]) ??
+    (root.walls as GraphWall[]) ??
+    []
+  );
+
+  // Panels: try analysis.panels -> root.panels
+  const panels = (
+    (analysis.panels as EnginePanel[]) ??
+    (root.panels as EnginePanel[]) ??
+    []
+  );
+
+  // Nodes: try analysis.graph.nodes -> root.nodes
+  const nodes = (
+    (graph.nodes as GraphNode[]) ??
+    (root.nodes as GraphNode[]) ??
+    []
+  );
+
+  // Courses array: try coursesObj.courses -> if coursesObj is an array, use it directly
+  const coursesArray = Array.isArray(coursesObj)
+    ? (coursesObj as Course[])
+    : ((coursesObj.courses as Course[]) ?? []);
+
+  // Height values
+  const wallHeight = (coursesObj.wall_height as number) ?? 0;
+  const courseHeight = (coursesObj.course_height as number) ?? 0;
+  const thickness = (graph.thickness as number) ?? (analysis.thickness as number) ?? (root.thickness as number) ?? 0;
+
+  console.log('[ExternalEngine] walls:', walls.length, 'panels:', panels.length, 'units:', (root.meta as { units?: string })?.units ?? 'n/a');
+
   return {
-    nodes: analysis?.graph?.nodes ?? [],
-    walls: analysis?.graph?.walls ?? [],
-    courses: analysis?.courses?.courses ?? [],
-    wallHeight: analysis?.courses?.wall_height ?? 0,
-    courseHeight: analysis?.courses?.course_height ?? 0,
-    thickness: analysis?.graph?.thickness ?? 0,
+    nodes,
+    walls,
+    courses: coursesArray,
+    panels,
+    wallHeight,
+    courseHeight,
+    thickness,
   };
 }
 
