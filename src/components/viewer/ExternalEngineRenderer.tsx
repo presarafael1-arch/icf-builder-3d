@@ -376,7 +376,15 @@ function PanelOutline({ x0, x1, z0, z1, startPt, u2 }: PanelOutlineProps) {
     new THREE.Vector3(bl.x, z0, bl.y),
   ];
   
-  return <Line points={points} color={COLORS.OUTLINE} lineWidth={1.5} />;
+  return (
+    <Line
+      points={points}
+      color={COLORS.OUTLINE}
+      lineWidth={1.5}
+      depthTest={false}
+      renderOrder={20}
+    />
+  );
 }
 
 // ===== Panel Stripe (Solid stripe overlay) =====
@@ -438,12 +446,13 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
   }, [x0, x1, z0, z1, startPt, u2, n2, offset]);
   
   return (
-    <mesh geometry={geometry} renderOrder={10}>
+    <mesh geometry={geometry} renderOrder={15}>
       <meshBasicMaterial
         color={color}
         transparent
         opacity={STRIPE_OPACITY}
         side={THREE.DoubleSide}
+        depthTest={false}
         depthWrite={false}
         polygonOffset
         polygonOffsetFactor={-1}
