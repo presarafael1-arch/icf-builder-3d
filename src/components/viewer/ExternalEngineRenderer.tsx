@@ -94,47 +94,110 @@ const STRIPE_OPACITY = 0.8;       // 80% opacity
 const STRIPE_OFFSET = 0.002;      // 2mm offset from surface to avoid z-fighting
 
 
-// ===== Compute building centroid from wall midpoints =====
+// ===== Building Footprint Calculation (Convex Hull of Centerline Endpoints) =====
 
-function computeBuildingCentroid(walls: GraphWall[]): { x: number; y: number } {
-  // Calculate centroid from wall centerlines (midpoint between left and right)
-  const centerPoints: Array<{ x: number; y: number }> = [];
+interface Point2D {
+  x: number;
+  y: number;
+}
+
+// Compute convex hull using Graham scan algorithm
+function convexHull(points: Point2D[]): Point2D[] {
+  if (points.length < 3) return points;
+  
+  // Find the point with lowest y (and leftmost if tie)
+  let start = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].y < points[start].y || 
+        (points[i].y === points[start].y && points[i].x < points[start].x)) {
+      start = i;
+    }
+  }
+  
+  const pivot = points[start];
+  
+  // Sort points by polar angle with respect to pivot
+  const sorted = points
+    .filter((_, i) => i !== start)
+    .map(p => ({ point: p, angle: Math.atan2(p.y - pivot.y, p.x - pivot.x) }))
+    .sort((a, b) => a.angle - b.angle)
+    .map(p => p.point);
+  
+  // Cross product to determine turn direction
+  const cross = (o: Point2D, a: Point2D, b: Point2D) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  
+  const hull: Point2D[] = [pivot];
+  
+  for (const p of sorted) {
+    while (hull.length > 1 && cross(hull[hull.length - 2], hull[hull.length - 1], p) <= 0) {
+      hull.pop();
+    }
+    hull.push(p);
+  }
+  
+  return hull;
+}
+
+// Point in polygon test (ray casting)
+function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
+  if (polygon.length < 3) return false;
+  
+  let inside = false;
+  const n = polygon.length;
+  
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    
+    if (((yi > point.y) !== (yj > point.y)) &&
+        (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  
+  return inside;
+}
+
+// Compute the building footprint as convex hull of wall centerline endpoints
+function computeBuildingFootprint(walls: GraphWall[]): { 
+  centroid: Point2D; 
+  hull: Point2D[];
+} {
+  const centerlineEndpoints: Point2D[] = [];
   
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
     
     if (leftPts.length >= 2 && rightPts.length >= 2) {
-      // Get midpoint of each polyline
-      const leftMid = {
-        x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
-        y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
+      // Calculate centerline points (midpoint between left and right at each end)
+      const startCenter = {
+        x: (leftPts[0].x + rightPts[0].x) / 2,
+        y: (leftPts[0].y + rightPts[0].y) / 2,
       };
-      const rightMid = {
-        x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
-        y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
+      const endCenter = {
+        x: (leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2,
+        y: (leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2,
       };
-      
-      // Wall centerline midpoint
-      const wallCenter = {
-        x: (leftMid.x + rightMid.x) / 2,
-        y: (leftMid.y + rightMid.y) / 2,
-      };
-      centerPoints.push(wallCenter);
+      centerlineEndpoints.push(startCenter, endCenter);
     }
   }
   
-  if (centerPoints.length === 0) {
-    return { x: 0, y: 0 };
+  if (centerlineEndpoints.length === 0) {
+    return { centroid: { x: 0, y: 0 }, hull: [] };
   }
   
-  // Calculate centroid as average of all center points
+  // Calculate centroid
   const centroid = {
-    x: centerPoints.reduce((sum, p) => sum + p.x, 0) / centerPoints.length,
-    y: centerPoints.reduce((sum, p) => sum + p.y, 0) / centerPoints.length,
+    x: centerlineEndpoints.reduce((sum, p) => sum + p.x, 0) / centerlineEndpoints.length,
+    y: centerlineEndpoints.reduce((sum, p) => sum + p.y, 0) / centerlineEndpoints.length,
   };
   
-  return centroid;
+  // Compute convex hull of centerline endpoints
+  const hull = convexHull(centerlineEndpoints);
+  
+  return { centroid, hull };
 }
 
 // ===== Wall Geometry Data =====
@@ -149,11 +212,13 @@ interface WallGeometryData {
   exteriorSide: 'left' | 'right' | null;  // Which side faces exterior
 }
 
-// Determine wall exterior status using centroid-based distance
-// The side further from the building centroid is the exterior side
+// Determine wall exterior status using footprint hull
+// A wall is exterior if one side is outside the footprint hull
+// Interior/partition walls have both sides inside the hull
 function computeWallGeometry(
   wall: GraphWall,
-  buildingCentroid: { x: number; y: number }
+  footprintHull: Point2D[],
+  buildingCentroid: Point2D
 ): WallGeometryData | null {
   const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
   const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
@@ -182,43 +247,51 @@ function computeWallGeometry(
     Math.pow(leftPts[leftPts.length - 1].y - leftPts[0].y, 2)
   );
   
-  // Midpoint of left and right polylines
-  const leftMid = {
-    x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
-    y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
-  };
-  const rightMid = {
-    x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
-    y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
+  // Calculate centerline midpoint (for the wall's center position)
+  const wallCenterMid = {
+    x: (leftPts[0].x + leftPts[leftPts.length - 1].x + rightPts[0].x + rightPts[rightPts.length - 1].x) / 4,
+    y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
   
-  // Calculate distance from each side midpoint to building centroid
-  const leftDist = Math.sqrt(
-    (leftMid.x - buildingCentroid.x) ** 2 + 
-    (leftMid.y - buildingCentroid.y) ** 2
-  );
-  const rightDist = Math.sqrt(
-    (rightMid.x - buildingCentroid.x) ** 2 + 
-    (rightMid.y - buildingCentroid.y) ** 2
-  );
+  // Test points: offset from wall center along the normal
+  const testOffset = 0.05; // 50mm offset to test each side
+  const testLeft = {
+    x: wallCenterMid.x + n2.x * testOffset,
+    y: wallCenterMid.y + n2.y * testOffset,
+  };
+  const testRight = {
+    x: wallCenterMid.x - n2.x * testOffset,
+    y: wallCenterMid.y - n2.y * testOffset,
+  };
   
-  // Threshold for considering a wall as exterior
-  // If one side is significantly further from center than the other
-  const DISTANCE_THRESHOLD = 0.01; // 10mm difference
-  const distanceDiff = Math.abs(leftDist - rightDist);
+  // Check if test points are inside the footprint hull
+  const leftInside = pointInPolygon(testLeft, footprintHull);
+  const rightInside = pointInPolygon(testRight, footprintHull);
   
   let isExteriorWall = false;
   let exteriorSide: 'left' | 'right' | null = null;
   
-  if (distanceDiff > DISTANCE_THRESHOLD) {
-    // One side is further from center = exterior wall
-    isExteriorWall = true;
-    exteriorSide = leftDist > rightDist ? 'left' : 'right';
+  if (footprintHull.length >= 3) {
+    if (!leftInside && rightInside) {
+      // Left side is outside hull = exterior wall, left is exterior
+      isExteriorWall = true;
+      exteriorSide = 'left';
+    } else if (leftInside && !rightInside) {
+      // Right side is outside hull = exterior wall, right is exterior
+      isExteriorWall = true;
+      exteriorSide = 'right';
+    } else if (!leftInside && !rightInside) {
+      // Both outside (edge case for very thin hull) - use distance to centroid
+      const leftDist = Math.sqrt((testLeft.x - buildingCentroid.x) ** 2 + (testLeft.y - buildingCentroid.y) ** 2);
+      const rightDist = Math.sqrt((testRight.x - buildingCentroid.x) ** 2 + (testRight.y - buildingCentroid.y) ** 2);
+      isExteriorWall = true;
+      exteriorSide = leftDist > rightDist ? 'left' : 'right';
+    }
+    // else: both inside = interior partition wall (isExteriorWall = false)
   }
-  // else: both sides are equidistant = interior partition wall
   
   // Debug logging
-  console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall}, side: ${exteriorSide}, leftDist: ${leftDist.toFixed(3)}, rightDist: ${rightDist.toFixed(3)}, diff: ${distanceDiff.toFixed(3)}`);
+  console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall}, side: ${exteriorSide}, leftIn: ${leftInside}, rightIn: ${rightInside}`);
   
   return {
     leftPts,
@@ -872,7 +945,8 @@ interface WallRendererProps {
   wallHeight: number;
   courses: Course[];
   panels: EnginePanel[];
-  buildingCentroid: { x: number; y: number };
+  footprintHull: Point2D[];
+  buildingCentroid: Point2D;
   coreThickness: number;
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
@@ -883,14 +957,15 @@ function WallRenderer({
   wallHeight,
   courses,
   panels,
+  footprintHull,
   buildingCentroid,
   coreThickness,
   isSelected,
   onWallClick,
 }: WallRendererProps) {
   const wallGeom = useMemo(
-    () => computeWallGeometry(wall, buildingCentroid),
-    [wall, buildingCentroid]
+    () => computeWallGeometry(wall, footprintHull, buildingCentroid),
+    [wall, footprintHull, buildingCentroid]
   );
 
   if (!wallGeom) return null;
@@ -1066,11 +1141,12 @@ export function ExternalEngineRenderer({
     });
   }, [walls, centerOffset]);
 
-  // Compute building centroid for exterior detection
-  const buildingCentroid = useMemo(
-    () => computeBuildingCentroid(adjustedWalls),
+  // Compute building footprint (hull + centroid) for exterior detection
+  const buildingFootprint = useMemo(
+    () => computeBuildingFootprint(adjustedWalls),
     [adjustedWalls]
   );
+  const { hull: footprintHull, centroid: buildingCentroid } = buildingFootprint;
 
   // Log for debugging
   useEffect(() => {
@@ -1129,7 +1205,7 @@ export function ExternalEngineRenderer({
     let skipped = 0;
 
     for (const wall of adjustedWalls) {
-      const geom = computeWallGeometry(wall, buildingCentroid);
+      const geom = computeWallGeometry(wall, footprintHull, buildingCentroid);
       if (!geom) skipped++;
       else valid++;
     }
@@ -1157,6 +1233,7 @@ export function ExternalEngineRenderer({
           wallHeight={wallHeight}
           courses={courses}
           panels={panels}
+          footprintHull={footprintHull}
           buildingCentroid={buildingCentroid}
           coreThickness={coreThickness}
           isSelected={wall.id === selectedWallId}
