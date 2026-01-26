@@ -504,6 +504,12 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
 }
 
 // ===== Single Panel (Dual Skin) =====
+// 
+// KEY FIX: For EXTERIOR walls (perimeter), we have TWO skins:
+// - Exterior skin (facing outside building): BLUE overlay
+// - Interior skin (facing inside building): WHITE overlay
+// 
+// For INTERIOR walls (partitions), BOTH skins get WHITE overlay
 
 interface DualSkinPanelProps {
   panel: EnginePanel;
@@ -521,48 +527,47 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
   const x0 = panel.x0;
   const x1 = panel.x1;
   
-  // Panel base color
+  // Panel base color (FULL=yellow, CUT=red) - same for both skins
   const panelColor = panel.type === 'FULL' ? COLORS.PANEL_FULL : COLORS.PANEL_CUT;
-  
-  // Calculate skin start points
-  // Exterior skin: on the side facing out
-  // Interior skin: on the side facing in
-  // Separation = coreThickness (between inner faces of EPS panels)
   
   // Get the polyline start points for left and right
   const leftStart = leftPts[0];
   const rightStart = rightPts[0];
   
   // Determine which polyline is exterior and which is interior
+  // based on which side faces outside the building
   let extStart: { x: number; y: number };
   let intStart: { x: number; y: number };
-  let extNormal: { x: number; y: number };
   
   if (exteriorSide === 'left') {
     extStart = leftStart;
     intStart = rightStart;
-    extNormal = n2; // Points in direction of left
   } else if (exteriorSide === 'right') {
     extStart = rightStart;
     intStart = leftStart;
-    extNormal = { x: -n2.x, y: -n2.y }; // Points in direction of right
   } else {
-    // Interior wall: both sides are "interior" colored
+    // Interior/partition wall: assign left as "ext" and right as "int" arbitrarily
+    // Both will get white stripes anyway
     extStart = leftStart;
     intStart = rightStart;
-    extNormal = n2;
   }
   
-  // Stripe color: blue for exterior walls, white for interior walls
-  const stripeColor = isExteriorWall ? COLORS.STRIPE_EXTERIOR : COLORS.STRIPE_INTERIOR;
-  
-  // Normal for each skin (for stripe offset)
+  // Normal directions for stripe offset positioning
   const extNormalDir = exteriorSide === 'right' ? { x: -n2.x, y: -n2.y } : n2;
   const intNormalDir = exteriorSide === 'right' ? n2 : { x: -n2.x, y: -n2.y };
   
+  // ============= KEY FIX: Stripe colors per-skin =============
+  // EXTERIOR WALL:
+  //   - Exterior skin (facing OUT) → BLUE stripe
+  //   - Interior skin (facing IN)  → WHITE stripe
+  // INTERIOR WALL (partition):
+  //   - Both skins → WHITE stripe
+  const exteriorSkinStripeColor = isExteriorWall ? COLORS.STRIPE_EXTERIOR : COLORS.STRIPE_INTERIOR;
+  const interiorSkinStripeColor = COLORS.STRIPE_INTERIOR; // Always white for the inside-facing skin
+  
   return (
     <group>
-      {/* ===== Exterior Skin ===== */}
+      {/* ===== Exterior Skin (the panel facing OUTSIDE the building) ===== */}
       <PanelSkin
         x0={x0}
         x1={x1}
@@ -590,7 +595,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={extStart}
         u2={u2}
         n2={extNormalDir}
-        color={stripeColor}
+        color={exteriorSkinStripeColor}
         offset={STRIPE_OFFSET}
       />
       {/* Stripe on back face of exterior skin */}
@@ -602,11 +607,11 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={extStart}
         u2={u2}
         n2={extNormalDir}
-        color={stripeColor}
+        color={exteriorSkinStripeColor}
         offset={-STRIPE_OFFSET}
       />
       
-      {/* ===== Interior Skin ===== */}
+      {/* ===== Interior Skin (the panel facing INSIDE the building) ===== */}
       <PanelSkin
         x0={x0}
         x1={x1}
@@ -625,7 +630,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={intStart}
         u2={u2}
       />
-      {/* Stripe on front face of interior skin */}
+      {/* Stripe on front face of interior skin - ALWAYS WHITE */}
       <PanelStripe
         x0={x0}
         x1={x1}
@@ -634,10 +639,10 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={intStart}
         u2={u2}
         n2={intNormalDir}
-        color={stripeColor}
+        color={interiorSkinStripeColor}
         offset={STRIPE_OFFSET}
       />
-      {/* Stripe on back face of interior skin */}
+      {/* Stripe on back face of interior skin - ALWAYS WHITE */}
       <PanelStripe
         x0={x0}
         x1={x1}
@@ -646,7 +651,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={intStart}
         u2={u2}
         n2={intNormalDir}
-        color={stripeColor}
+        color={interiorSkinStripeColor}
         offset={-STRIPE_OFFSET}
       />
     </group>
