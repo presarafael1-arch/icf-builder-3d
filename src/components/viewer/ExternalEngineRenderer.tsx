@@ -93,68 +93,48 @@ const STRIPE_HEIGHT_RATIO = 0.85; // 85% of course height
 const STRIPE_OPACITY = 0.8;       // 80% opacity
 const STRIPE_OFFSET = 0.002;      // 2mm offset from surface to avoid z-fighting
 
-// ===== Point-in-Polygon for exterior detection =====
 
-function pointInPolygon(px: number, py: number, polygon: Array<{ x: number; y: number }>): boolean {
-  if (polygon.length < 3) return false;
-  
-  let inside = false;
-  const n = polygon.length;
-  
-  for (let i = 0, j = n - 1; i < n; j = i++) {
-    const xi = polygon[i].x, yi = polygon[i].y;
-    const xj = polygon[j].x, yj = polygon[j].y;
-    
-    if (((yi > py) !== (yj > py)) &&
-        (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-  
-  return inside;
-}
+// ===== Compute building centroid from wall midpoints =====
 
-// ===== Compute outer polygon from wall offsets =====
-
-function computeOuterPolygon(walls: GraphWall[]): Array<{ x: number; y: number }> {
-  // Collect all exterior points from walls
-  const allPoints: Array<{ x: number; y: number }> = [];
+function computeBuildingCentroid(walls: GraphWall[]): { x: number; y: number } {
+  // Calculate centroid from wall centerlines (midpoint between left and right)
+  const centerPoints: Array<{ x: number; y: number }> = [];
   
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
-    allPoints.push(...leftPts, ...rightPts);
-  }
-  
-  if (allPoints.length < 3) return [];
-  
-  // Compute convex hull (Graham scan)
-  const sorted = allPoints.slice().sort((a, b) => a.x === b.x ? a.y - b.y : a.x - b.x);
-  
-  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
-    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  
-  const lower: Array<{ x: number; y: number }> = [];
-  for (const p of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
-      lower.pop();
+    
+    if (leftPts.length >= 2 && rightPts.length >= 2) {
+      // Get midpoint of each polyline
+      const leftMid = {
+        x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
+        y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
+      };
+      const rightMid = {
+        x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
+        y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
+      };
+      
+      // Wall centerline midpoint
+      const wallCenter = {
+        x: (leftMid.x + rightMid.x) / 2,
+        y: (leftMid.y + rightMid.y) / 2,
+      };
+      centerPoints.push(wallCenter);
     }
-    lower.push(p);
   }
   
-  const upper: Array<{ x: number; y: number }> = [];
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const p = sorted[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
-      upper.pop();
-    }
-    upper.push(p);
+  if (centerPoints.length === 0) {
+    return { x: 0, y: 0 };
   }
   
-  lower.pop();
-  upper.pop();
+  // Calculate centroid as average of all center points
+  const centroid = {
+    x: centerPoints.reduce((sum, p) => sum + p.x, 0) / centerPoints.length,
+    y: centerPoints.reduce((sum, p) => sum + p.y, 0) / centerPoints.length,
+  };
   
-  return [...lower, ...upper];
+  return centroid;
 }
 
 // ===== Wall Geometry Data =====
@@ -169,10 +149,11 @@ interface WallGeometryData {
   exteriorSide: 'left' | 'right' | null;  // Which side faces exterior
 }
 
-// Determine wall exterior status using outer polygon
+// Determine wall exterior status using centroid-based distance
+// The side further from the building centroid is the exterior side
 function computeWallGeometry(
   wall: GraphWall,
-  outerPolygon: Array<{ x: number; y: number }>
+  buildingCentroid: { x: number; y: number }
 ): WallGeometryData | null {
   const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
   const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
@@ -201,9 +182,6 @@ function computeWallGeometry(
     Math.pow(leftPts[leftPts.length - 1].y - leftPts[0].y, 2)
   );
   
-  // Determine exterior status using outer polygon
-  const EPS = 0.05; // 50mm test offset
-  
   // Midpoint of left and right polylines
   const leftMid = {
     x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
@@ -214,43 +192,33 @@ function computeWallGeometry(
     y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
   };
   
-  // Wall midpoint
-  const wallMid = {
-    x: (leftMid.x + rightMid.x) / 2,
-    y: (leftMid.y + rightMid.y) / 2,
-  };
+  // Calculate distance from each side midpoint to building centroid
+  const leftDist = Math.sqrt(
+    (leftMid.x - buildingCentroid.x) ** 2 + 
+    (leftMid.y - buildingCentroid.y) ** 2
+  );
+  const rightDist = Math.sqrt(
+    (rightMid.x - buildingCentroid.x) ** 2 + 
+    (rightMid.y - buildingCentroid.y) ** 2
+  );
   
-  // Test points perpendicular to wall
-  const testLeft = { x: wallMid.x + n2.x * EPS, y: wallMid.y + n2.y * EPS };
-  const testRight = { x: wallMid.x - n2.x * EPS, y: wallMid.y - n2.y * EPS };
-  
-  const leftInside = outerPolygon.length >= 3 ? pointInPolygon(testLeft.x, testLeft.y, outerPolygon) : true;
-  const rightInside = outerPolygon.length >= 3 ? pointInPolygon(testRight.x, testRight.y, outerPolygon) : true;
+  // Threshold for considering a wall as exterior
+  // If one side is significantly further from center than the other
+  const DISTANCE_THRESHOLD = 0.01; // 10mm difference
+  const distanceDiff = Math.abs(leftDist - rightDist);
   
   let isExteriorWall = false;
   let exteriorSide: 'left' | 'right' | null = null;
   
-  if (!leftInside && rightInside) {
-    // Left side is outside polygon = exterior wall, left faces out
+  if (distanceDiff > DISTANCE_THRESHOLD) {
+    // One side is further from center = exterior wall
     isExteriorWall = true;
-    exteriorSide = 'left';
-  } else if (leftInside && !rightInside) {
-    // Right side is outside = exterior wall, right faces out
-    isExteriorWall = true;
-    exteriorSide = 'right';
-  } else if (!leftInside && !rightInside) {
-    // Both outside (shouldn't happen in normal geometry)
-    isExteriorWall = true;
-    // Use distance to polygon centroid as fallback
-    const polyCentroid = outerPolygon.length >= 3 
-      ? { x: outerPolygon.reduce((s, p) => s + p.x, 0) / outerPolygon.length, 
-          y: outerPolygon.reduce((s, p) => s + p.y, 0) / outerPolygon.length }
-      : { x: 0, y: 0 };
-    const leftDist = Math.sqrt((leftMid.x - polyCentroid.x) ** 2 + (leftMid.y - polyCentroid.y) ** 2);
-    const rightDist = Math.sqrt((rightMid.x - polyCentroid.x) ** 2 + (rightMid.y - polyCentroid.y) ** 2);
     exteriorSide = leftDist > rightDist ? 'left' : 'right';
   }
-  // else: both inside = interior wall, no exterior side
+  // else: both sides are equidistant = interior partition wall
+  
+  // Debug logging
+  console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall}, side: ${exteriorSide}, leftDist: ${leftDist.toFixed(3)}, rightDist: ${rightDist.toFixed(3)}, diff: ${distanceDiff.toFixed(3)}`);
   
   return {
     leftPts,
@@ -904,7 +872,7 @@ interface WallRendererProps {
   wallHeight: number;
   courses: Course[];
   panels: EnginePanel[];
-  outerPolygon: Array<{ x: number; y: number }>;
+  buildingCentroid: { x: number; y: number };
   coreThickness: number;
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
@@ -915,14 +883,14 @@ function WallRenderer({
   wallHeight,
   courses,
   panels,
-  outerPolygon,
+  buildingCentroid,
   coreThickness,
   isSelected,
   onWallClick,
 }: WallRendererProps) {
   const wallGeom = useMemo(
-    () => computeWallGeometry(wall, outerPolygon),
-    [wall, outerPolygon]
+    () => computeWallGeometry(wall, buildingCentroid),
+    [wall, buildingCentroid]
   );
 
   if (!wallGeom) return null;
@@ -1098,9 +1066,9 @@ export function ExternalEngineRenderer({
     });
   }, [walls, centerOffset]);
 
-  // Compute outer polygon for exterior detection
-  const outerPolygon = useMemo(
-    () => computeOuterPolygon(adjustedWalls),
+  // Compute building centroid for exterior detection
+  const buildingCentroid = useMemo(
+    () => computeBuildingCentroid(adjustedWalls),
     [adjustedWalls]
   );
 
@@ -1113,9 +1081,9 @@ export function ExternalEngineRenderer({
       wallHeight,
       thickness: coreThickness,
       centerOffset,
-      outerPolygonPts: outerPolygon.length,
+      buildingCentroid,
     });
-  }, [walls, panels, courses, wallHeight, coreThickness, centerOffset, outerPolygon]);
+  }, [walls, panels, courses, wallHeight, coreThickness, centerOffset, buildingCentroid]);
 
   // Calculate bounds for labels
   const bounds = useMemo(() => {
@@ -1161,13 +1129,13 @@ export function ExternalEngineRenderer({
     let skipped = 0;
 
     for (const wall of adjustedWalls) {
-      const geom = computeWallGeometry(wall, outerPolygon);
+      const geom = computeWallGeometry(wall, buildingCentroid);
       if (!geom) skipped++;
       else valid++;
     }
 
     return { valid, skipped };
-  }, [adjustedWalls, outerPolygon]);
+  }, [adjustedWalls, buildingCentroid]);
 
   useEffect(() => {
     setSkippedCount(validWallsCount.skipped);
@@ -1189,7 +1157,7 @@ export function ExternalEngineRenderer({
           wallHeight={wallHeight}
           courses={courses}
           panels={panels}
-          outerPolygon={outerPolygon}
+          buildingCentroid={buildingCentroid}
           coreThickness={coreThickness}
           isSelected={wall.id === selectedWallId}
           onWallClick={onWallClick}
