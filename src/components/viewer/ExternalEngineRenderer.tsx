@@ -5,12 +5,11 @@
  * All geometry comes from the external motor (source of truth).
  * 
  * Features:
- * - Panel-by-panel rendering (1200x400 standard size)
- * - Centroid-based exterior/interior detection
- * - Exterior face: blue with wireframe "mesh/faixa" overlay
+ * - Wall extrusion from left/right offset polylines
+ * - Exterior vs interior detection using wall.axis.n and perpendicular check
+ * - Exterior face: blue with horizontal stripe overlay (faixa)
  * - Interior face: white/gray solid
- * - Course lines at each course.z1
- * - Fallback module lines every 1.2m when panels[] doesn't exist
+ * - Always-visible outlines (walls, courses, modules/panels)
  * - Panel rendering: FULL=yellow, CUT=red with outlines
  */
 
@@ -88,56 +87,28 @@ function filterValidPoints(points: unknown[]): { x: number; y: number }[] {
 const COLORS = {
   EXTERIOR: 0x2196f3,       // Blue
   INTERIOR: 0xf5f5f5,       // Light gray/white
-  EXTERIOR_WIRE: 0x1565c0,  // Darker blue for wireframe overlay
+  EXTERIOR_STRIPE: 0x42a5f5, // Lighter blue for stripes
   OUTLINE: 0x333333,        // Dark outline
   COURSE_LINE: 0x666666,    // Course line color
-  MODULE_LINE: 0x999999,    // Module/placeholder line
+  MODULE_LINE: 0x888888,    // Module/placeholder line
   PANEL_FULL: 0xffc107,     // Yellow for FULL
   PANEL_CUT: 0xf44336,      // Red for CUT
   NODE: 0x4caf50,           // Green for nodes
   SELECTED: 0x00bcd4,       // Cyan for selected
 };
 
-// Standard EPS skin thickness (70.6mm = 1200/17 mm)
-const SKIN_THICKNESS_M = 0.0706;
-
-// ===== Centroid Calculation =====
-// Calculate building centroid from nodes
-
-function calculateCentroid(nodes: GraphNode[]): { x: number; y: number } {
-  if (nodes.length === 0) return { x: 0, y: 0 };
-  
-  let sumX = 0, sumY = 0;
-  let count = 0;
-  
-  for (const node of nodes) {
-    const x = px(node.position);
-    const y = py(node.position);
-    if (x !== undefined && y !== undefined) {
-      sumX += x;
-      sumY += y;
-      count++;
-    }
-  }
-  
-  if (count === 0) return { x: 0, y: 0 };
-  return { x: sumX / count, y: sumY / count };
-}
-
-// ===== Wall Axis Helpers =====
+// ===== Wall Geometry Data =====
 
 interface WallGeometryData {
-  startPt: { x: number; y: number };
-  endPt: { x: number; y: number };
-  u3: THREE.Vector3;      // Unit vector along wall (3D)
-  n3: THREE.Vector3;      // Normal vector (perpendicular, 3D)
-  outwardN: THREE.Vector3; // Normal pointing outward (away from centroid)
-  length: number;
   leftPts: { x: number; y: number }[];
   rightPts: { x: number; y: number }[];
-  isExteriorLeft: boolean; // True if left side is exterior
+  u2: { x: number; y: number };      // Unit vector along wall (2D)
+  n2: { x: number; y: number };      // Normal vector (perpendicular, 2D)
+  length: number;
+  isLeftExterior: boolean;           // True if left side is exterior
 }
 
+// Compute wall geometry from offsets and axis
 function computeWallGeometry(
   wall: GraphWall,
   centroid: { x: number; y: number }
@@ -169,247 +140,176 @@ function computeWallGeometry(
   if (wall.axis?.n) {
     n2 = toVec2(wall.axis.n);
   } else {
-    // Perpendicular: (dy, -dx) for right-hand rule
+    // Perpendicular: perp(u) = (u.y, -u.x) for right-hand rule
     n2 = { x: u2.y, y: -u2.x };
   }
   
-  // Convert to 3D (XZ plane, Y is up)
-  const u3 = new THREE.Vector3(u2.x, 0, u2.y);
-  const n3 = new THREE.Vector3(n2.x, 0, n2.y);
-  
-  // Get start and end points
-  const startPt = leftPts[0];
-  const endPt = leftPts[leftPts.length - 1];
-  
-  // Calculate wall midpoint
+  // Wall length
   const wallLength = wall.length ?? Math.sqrt(
-    Math.pow(endPt.x - startPt.x, 2) + Math.pow(endPt.y - startPt.y, 2)
+    Math.pow(leftPts[leftPts.length - 1].x - leftPts[0].x, 2) +
+    Math.pow(leftPts[leftPts.length - 1].y - leftPts[0].y, 2)
   );
-  const mid = {
-    x: startPt.x + u2.x * (wallLength * 0.5),
-    y: startPt.y + u2.y * (wallLength * 0.5),
+  
+  // Determine which side is exterior using perpendicular normal
+  // The exterior is the side that is FURTHER from the building centroid
+  
+  // Calculate normal of left polyline
+  const leftDir = {
+    x: leftPts[leftPts.length - 1].x - leftPts[0].x,
+    y: leftPts[leftPts.length - 1].y - leftPts[0].y,
   };
+  const leftLen = Math.sqrt(leftDir.x * leftDir.x + leftDir.y * leftDir.y);
+  if (leftLen > 0) {
+    leftDir.x /= leftLen;
+    leftDir.y /= leftLen;
+  }
   
-  // Vector from mid to centroid
-  const toCenter = new THREE.Vector3(
-    centroid.x - mid.x,
-    0,
-    centroid.y - mid.y
-  );
+  // Perpendicular of left direction: perp = (y, -x)
+  const leftNormal = { x: leftDir.y, y: -leftDir.x };
   
-  // Determine outward normal: if n3 points toward center, flip it
-  const dot = n3.dot(toCenter);
-  const outwardN = dot > 0 ? n3.clone().negate() : n3.clone();
-  
-  // Determine which side is exterior
-  // Left side is exterior if leftPts are on the outward side
+  // Check if leftNormal points toward centroid or away
   const leftMid = {
     x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
   };
+  
+  // Vector from left midpoint to centroid
+  const toCenter = {
+    x: centroid.x - leftMid.x,
+    y: centroid.y - leftMid.y,
+  };
+  
+  // Dot product: if positive, leftNormal points toward center (so left is interior)
+  // If negative, leftNormal points away from center (so left is exterior)
+  const dotProduct = leftNormal.x * toCenter.x + leftNormal.y * toCenter.y;
+  
+  // Also check distance from centroid as fallback
   const rightMid = {
     x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
     y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
   };
   
-  // Check which side is further from centroid
-  const leftDistSq = Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2);
-  const rightDistSq = Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2);
-  const isExteriorLeft = leftDistSq > rightDistSq;
+  const leftDist = Math.sqrt((leftMid.x - centroid.x) ** 2 + (leftMid.y - centroid.y) ** 2);
+  const rightDist = Math.sqrt((rightMid.x - centroid.x) ** 2 + (rightMid.y - centroid.y) ** 2);
+  
+  // Use perpendicular test primarily, distance as tiebreaker
+  let isLeftExterior: boolean;
+  if (Math.abs(dotProduct) < 0.001) {
+    // Very small dot product - use distance fallback
+    isLeftExterior = leftDist > rightDist;
+  } else {
+    // Normal pointing away from center means that side is exterior
+    isLeftExterior = dotProduct < 0;
+  }
   
   return {
-    startPt,
-    endPt,
-    u3,
-    n3,
-    outwardN,
-    length: wallLength,
     leftPts,
     rightPts,
-    isExteriorLeft,
+    u2,
+    n2,
+    length: wallLength,
+    isLeftExterior,
   };
 }
 
-// ===== Single Panel Mesh =====
-
-interface PanelMeshProps {
-  panel: EnginePanel;
-  course: Course;
-  wallGeom: WallGeometryData;
-  thickness: number;
-  isSelected?: boolean;
+// Calculate building centroid from nodes
+function calculateCentroid(nodes: GraphNode[]): { x: number; y: number } {
+  if (nodes.length === 0) return { x: 0, y: 0 };
+  
+  let sumX = 0, sumY = 0;
+  let count = 0;
+  
+  for (const node of nodes) {
+    const x = px(node.position);
+    const y = py(node.position);
+    if (x !== undefined && y !== undefined) {
+      sumX += x;
+      sumY += y;
+      count++;
+    }
+  }
+  
+  if (count === 0) return { x: 0, y: 0 };
+  return { x: sumX / count, y: sumY / count };
 }
 
-function SinglePanelMesh({ panel, course, wallGeom, thickness, isSelected }: PanelMeshProps) {
-  const { startPt, u3, outwardN, isExteriorLeft, leftPts, rightPts } = wallGeom;
+// ===== Wall Extrusion Geometry =====
+// Creates extruded geometry from a closed shape (left + reversed right points)
+
+function createWallExtrusionGeometry(
+  leftPts: { x: number; y: number }[],
+  rightPts: { x: number; y: number }[],
+  wallHeight: number
+): THREE.ExtrudeGeometry | null {
+  if (leftPts.length < 2 || rightPts.length < 2) return null;
   
-  const z0 = course.z0 ?? 0;
-  const z1 = course.z1 ?? 0;
-  const height = z1 - z0;
-  const width = panel.x1 - panel.x0;
-  const midT = (panel.x0 + panel.x1) / 2;
+  // Create closed shape: left[0] -> left[n] -> right[n] -> right[0] -> left[0]
+  const shape = new THREE.Shape();
   
-  // Get 2D direction for positioning
-  const u2 = { x: u3.x, y: u3.z };
+  // Start from left[0]
+  shape.moveTo(leftPts[0].x, leftPts[0].y);
   
-  // Panel center along wall axis
-  const centerX = startPt.x + u2.x * midT;
-  const centerZ = startPt.y + u2.y * midT;
-  const centerY = z0 + height / 2;
+  // Draw along left side
+  for (let i = 1; i < leftPts.length; i++) {
+    shape.lineTo(leftPts[i].x, leftPts[i].y);
+  }
   
-  // Skin thickness
-  const skinThickness = Math.min(thickness / 2, SKIN_THICKNESS_M);
+  // Draw along right side (reversed)
+  for (let i = rightPts.length - 1; i >= 0; i--) {
+    shape.lineTo(rightPts[i].x, rightPts[i].y);
+  }
   
-  // Calculate exterior and interior center positions
-  const halfThickness = thickness / 2;
-  const exteriorOffset = halfThickness - skinThickness / 2;
-  const interiorOffset = halfThickness - skinThickness / 2;
+  // Close the shape
+  shape.lineTo(leftPts[0].x, leftPts[0].y);
   
-  // Exterior center (on outward side)
-  const extCenter = new THREE.Vector3(
-    centerX + outwardN.x * exteriorOffset,
-    centerY,
-    centerZ + outwardN.z * exteriorOffset
-  );
+  // Extrude settings
+  const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+    depth: wallHeight,
+    bevelEnabled: false,
+    steps: 1,
+  };
   
-  // Interior center (on inward side)
-  const intCenter = new THREE.Vector3(
-    centerX - outwardN.x * interiorOffset,
-    centerY,
-    centerZ - outwardN.z * interiorOffset
-  );
+  // Create geometry - extruded in Z direction
+  const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
   
-  // Rotation to align with wall
-  const angle = Math.atan2(u2.y, u2.x);
-  const rotation = new THREE.Euler(0, -angle + Math.PI / 2, 0);
+  // Rotate to make Y up (extrude went in local Z, we need world Y)
+  geometry.rotateX(-Math.PI / 2);
   
-  // Panel colors
-  const panelColor = panel.type === 'FULL' ? COLORS.PANEL_FULL : COLORS.PANEL_CUT;
-  const selectedColor = COLORS.SELECTED;
-  
-  return (
-    <group>
-      {/* Exterior Panel Skin - Blue with wireframe + panel color overlay */}
-      <group position={extCenter} rotation={rotation}>
-        {/* Base panel color (FULL/CUT) */}
-        <mesh>
-          <boxGeometry args={[width, height, skinThickness]} />
-          <meshStandardMaterial
-            color={isSelected ? selectedColor : panelColor}
-            transparent
-            opacity={0.85}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-        {/* Blue wireframe overlay for exterior "mesh/faixa" effect */}
-        <mesh>
-          <boxGeometry args={[width, height, skinThickness * 1.01]} />
-          <meshBasicMaterial
-            color={COLORS.EXTERIOR_WIRE}
-            wireframe
-            transparent
-            opacity={0.4}
-          />
-        </mesh>
-        {/* Panel outline */}
-        <lineSegments>
-          <edgesGeometry args={[new THREE.BoxGeometry(width, height, skinThickness)]} />
-          <lineBasicMaterial color={COLORS.OUTLINE} linewidth={1} />
-        </lineSegments>
-      </group>
-      
-      {/* Interior Panel Skin - White/gray solid */}
-      <group position={intCenter} rotation={rotation}>
-        <mesh>
-          <boxGeometry args={[width, height, skinThickness]} />
-          <meshStandardMaterial
-            color={isSelected ? selectedColor : COLORS.INTERIOR}
-            transparent
-            opacity={0.9}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-        {/* Panel outline */}
-        <lineSegments>
-          <edgesGeometry args={[new THREE.BoxGeometry(width, height, skinThickness)]} />
-          <lineBasicMaterial color={COLORS.OUTLINE} linewidth={1} />
-        </lineSegments>
-      </group>
-    </group>
-  );
+  return geometry;
 }
 
-// ===== Wall Panels (when panels[] exists) =====
+// ===== Wall Surface (separate faces for exterior/interior) =====
 
-interface WallPanelsProps {
-  wall: GraphWall;
-  panels: EnginePanel[];
-  courses: Course[];
-  wallGeom: WallGeometryData;
-  thickness: number;
-  isSelected?: boolean;
-}
-
-function WallPanels({ wall, panels, courses, wallGeom, thickness, isSelected }: WallPanelsProps) {
-  const wallPanels = panels.filter(p => p.wall_id === wall.id);
-  
-  if (wallPanels.length === 0) return null;
-  
-  return (
-    <group>
-      {wallPanels.map((panel, idx) => {
-        const course = courses.find(c => c.index === panel.course);
-        if (!course) return null;
-        
-        return (
-          <SinglePanelMesh
-            key={`panel-${wall.id}-${panel.course}-${idx}`}
-            panel={panel}
-            course={course}
-            wallGeom={wallGeom}
-            thickness={thickness}
-            isSelected={isSelected}
-          />
-        );
-      })}
-    </group>
-  );
-}
-
-// ===== Fallback Wall Slab (when no panels) =====
-
-interface WallSlabProps {
-  wall: GraphWall;
-  wallGeom: WallGeometryData;
+interface WallSurfaceProps {
+  pts: { x: number; y: number }[];
   wallHeight: number;
-  thickness: number;
-  isSelected?: boolean;
+  color: number;
+  isExterior: boolean;
+  isSelected: boolean;
 }
 
-function WallSlab({ wall, wallGeom, wallHeight, thickness, isSelected }: WallSlabProps) {
-  const { leftPts, rightPts, outwardN, isExteriorLeft } = wallGeom;
-  
-  const skinThickness = Math.min(thickness / 2, SKIN_THICKNESS_M);
-  
-  // Determine which points are exterior/interior
-  const exteriorPts = isExteriorLeft ? leftPts : rightPts;
-  const interiorPts = isExteriorLeft ? rightPts : leftPts;
-  
-  // Create vertical strip geometry
-  const createStrip = (pts: { x: number; y: number }[], height: number): THREE.BufferGeometry => {
+function WallSurface({ pts, wallHeight, color, isExterior, isSelected }: WallSurfaceProps) {
+  // Create a strip geometry from the polyline
+  const geometry = useMemo(() => {
     const vertices: number[] = [];
     const indices: number[] = [];
     
-    for (const p of pts) {
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      // Bottom vertex
       vertices.push(p.x, 0, p.y);
-      vertices.push(p.x, height, p.y);
+      // Top vertex
+      vertices.push(p.x, wallHeight, p.y);
     }
     
+    // Create triangles connecting adjacent vertices
     for (let i = 0; i < pts.length - 1; i++) {
-      const bl = i * 2;
-      const tl = i * 2 + 1;
-      const br = (i + 1) * 2;
-      const tr = (i + 1) * 2 + 1;
+      const bl = i * 2;       // bottom-left
+      const tl = i * 2 + 1;   // top-left
+      const br = (i + 1) * 2; // bottom-right
+      const tr = (i + 1) * 2 + 1; // top-right
+      
+      // Two triangles per quad
       indices.push(bl, br, tl);
       indices.push(tl, br, tr);
     }
@@ -419,55 +319,126 @@ function WallSlab({ wall, wallGeom, wallHeight, thickness, isSelected }: WallSla
     geom.setIndex(indices);
     geom.computeVertexNormals();
     return geom;
-  };
+  }, [pts, wallHeight]);
   
-  const exteriorGeom = useMemo(() => createStrip(exteriorPts, wallHeight), [exteriorPts, wallHeight]);
-  const interiorGeom = useMemo(() => createStrip(interiorPts, wallHeight), [interiorPts, wallHeight]);
+  const displayColor = isSelected ? COLORS.SELECTED : color;
   
   return (
+    <mesh geometry={geometry}>
+      <meshStandardMaterial
+        color={displayColor}
+        transparent
+        opacity={isExterior ? 0.85 : 0.9}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
+
+// ===== Horizontal Stripe Lines (faixa effect for exterior) =====
+
+interface ExteriorStripeLinesProps {
+  pts: { x: number; y: number }[];
+  wallHeight: number;
+  stripeSpacing?: number;
+}
+
+function ExteriorStripeLines({ pts, wallHeight, stripeSpacing = 0.1 }: ExteriorStripeLinesProps) {
+  const stripeCount = Math.floor(wallHeight / stripeSpacing);
+  
+  if (pts.length < 2 || stripeCount < 1) return null;
+  
+  const lines: JSX.Element[] = [];
+  
+  for (let i = 0; i <= stripeCount; i++) {
+    const y = i * stripeSpacing;
+    if (y > wallHeight) break;
+    
+    const linePoints = pts.map(p => new THREE.Vector3(p.x, y, p.y));
+    
+    lines.push(
+      <Line
+        key={`stripe-${i}`}
+        points={linePoints}
+        color={COLORS.EXTERIOR_STRIPE}
+        lineWidth={0.8}
+        transparent
+        opacity={0.6}
+      />
+    );
+  }
+  
+  return <group>{lines}</group>;
+}
+
+// ===== Wall Outlines =====
+
+interface WallOutlinesProps {
+  leftPts: { x: number; y: number }[];
+  rightPts: { x: number; y: number }[];
+  wallHeight: number;
+}
+
+function WallOutlines({ leftPts, rightPts, wallHeight }: WallOutlinesProps) {
+  if (leftPts.length < 2 || rightPts.length < 2) return null;
+
+  // Bottom loop: left -> right (reversed) -> back to start
+  const bottomLoop = [
+    ...leftPts.map(p => new THREE.Vector3(p.x, 0, p.y)),
+    ...[...rightPts].reverse().map(p => new THREE.Vector3(p.x, 0, p.y)),
+  ];
+  bottomLoop.push(bottomLoop[0].clone());
+
+  // Top loop
+  const topLoop = [
+    ...leftPts.map(p => new THREE.Vector3(p.x, wallHeight, p.y)),
+    ...[...rightPts].reverse().map(p => new THREE.Vector3(p.x, wallHeight, p.y)),
+  ];
+  topLoop.push(topLoop[0].clone());
+
+  // Vertical edges at corners
+  const verticals: THREE.Vector3[][] = [];
+  
+  // Left side start and end
+  verticals.push([
+    new THREE.Vector3(leftPts[0].x, 0, leftPts[0].y),
+    new THREE.Vector3(leftPts[0].x, wallHeight, leftPts[0].y),
+  ]);
+  verticals.push([
+    new THREE.Vector3(leftPts[leftPts.length - 1].x, 0, leftPts[leftPts.length - 1].y),
+    new THREE.Vector3(leftPts[leftPts.length - 1].x, wallHeight, leftPts[leftPts.length - 1].y),
+  ]);
+  
+  // Right side start and end
+  verticals.push([
+    new THREE.Vector3(rightPts[0].x, 0, rightPts[0].y),
+    new THREE.Vector3(rightPts[0].x, wallHeight, rightPts[0].y),
+  ]);
+  verticals.push([
+    new THREE.Vector3(rightPts[rightPts.length - 1].x, 0, rightPts[rightPts.length - 1].y),
+    new THREE.Vector3(rightPts[rightPts.length - 1].x, wallHeight, rightPts[rightPts.length - 1].y),
+  ]);
+
+  return (
     <group>
-      {/* Exterior Face - Blue with wireframe */}
-      <mesh geometry={exteriorGeom}>
-        <meshStandardMaterial
-          color={isSelected ? COLORS.SELECTED : COLORS.EXTERIOR}
-          transparent
-          opacity={0.7}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <mesh geometry={exteriorGeom}>
-        <meshBasicMaterial
-          color={COLORS.EXTERIOR_WIRE}
-          wireframe
-          transparent
-          opacity={0.4}
-        />
-      </mesh>
-      
-      {/* Interior Face - White/gray */}
-      <mesh geometry={interiorGeom}>
-        <meshStandardMaterial
-          color={isSelected ? COLORS.SELECTED : COLORS.INTERIOR}
-          transparent
-          opacity={0.85}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      <Line points={bottomLoop} color={COLORS.OUTLINE} lineWidth={2} />
+      <Line points={topLoop} color={COLORS.OUTLINE} lineWidth={2} />
+      {verticals.map((pts, i) => (
+        <Line key={`vert-${i}`} points={pts} color={COLORS.OUTLINE} lineWidth={2} />
+      ))}
     </group>
   );
 }
 
-// ===== Course Lines =====
+// ===== Course Lines (horizontal at each course height) =====
 
-function CourseLines({
-  courses,
-  leftPts,
-  rightPts,
-}: {
+interface CourseLinesProps {
   courses: Course[];
   leftPts: { x: number; y: number }[];
   rightPts: { x: number; y: number }[];
-}) {
+}
+
+function CourseLines({ courses, leftPts, rightPts }: CourseLinesProps) {
   if (courses.length === 0 || leftPts.length < 2 || rightPts.length < 2) {
     return null;
   }
@@ -501,39 +472,53 @@ function CourseLines({
   );
 }
 
-// ===== Module Lines (placeholder at 1.2m intervals) =====
+// ===== Module Lines (vertical lines at 1.2m intervals when no panels) =====
 
-function ModuleLines({
-  wallGeom,
-  wallHeight,
-}: {
+interface ModuleLinesProps {
   wallGeom: WallGeometryData;
   wallHeight: number;
-}) {
-  const moduleSpacing = 1.2;
-  const { length, leftPts, rightPts, startPt, u3 } = wallGeom;
+}
+
+function ModuleLines({ wallGeom, wallHeight }: ModuleLinesProps) {
+  const moduleSpacing = 1.2; // 1200mm = 1.2m
+  const { length, leftPts, rightPts, u2 } = wallGeom;
   
   if (length < moduleSpacing) return null;
   
-  const u2 = { x: u3.x, y: u3.z };
-  
-  // Same for right side
-  const startR = rightPts[0];
-  const endR = rightPts[rightPts.length - 1];
-  const dirRX = endR.x - startR.x;
-  const dirRY = endR.y - startR.y;
-  const lenR = Math.sqrt(dirRX * dirRX + dirRY * dirRY);
-  const uR = lenR > 0 ? { x: dirRX / lenR, y: dirRY / lenR } : u2;
-  
   const moduleCount = Math.floor(length / moduleSpacing);
   const lines: JSX.Element[] = [];
+  
+  // Get start points for left and right
+  const startLeft = leftPts[0];
+  const startRight = rightPts[0];
+  
+  // Direction along left and right polylines
+  const leftDir = {
+    x: leftPts[leftPts.length - 1].x - leftPts[0].x,
+    y: leftPts[leftPts.length - 1].y - leftPts[0].y,
+  };
+  const leftLen = Math.sqrt(leftDir.x * leftDir.x + leftDir.y * leftDir.y);
+  if (leftLen > 0) {
+    leftDir.x /= leftLen;
+    leftDir.y /= leftLen;
+  }
+  
+  const rightDir = {
+    x: rightPts[rightPts.length - 1].x - rightPts[0].x,
+    y: rightPts[rightPts.length - 1].y - rightPts[0].y,
+  };
+  const rightLen = Math.sqrt(rightDir.x * rightDir.x + rightDir.y * rightDir.y);
+  if (rightLen > 0) {
+    rightDir.x /= rightLen;
+    rightDir.y /= rightLen;
+  }
 
   for (let k = 1; k <= moduleCount; k++) {
     const t = k * moduleSpacing;
 
-    // Left face
-    const lx = startPt.x + u2.x * t;
-    const ly = startPt.y + u2.y * t;
+    // Left face line
+    const lx = startLeft.x + leftDir.x * t;
+    const ly = startLeft.y + leftDir.y * t;
     lines.push(
       <Line
         key={`mod-l-${k}`}
@@ -549,9 +534,9 @@ function ModuleLines({
       />
     );
 
-    // Right face
-    const rx = startR.x + uR.x * t;
-    const ry = startR.y + uR.y * t;
+    // Right face line
+    const rx = startRight.x + rightDir.x * t;
+    const ry = startRight.y + rightDir.y * t;
     lines.push(
       <Line
         key={`mod-r-${k}`}
@@ -571,73 +556,80 @@ function ModuleLines({
   return <group>{lines}</group>;
 }
 
-// ===== Wall Outlines =====
+// ===== Panel Outline (for FULL/CUT panels) =====
 
-function WallOutlines({
-  leftPts,
-  rightPts,
-  wallHeight,
-}: {
-  leftPts: { x: number; y: number }[];
-  rightPts: { x: number; y: number }[];
-  wallHeight: number;
-}) {
-  if (leftPts.length < 2 || rightPts.length < 2) return null;
+interface PanelOutlineProps {
+  panel: EnginePanel;
+  course: Course;
+  wallGeom: WallGeometryData;
+}
 
-  // Bottom loop
-  const bottomLoop = [
-    ...leftPts.map(p => new THREE.Vector3(p.x, 0, p.y)),
-    ...[...rightPts].reverse().map(p => new THREE.Vector3(p.x, 0, p.y)),
-  ];
-  bottomLoop.push(bottomLoop[0].clone());
-
-  // Top loop
-  const topLoop = [
-    ...leftPts.map(p => new THREE.Vector3(p.x, wallHeight, p.y)),
-    ...[...rightPts].reverse().map(p => new THREE.Vector3(p.x, wallHeight, p.y)),
-  ];
-  topLoop.push(topLoop[0].clone());
-
-  // Vertical edges
-  const verticals: THREE.Vector3[][] = [];
-  verticals.push([
-    new THREE.Vector3(leftPts[0].x, 0, leftPts[0].y),
-    new THREE.Vector3(leftPts[0].x, wallHeight, leftPts[0].y),
-  ]);
-  verticals.push([
-    new THREE.Vector3(rightPts[0].x, 0, rightPts[0].y),
-    new THREE.Vector3(rightPts[0].x, wallHeight, rightPts[0].y),
-  ]);
-  const lastL = leftPts[leftPts.length - 1];
-  const lastR = rightPts[rightPts.length - 1];
-  verticals.push([
-    new THREE.Vector3(lastL.x, 0, lastL.y),
-    new THREE.Vector3(lastL.x, wallHeight, lastL.y),
-  ]);
-  verticals.push([
-    new THREE.Vector3(lastR.x, 0, lastR.y),
-    new THREE.Vector3(lastR.x, wallHeight, lastR.y),
-  ]);
-
+function PanelOutline({ panel, course, wallGeom }: PanelOutlineProps) {
+  const { leftPts, rightPts, u2, isLeftExterior } = wallGeom;
+  
+  const z0 = course.z0 ?? 0;
+  const z1 = course.z1 ?? 0;
+  const x0 = panel.x0;
+  const x1 = panel.x1;
+  
+  // Get start points
+  const startLeft = leftPts[0];
+  const startRight = rightPts[0];
+  
+  // Compute positions along the wall
+  // Left side corners
+  const leftX0 = { x: startLeft.x + u2.x * x0, y: startLeft.y + u2.y * x0 };
+  const leftX1 = { x: startLeft.x + u2.x * x1, y: startLeft.y + u2.y * x1 };
+  
+  // Right side corners
+  const rightX0 = { x: startRight.x + u2.x * x0, y: startRight.y + u2.y * x0 };
+  const rightX1 = { x: startRight.x + u2.x * x1, y: startRight.y + u2.y * x1 };
+  
+  // Panel color
+  const panelColor = panel.type === 'FULL' ? COLORS.PANEL_FULL : COLORS.PANEL_CUT;
+  
+  // Create outline as 4 vertical lines and horizontal connections
+  const exteriorPts = isLeftExterior ? [leftX0, leftX1] : [rightX0, rightX1];
+  const interiorPts = isLeftExterior ? [rightX0, rightX1] : [leftX0, leftX1];
+  
   return (
     <group>
-      <Line points={bottomLoop} color={COLORS.OUTLINE} lineWidth={1.5} />
-      <Line points={topLoop} color={COLORS.OUTLINE} lineWidth={1.5} />
-      {verticals.map((pts, i) => (
-        <Line key={`vert-${i}`} points={pts} color={COLORS.OUTLINE} lineWidth={1.5} />
-      ))}
+      {/* Exterior face rectangle */}
+      <Line
+        points={[
+          new THREE.Vector3(exteriorPts[0].x, z0, exteriorPts[0].y),
+          new THREE.Vector3(exteriorPts[1].x, z0, exteriorPts[1].y),
+          new THREE.Vector3(exteriorPts[1].x, z1, exteriorPts[1].y),
+          new THREE.Vector3(exteriorPts[0].x, z1, exteriorPts[0].y),
+          new THREE.Vector3(exteriorPts[0].x, z0, exteriorPts[0].y),
+        ]}
+        color={panelColor}
+        lineWidth={1.5}
+      />
+      
+      {/* Interior face rectangle */}
+      <Line
+        points={[
+          new THREE.Vector3(interiorPts[0].x, z0, interiorPts[0].y),
+          new THREE.Vector3(interiorPts[1].x, z0, interiorPts[1].y),
+          new THREE.Vector3(interiorPts[1].x, z1, interiorPts[1].y),
+          new THREE.Vector3(interiorPts[0].x, z1, interiorPts[0].y),
+          new THREE.Vector3(interiorPts[0].x, z0, interiorPts[0].y),
+        ]}
+        color={panelColor}
+        lineWidth={1.5}
+      />
     </group>
   );
 }
 
-// ===== Single Wall Component =====
+// ===== Single Wall Mesh =====
 
 interface WallMeshProps {
   wall: GraphWall;
   wallHeight: number;
   courses: Course[];
   panels: EnginePanel[];
-  thickness: number;
   centroid: { x: number; y: number };
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
@@ -649,7 +641,6 @@ function WallMesh({
   wallHeight,
   courses,
   panels,
-  thickness,
   centroid,
   isSelected,
   onWallClick,
@@ -662,45 +653,59 @@ function WallMesh({
 
   if (!wallGeom) return null;
 
+  const { leftPts, rightPts, isLeftExterior } = wallGeom;
+  
+  // Determine which side is exterior/interior
+  const exteriorPts = isLeftExterior ? leftPts : rightPts;
+  const interiorPts = isLeftExterior ? rightPts : leftPts;
+
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     onWallClick?.(wall.id);
   };
 
+  // Get panels for this wall
+  const wallPanels = panels.filter(p => p.wall_id === wall.id);
+
   return (
     <group onClick={handleClick}>
-      {/* Wall surfaces (panels or fallback slab) */}
-      {hasPanels ? (
-        <WallPanels
-          wall={wall}
-          panels={panels}
-          courses={courses}
-          wallGeom={wallGeom}
-          thickness={thickness}
-          isSelected={isSelected}
-        />
-      ) : (
-        <WallSlab
-          wall={wall}
-          wallGeom={wallGeom}
-          wallHeight={wallHeight}
-          thickness={thickness}
-          isSelected={isSelected}
-        />
-      )}
+      {/* Exterior Surface - Blue */}
+      <WallSurface
+        pts={exteriorPts}
+        wallHeight={wallHeight}
+        color={COLORS.EXTERIOR}
+        isExterior={true}
+        isSelected={isSelected}
+      />
+      
+      {/* Interior Surface - White/Gray */}
+      <WallSurface
+        pts={interiorPts}
+        wallHeight={wallHeight}
+        color={COLORS.INTERIOR}
+        isExterior={false}
+        isSelected={isSelected}
+      />
+
+      {/* Horizontal Stripe Lines on Exterior (faixa effect) */}
+      <ExteriorStripeLines
+        pts={exteriorPts}
+        wallHeight={wallHeight}
+        stripeSpacing={0.1}
+      />
 
       {/* Wall Outlines */}
       <WallOutlines
-        leftPts={wallGeom.leftPts}
-        rightPts={wallGeom.rightPts}
+        leftPts={leftPts}
+        rightPts={rightPts}
         wallHeight={wallHeight}
       />
 
       {/* Course Lines */}
       <CourseLines
         courses={courses}
-        leftPts={wallGeom.leftPts}
-        rightPts={wallGeom.rightPts}
+        leftPts={leftPts}
+        rightPts={rightPts}
       />
 
       {/* Module Lines (placeholder when no panels) */}
@@ -710,6 +715,21 @@ function WallMesh({
           wallHeight={wallHeight}
         />
       )}
+
+      {/* Panel Outlines (when panels exist) */}
+      {hasPanels && wallPanels.map((panel, idx) => {
+        const course = courses.find(c => c.index === panel.course);
+        if (!course) return null;
+        
+        return (
+          <PanelOutline
+            key={`panel-${wall.id}-${panel.course}-${idx}`}
+            panel={panel}
+            course={course}
+            wallGeom={wallGeom}
+          />
+        );
+      })}
     </group>
   );
 }
@@ -737,13 +757,12 @@ function NodeSpheres({ nodes }: { nodes: GraphNode[] }) {
 
 // ===== Course Labels =====
 
-function CourseLabels({
-  courses,
-  bounds,
-}: {
+interface CourseLabelsProps {
   courses: Course[];
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
-}) {
+}
+
+function CourseLabels({ courses, bounds }: CourseLabelsProps) {
   const centerZ = (bounds.minZ + bounds.maxZ) / 2;
 
   return (
@@ -790,18 +809,6 @@ function NoDataPlaceholder() {
   );
 }
 
-// ===== Loading Placeholder =====
-
-function LoadingPlaceholder() {
-  return (
-    <Html center>
-      <div className="bg-blue-600/90 text-white px-4 py-2 rounded-lg text-sm font-medium">
-        A carregar layout…
-      </div>
-    </Html>
-  );
-}
-
 // ===== Main Component =====
 
 export function ExternalEngineRenderer({
@@ -825,7 +832,7 @@ export function ExternalEngineRenderer({
 
   // Log for debugging
   useEffect(() => {
-    console.log('ExternalEngineRenderer:', {
+    console.log('[ExternalEngineRenderer] Rendering:', {
       walls: walls.length,
       courses: courses.length,
       panels: panels.length,
@@ -863,7 +870,7 @@ export function ExternalEngineRenderer({
     return { minX, maxX, minZ, maxZ };
   }, [nodes]);
 
-  // Count skipped walls
+  // Count skipped walls (invalid geometry)
   const validWallsCount = useMemo(() => {
     let valid = 0;
     let skipped = 0;
@@ -889,9 +896,6 @@ export function ExternalEngineRenderer({
     return <NoDataPlaceholder />;
   }
 
-  // Default thickness if not provided
-  const effectiveThickness = thickness > 0 ? thickness : 0.28; // 280mm default
-
   return (
     <group ref={groupRef}>
       {/* Skipped walls warning */}
@@ -905,7 +909,6 @@ export function ExternalEngineRenderer({
           wallHeight={wallHeight}
           courses={courses}
           panels={panels}
-          thickness={effectiveThickness}
           centroid={centroid}
           isSelected={wall.id === selectedWallId}
           onWallClick={onWallClick}
