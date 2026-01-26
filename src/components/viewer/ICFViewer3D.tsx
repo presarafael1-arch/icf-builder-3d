@@ -1998,6 +1998,7 @@ export function ICFViewer3D({
               minDistance={1}
               maxDistance={2000}
             />
+            <WASDControls />
             
             {/* LIGHTING */}
             <ambientLight intensity={1.2} />
