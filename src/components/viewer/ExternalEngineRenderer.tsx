@@ -90,7 +90,6 @@ const DEFAULT_CORE_THICKNESS = 0.15; // 150mm default
 // Stripe dimensions (aligned with internal engine)
 const STRIPE_WIDTH = 0.1;         // 100mm width
 const STRIPE_HEIGHT_RATIO = 0.85; // 85% of course height
-const STRIPE_OPACITY = 0.8;       // 80% opacity
 const STRIPE_OFFSET = 0.002;      // 2mm offset from surface to avoid z-fighting
 
 
@@ -387,8 +386,6 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkin
       <meshStandardMaterial
         color={displayColor}
         side={THREE.DoubleSide}
-        transparent
-        opacity={0.9}
       />
     </mesh>
   );
@@ -490,8 +487,6 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
     <mesh geometry={geometry} renderOrder={15}>
       <meshBasicMaterial
         color={color}
-        transparent
-        opacity={STRIPE_OPACITY}
         side={THREE.DoubleSide}
         depthTest={false}
         depthWrite={false}
@@ -804,8 +799,6 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         </bufferGeometry>
         <meshBasicMaterial
           color={leftStripeColor}
-          transparent
-          opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset
@@ -832,8 +825,6 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         </bufferGeometry>
         <meshBasicMaterial
           color={leftStripeColor}
-          transparent
-          opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset
@@ -865,8 +856,6 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         </bufferGeometry>
         <meshBasicMaterial
           color={rightStripeColor}
-          transparent
-          opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset
@@ -893,8 +882,6 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
         </bufferGeometry>
         <meshBasicMaterial
           color={rightStripeColor}
-          transparent
-          opacity={STRIPE_OPACITY}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset
@@ -911,12 +898,12 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     <group>
       {/* Left surface */}
       <mesh geometry={leftGeom}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} transparent opacity={0.9} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} />
       </mesh>
       
       {/* Right surface */}
       <mesh geometry={rightGeom}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} transparent opacity={0.9} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} />
       </mesh>
       
       {/* Course lines */}
