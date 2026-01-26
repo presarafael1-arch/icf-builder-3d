@@ -75,8 +75,8 @@ function filterValidPoints(points: unknown[]): { x: number; y: number }[] {
 const COLORS = {
   PANEL_FULL: 0xffc107,       // Yellow for FULL panels
   PANEL_CUT: 0xf44336,        // Red for CUT panels
-  EXTERIOR_OVERLAY: 0x2196f3, // Blue overlay for exterior
-  INTERIOR: 0xf5f5f5,         // Light gray/white for interior
+  STRIPE_EXTERIOR: '#3B82F6', // Blue stripe for exterior walls
+  STRIPE_INTERIOR: '#FFFFFF', // White stripe for interior walls
   OUTLINE: 0x333333,          // Dark outline
   COURSE_LINE: 0x555555,      // Course line color
   NODE: 0x4caf50,             // Green for nodes
@@ -86,6 +86,12 @@ const COLORS = {
 // Skin/EPS thickness (1 TOOTH ≈ 70.6mm)
 const EPS_THICKNESS = 0.0706; // meters
 const DEFAULT_CORE_THICKNESS = 0.15; // 150mm default
+
+// Stripe dimensions (aligned with internal engine)
+const STRIPE_WIDTH = 0.1;         // 100mm width
+const STRIPE_HEIGHT_RATIO = 0.85; // 85% of course height
+const STRIPE_OPACITY = 0.8;       // 80% opacity
+const STRIPE_OFFSET = 0.002;      // 2mm offset from surface to avoid z-fighting
 
 // ===== Point-in-Polygon for exterior detection =====
 
@@ -373,9 +379,11 @@ function PanelOutline({ x0, x1, z0, z1, startPt, u2 }: PanelOutlineProps) {
   return <Line points={points} color={COLORS.OUTLINE} lineWidth={1.5} />;
 }
 
-// ===== Blue Exterior Overlay Stripes =====
+// ===== Panel Stripe (Solid stripe overlay) =====
+// Replaces old ExteriorOverlay with solid rectangular stripes
+// Blue for exterior walls, white for interior walls - on BOTH faces
 
-interface ExteriorOverlayProps {
+interface PanelStripeProps {
   x0: number;
   x1: number;
   z0: number;
@@ -383,92 +391,66 @@ interface ExteriorOverlayProps {
   startPt: { x: number; y: number };
   u2: { x: number; y: number };
   n2: { x: number; y: number };
+  color: string;
+  offset: number; // positive = front face, negative = back face
 }
 
-function ExteriorOverlay({ x0, x1, z0, z1, startPt, u2, n2 }: ExteriorOverlayProps) {
-  // Offset slightly outward to avoid z-fighting
-  const offset = 0.002;
-  const offsetPt = { x: startPt.x + n2.x * offset, y: startPt.y + n2.y * offset };
+function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelStripeProps) {
+  const geometry = useMemo(() => {
+    // Center of panel along wall
+    const centerX = (x0 + x1) / 2;
+    
+    // Stripe height: 85% of course height, centered vertically
+    const courseHeight = z1 - z0;
+    const stripeHeight = courseHeight * STRIPE_HEIGHT_RATIO;
+    const stripeZ0 = z0 + (courseHeight - stripeHeight) / 2;
+    const stripeZ1 = stripeZ0 + stripeHeight;
+    
+    // Stripe width: 100mm centered
+    const halfWidth = STRIPE_WIDTH / 2;
+    const stripeX0 = centerX - halfWidth;
+    const stripeX1 = centerX + halfWidth;
+    
+    // Apply offset from surface (perpendicular to wall)
+    const offsetPt = {
+      x: startPt.x + n2.x * offset,
+      y: startPt.y + n2.y * offset,
+    };
+    
+    // 4 corners of stripe
+    const bl = { x: offsetPt.x + u2.x * stripeX0, y: offsetPt.y + u2.y * stripeX0 };
+    const br = { x: offsetPt.x + u2.x * stripeX1, y: offsetPt.y + u2.y * stripeX1 };
+    
+    const vertices = new Float32Array([
+      bl.x, stripeZ0, bl.y,
+      br.x, stripeZ0, br.y,
+      br.x, stripeZ1, br.y,
+      bl.x, stripeZ1, bl.y,
+    ]);
+    
+    const indices = [0, 1, 2, 0, 2, 3];
+    
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    return geom;
+  }, [x0, x1, z0, z1, startPt, u2, n2, offset]);
   
-  const bl = { x: offsetPt.x + u2.x * x0, y: offsetPt.y + u2.y * x0 };
-  const br = { x: offsetPt.x + u2.x * x1, y: offsetPt.y + u2.y * x1 };
-  
-  const lines: JSX.Element[] = [];
-  
-  // Vertical blue lines at panel boundaries
-  lines.push(
-    <Line
-      key="v-left"
-      points={[
-        new THREE.Vector3(bl.x, z0, bl.y),
-        new THREE.Vector3(bl.x, z1, bl.y),
-      ]}
-      color={COLORS.EXTERIOR_OVERLAY}
-      lineWidth={2}
-    />
-  );
-  lines.push(
-    <Line
-      key="v-right"
-      points={[
-        new THREE.Vector3(br.x, z0, br.y),
-        new THREE.Vector3(br.x, z1, br.y),
-      ]}
-      color={COLORS.EXTERIOR_OVERLAY}
-      lineWidth={2}
-    />
-  );
-  
-  // Horizontal stripes
-  const stripeSpacing = 0.1; // 100mm
-  const stripeCount = Math.floor((z1 - z0) / stripeSpacing);
-  for (let i = 0; i <= stripeCount; i++) {
-    const z = z0 + i * stripeSpacing;
-    if (z > z1) break;
-    lines.push(
-      <Line
-        key={`h-${i}`}
-        points={[
-          new THREE.Vector3(bl.x, z, bl.y),
-          new THREE.Vector3(br.x, z, br.y),
-        ]}
-        color={COLORS.EXTERIOR_OVERLAY}
-        lineWidth={1}
+  return (
+    <mesh geometry={geometry} renderOrder={10}>
+      <meshBasicMaterial
+        color={color}
         transparent
-        opacity={0.6}
+        opacity={STRIPE_OPACITY}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+        polygonOffset
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-1}
       />
-    );
-  }
-  
-  // Cross diagonals for mesh effect
-  lines.push(
-    <Line
-      key="diag1"
-      points={[
-        new THREE.Vector3(bl.x, z0, bl.y),
-        new THREE.Vector3(br.x, z1, br.y),
-      ]}
-      color={COLORS.EXTERIOR_OVERLAY}
-      lineWidth={0.5}
-      transparent
-      opacity={0.4}
-    />
+    </mesh>
   );
-  lines.push(
-    <Line
-      key="diag2"
-      points={[
-        new THREE.Vector3(br.x, z0, br.y),
-        new THREE.Vector3(bl.x, z1, bl.y),
-      ]}
-      color={COLORS.EXTERIOR_OVERLAY}
-      lineWidth={0.5}
-      transparent
-      opacity={0.4}
-    />
-  );
-  
-  return <group renderOrder={1}>{lines}</group>;
 }
 
 // ===== Single Panel (Dual Skin) =====
@@ -521,9 +503,16 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
     extNormal = n2;
   }
   
+  // Stripe color: blue for exterior walls, white for interior walls
+  const stripeColor = isExteriorWall ? COLORS.STRIPE_EXTERIOR : COLORS.STRIPE_INTERIOR;
+  
+  // Normal for each skin (for stripe offset)
+  const extNormalDir = exteriorSide === 'right' ? { x: -n2.x, y: -n2.y } : n2;
+  const intNormalDir = exteriorSide === 'right' ? n2 : { x: -n2.x, y: -n2.y };
+  
   return (
     <group>
-      {/* Exterior Skin */}
+      {/* ===== Exterior Skin ===== */}
       <PanelSkin
         x0={x0}
         x1={x1}
@@ -531,7 +520,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={extStart}
         u2={u2}
-        color={isExteriorWall ? panelColor : COLORS.INTERIOR}
+        color={panelColor}
         isSelected={isSelected}
       />
       <PanelOutline
@@ -542,21 +531,32 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={extStart}
         u2={u2}
       />
+      {/* Stripe on front face of exterior skin */}
+      <PanelStripe
+        x0={x0}
+        x1={x1}
+        z0={z0}
+        z1={z1}
+        startPt={extStart}
+        u2={u2}
+        n2={extNormalDir}
+        color={stripeColor}
+        offset={STRIPE_OFFSET}
+      />
+      {/* Stripe on back face of exterior skin */}
+      <PanelStripe
+        x0={x0}
+        x1={x1}
+        z0={z0}
+        z1={z1}
+        startPt={extStart}
+        u2={u2}
+        n2={extNormalDir}
+        color={stripeColor}
+        offset={-STRIPE_OFFSET}
+      />
       
-      {/* Blue overlay on exterior face of exterior walls */}
-      {isExteriorWall && (
-        <ExteriorOverlay
-          x0={x0}
-          x1={x1}
-          z0={z0}
-          z1={z1}
-          startPt={extStart}
-          u2={u2}
-          n2={extNormal}
-        />
-      )}
-      
-      {/* Interior Skin */}
+      {/* ===== Interior Skin ===== */}
       <PanelSkin
         x0={x0}
         x1={x1}
@@ -564,7 +564,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={intStart}
         u2={u2}
-        color={COLORS.INTERIOR}
+        color={panelColor}
         isSelected={isSelected}
       />
       <PanelOutline
@@ -574,6 +574,30 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={intStart}
         u2={u2}
+      />
+      {/* Stripe on front face of interior skin */}
+      <PanelStripe
+        x0={x0}
+        x1={x1}
+        z0={z0}
+        z1={z1}
+        startPt={intStart}
+        u2={u2}
+        n2={intNormalDir}
+        color={stripeColor}
+        offset={STRIPE_OFFSET}
+      />
+      {/* Stripe on back face of interior skin */}
+      <PanelStripe
+        x0={x0}
+        x1={x1}
+        z0={z0}
+        z1={z1}
+        startPt={intStart}
+        u2={u2}
+        n2={intNormalDir}
+        color={stripeColor}
+        offset={-STRIPE_OFFSET}
       />
     </group>
   );
@@ -619,9 +643,11 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   const leftGeom = useMemo(() => createSurfaceGeometry(leftPts), [leftPts]);
   const rightGeom = useMemo(() => createSurfaceGeometry(rightPts), [rightPts]);
   
-  // Determine colors
-  const leftColor = isExteriorWall && exteriorSide === 'left' ? COLORS.PANEL_FULL : COLORS.INTERIOR;
-  const rightColor = isExteriorWall && exteriorSide === 'right' ? COLORS.PANEL_FULL : COLORS.INTERIOR;
+  // Both surfaces use FULL color (yellow) as fallback base color
+  const baseColor = COLORS.PANEL_FULL;
+  
+  // Stripe color depends on wall type
+  const stripeColor = isExteriorWall ? COLORS.STRIPE_EXTERIOR : COLORS.STRIPE_INTERIOR;
   
   // Course lines
   const courseLines = courses.map(course => {
@@ -674,50 +700,158 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     );
   }
   
-  // Exterior overlay for fallback
-  const extStripes: JSX.Element[] = [];
-  if (isExteriorWall) {
-    const extPts = exteriorSide === 'left' ? leftPts : rightPts;
-    const extNormal = exteriorSide === 'left' ? n2 : { x: -n2.x, y: -n2.y };
-    const offset = 0.002;
-    
-    // Horizontal stripes
-    const stripeSpacing = 0.1;
-    const stripeCount = Math.floor(wallHeight / stripeSpacing);
-    for (let i = 0; i <= stripeCount; i++) {
-      const z = i * stripeSpacing;
-      if (z > wallHeight) break;
-      const linePts = extPts.map(p => new THREE.Vector3(
-        p.x + extNormal.x * offset,
-        z,
-        p.y + extNormal.y * offset
-      ));
-      extStripes.push(
-        <Line
-          key={`stripe-${i}`}
-          points={linePts}
-          color={COLORS.EXTERIOR_OVERLAY}
-          lineWidth={1}
-          transparent
-          opacity={0.6}
-        />
-      );
-    }
-  }
+  // Generate stripe overlays for fallback (solid rectangles per course)
+  const fallbackStripes: JSX.Element[] = [];
+  const leftNormal = n2;
+  const rightNormal = { x: -n2.x, y: -n2.y };
   
-  const displayColorLeft = isSelected ? COLORS.SELECTED : leftColor;
-  const displayColorRight = isSelected ? COLORS.SELECTED : rightColor;
+  courses.forEach((course, ci) => {
+    const z0 = course.z0 ?? 0;
+    const z1 = course.z1 ?? 0.4;
+    const courseHeight = z1 - z0;
+    const stripeHeight = courseHeight * STRIPE_HEIGHT_RATIO;
+    const stripeZ0 = z0 + (courseHeight - stripeHeight) / 2;
+    const stripeZ1 = stripeZ0 + stripeHeight;
+    
+    // Create stripe geometry at center of wall
+    const centerT = length / 2;
+    const halfW = STRIPE_WIDTH / 2;
+    
+    // Left surface stripes (front and back)
+    const leftCenter = { x: leftPts[0].x + u2.x * centerT, y: leftPts[0].y + u2.y * centerT };
+    const leftBl = { x: leftCenter.x + u2.x * (-halfW), y: leftCenter.y + u2.y * (-halfW) };
+    const leftBr = { x: leftCenter.x + u2.x * halfW, y: leftCenter.y + u2.y * halfW };
+    
+    // Front stripe on left surface
+    fallbackStripes.push(
+      <mesh key={`left-front-${ci}`} renderOrder={10}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array([
+              leftBl.x + leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBl.y + leftNormal.y * STRIPE_OFFSET,
+              leftBr.x + leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBr.y + leftNormal.y * STRIPE_OFFSET,
+              leftBr.x + leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBr.y + leftNormal.y * STRIPE_OFFSET,
+              leftBl.x + leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBl.y + leftNormal.y * STRIPE_OFFSET,
+            ]), 3]}
+          />
+          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+        </bufferGeometry>
+        <meshBasicMaterial
+          color={stripeColor}
+          transparent
+          opacity={STRIPE_OPACITY}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
+        />
+      </mesh>
+    );
+    
+    // Back stripe on left surface
+    fallbackStripes.push(
+      <mesh key={`left-back-${ci}`} renderOrder={10}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array([
+              leftBl.x - leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBl.y - leftNormal.y * STRIPE_OFFSET,
+              leftBr.x - leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBr.y - leftNormal.y * STRIPE_OFFSET,
+              leftBr.x - leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBr.y - leftNormal.y * STRIPE_OFFSET,
+              leftBl.x - leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBl.y - leftNormal.y * STRIPE_OFFSET,
+            ]), 3]}
+          />
+          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+        </bufferGeometry>
+        <meshBasicMaterial
+          color={stripeColor}
+          transparent
+          opacity={STRIPE_OPACITY}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
+        />
+      </mesh>
+    );
+    
+    // Right surface stripes
+    const rightCenter = { x: rightPts[0].x + u2.x * centerT, y: rightPts[0].y + u2.y * centerT };
+    const rightBl = { x: rightCenter.x + u2.x * (-halfW), y: rightCenter.y + u2.y * (-halfW) };
+    const rightBr = { x: rightCenter.x + u2.x * halfW, y: rightCenter.y + u2.y * halfW };
+    
+    // Front stripe on right surface
+    fallbackStripes.push(
+      <mesh key={`right-front-${ci}`} renderOrder={10}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array([
+              rightBl.x + rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBl.y + rightNormal.y * STRIPE_OFFSET,
+              rightBr.x + rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBr.y + rightNormal.y * STRIPE_OFFSET,
+              rightBr.x + rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBr.y + rightNormal.y * STRIPE_OFFSET,
+              rightBl.x + rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBl.y + rightNormal.y * STRIPE_OFFSET,
+            ]), 3]}
+          />
+          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+        </bufferGeometry>
+        <meshBasicMaterial
+          color={stripeColor}
+          transparent
+          opacity={STRIPE_OPACITY}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
+        />
+      </mesh>
+    );
+    
+    // Back stripe on right surface
+    fallbackStripes.push(
+      <mesh key={`right-back-${ci}`} renderOrder={10}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array([
+              rightBl.x - rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBl.y - rightNormal.y * STRIPE_OFFSET,
+              rightBr.x - rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBr.y - rightNormal.y * STRIPE_OFFSET,
+              rightBr.x - rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBr.y - rightNormal.y * STRIPE_OFFSET,
+              rightBl.x - rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBl.y - rightNormal.y * STRIPE_OFFSET,
+            ]), 3]}
+          />
+          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+        </bufferGeometry>
+        <meshBasicMaterial
+          color={stripeColor}
+          transparent
+          opacity={STRIPE_OPACITY}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
+        />
+      </mesh>
+    );
+  });
+  
+  const displayColor = isSelected ? COLORS.SELECTED : baseColor;
   
   return (
     <group>
       {/* Left surface */}
       <mesh geometry={leftGeom}>
-        <meshStandardMaterial color={displayColorLeft} side={THREE.DoubleSide} transparent opacity={0.9} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} transparent opacity={0.9} />
       </mesh>
       
       {/* Right surface */}
       <mesh geometry={rightGeom}>
-        <meshStandardMaterial color={displayColorRight} side={THREE.DoubleSide} transparent opacity={0.9} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} transparent opacity={0.9} />
       </mesh>
       
       {/* Course lines */}
@@ -726,8 +860,8 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
       {/* Module lines */}
       {moduleLines}
       
-      {/* Exterior overlay stripes */}
-      {extStripes}
+      {/* Stripe overlays */}
+      {fallbackStripes}
       
       {/* Wall outlines */}
       <Line
