@@ -287,13 +287,35 @@ function computeWallGeometry(
   let exteriorSide: 'left' | 'right' | null = null;
   
   if (isExteriorWall && footprintHull.length >= 3) {
-    // outN points OUTSIDE - compare with n2 to determine which side
-    const dot = outN.x * n2.x + outN.y * n2.y;
-    exteriorSide = dot > 0 ? 'left' : 'right';
+    // Determine which polyline (left or right) is on the exterior side
+    // by testing which midpoint is further in the outN direction
+    
+    // Calculate midpoints of each polyline
+    const leftMid = {
+      x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
+      y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
+    };
+    const rightMid = {
+      x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
+      y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
+    };
+    
+    // Vector from wall center to left polyline midpoint
+    const toLeft = { 
+      x: leftMid.x - wallCenterMid.x, 
+      y: leftMid.y - wallCenterMid.y 
+    };
+    
+    // Dot product with outN - positive means left is on exterior side
+    const dotLeft = toLeft.x * outN.x + toLeft.y * outN.y;
+    
+    exteriorSide = dotLeft > 0 ? 'left' : 'right';
+    
+    // Enhanced debug logging
+    console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotLeft: ${dotLeft.toFixed(3)}`);
+  } else {
+    console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
   }
-  
-  // Debug logging
-  console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall}, side: ${exteriorSide}, outN: (${outN.x.toFixed(3)}, ${outN.y.toFixed(3)})`);
   
   return {
     leftPts,
