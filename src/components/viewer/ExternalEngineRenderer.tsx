@@ -158,44 +158,130 @@ function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
   return inside;
 }
 
-// Compute the building footprint as convex hull of wall centerline endpoints
-function computeBuildingFootprint(walls: GraphWall[]): { 
-  centroid: Point2D; 
-  hull: Point2D[];
-} {
-  const centerlineEndpoints: Point2D[] = [];
+// Try to extract outerPolygon from layout payload (best source for concave buildings)
+function extractOuterPolygonFromPayload(
+  layout: NormalizedExternalAnalysis
+): Point2D[] | null {
+  // Check various locations where outerPolygon might exist
+  const candidates = [
+    (layout as any).analysis?.footprint?.outerPolygon,
+    (layout as any).meta?.outerPolygon,
+    (layout as any).outerPolygon,
+    (layout as any).footprint?.outerPolygon,
+  ];
+  
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length >= 3) {
+      const pts = filterValidPoints(candidate);
+      if (pts.length >= 3) {
+        console.log(`[Footprint] Using outerPolygon from payload (${pts.length} points)`);
+        return pts;
+      }
+    }
+  }
+  return null;
+}
+
+// Build a concave polygon from wall outer edges (fallback when no outerPolygon in payload)
+function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): Point2D[] {
+  // For each wall, collect the polyline that is FURTHER from the centroid (outer edge)
+  const outerEdgePoints: Point2D[] = [];
   
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
     
-    if (leftPts.length >= 2 && rightPts.length >= 2) {
-      // Calculate centerline points (midpoint between left and right at each end)
-      const startCenter = {
-        x: (leftPts[0].x + rightPts[0].x) / 2,
-        y: (leftPts[0].y + rightPts[0].y) / 2,
-      };
-      const endCenter = {
-        x: (leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2,
-        y: (leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2,
-      };
-      centerlineEndpoints.push(startCenter, endCenter);
+    if (leftPts.length < 2 || rightPts.length < 2) continue;
+    
+    // Calculate average distance to centroid for each polyline
+    const avgDistLeft = leftPts.reduce((sum, p) => {
+      const dx = p.x - centroid.x;
+      const dy = p.y - centroid.y;
+      return sum + Math.sqrt(dx * dx + dy * dy);
+    }, 0) / leftPts.length;
+    
+    const avgDistRight = rightPts.reduce((sum, p) => {
+      const dx = p.x - centroid.x;
+      const dy = p.y - centroid.y;
+      return sum + Math.sqrt(dx * dx + dy * dy);
+    }, 0) / rightPts.length;
+    
+    // Choose the polyline that is further from centroid (outer edge)
+    const outerPts = avgDistLeft >= avgDistRight ? leftPts : rightPts;
+    outerEdgePoints.push(...outerPts);
+  }
+  
+  if (outerEdgePoints.length < 3) return [];
+  
+  // Sort points by angle from centroid to create ordered polygon
+  const sortedPoints = outerEdgePoints
+    .map(p => ({
+      point: p,
+      angle: Math.atan2(p.y - centroid.y, p.x - centroid.x)
+    }))
+    .sort((a, b) => a.angle - b.angle)
+    .map(item => item.point);
+  
+  // Remove duplicates (within tolerance)
+  const tolerance = 0.01; // 10mm
+  const uniquePoints: Point2D[] = [];
+  for (const p of sortedPoints) {
+    const isDuplicate = uniquePoints.some(existing => 
+      Math.abs(existing.x - p.x) < tolerance && Math.abs(existing.y - p.y) < tolerance
+    );
+    if (!isDuplicate) {
+      uniquePoints.push(p);
     }
   }
   
-  if (centerlineEndpoints.length === 0) {
+  console.log(`[Footprint] Built concave polygon from wall edges (${uniquePoints.length} points)`);
+  return uniquePoints;
+}
+
+// Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
+function computeBuildingFootprint(
+  walls: GraphWall[],
+  layout?: NormalizedExternalAnalysis
+): { 
+  centroid: Point2D; 
+  hull: Point2D[];
+} {
+  // First: collect all wall points for centroid calculation
+  const allWallPoints: Point2D[] = [];
+  
+  for (const wall of walls) {
+    const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
+    const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
+    allWallPoints.push(...leftPts, ...rightPts);
+  }
+  
+  if (allWallPoints.length === 0) {
     return { centroid: { x: 0, y: 0 }, hull: [] };
   }
   
-  // Calculate centroid
+  // Calculate centroid from all points
   const centroid = {
-    x: centerlineEndpoints.reduce((sum, p) => sum + p.x, 0) / centerlineEndpoints.length,
-    y: centerlineEndpoints.reduce((sum, p) => sum + p.y, 0) / centerlineEndpoints.length,
+    x: allWallPoints.reduce((sum, p) => sum + p.x, 0) / allWallPoints.length,
+    y: allWallPoints.reduce((sum, p) => sum + p.y, 0) / allWallPoints.length,
   };
   
-  // Compute convex hull of centerline endpoints
-  const hull = convexHull(centerlineEndpoints);
+  // Priority #1: Use outerPolygon from payload if available (handles concave shapes correctly)
+  if (layout) {
+    const payloadPolygon = extractOuterPolygonFromPayload(layout);
+    if (payloadPolygon && payloadPolygon.length >= 3) {
+      return { centroid, hull: payloadPolygon };
+    }
+  }
   
+  // Priority #2: Build concave polygon from wall outer edges
+  const concavePolygon = buildConcaveFootprintFromWalls(walls, centroid);
+  if (concavePolygon.length >= 3) {
+    return { centroid, hull: concavePolygon };
+  }
+  
+  // Fallback: Use convex hull (last resort, may fail for L/U shapes)
+  console.warn('[Footprint] Falling back to convex hull - may misclassify concave walls');
+  const hull = convexHull(allWallPoints);
   return { centroid, hull };
 }
 
@@ -213,13 +299,14 @@ interface WallGeometryData {
 
 // Determine wall exterior status using footprint hull
 // Robust exterior detection using multiple test offsets
-// Tests at 0.25m and 0.5m to handle walls near the footprint boundary
+// Tests at various distances to handle walls near the footprint boundary
 function chooseOutNormal(
   mid: Point2D,
   n: Point2D,
   outerPoly: Point2D[]
 ): { isExterior: boolean; outN: Point2D } {
-  const testEps = [0.25, 0.5]; // meters - test at multiple distances
+  // Test at multiple distances for robustness
+  const testEps = [0.1, 0.25, 0.5, 0.75, 1.0]; // meters
   
   for (const eps of testEps) {
     const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
@@ -413,6 +500,8 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkin
         side={THREE.DoubleSide}
         depthWrite={true}
         depthTest={true}
+        transparent={false}
+        opacity={1}
       />
     </mesh>
   );
@@ -517,6 +606,8 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
         side={THREE.DoubleSide}
         depthTest={true}
         depthWrite={true}
+        transparent={false}
+        opacity={1}
         polygonOffset
         polygonOffsetFactor={-2}
         polygonOffsetUnits={-2}
@@ -829,6 +920,8 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           side={THREE.DoubleSide}
           depthWrite={true}
           depthTest={true}
+          transparent={false}
+          opacity={1}
           polygonOffset
           polygonOffsetFactor={-2}
           polygonOffsetUnits={-2}
@@ -856,6 +949,8 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           side={THREE.DoubleSide}
           depthWrite={true}
           depthTest={true}
+          transparent={false}
+          opacity={1}
           polygonOffset
           polygonOffsetFactor={-2}
           polygonOffsetUnits={-2}
@@ -888,6 +983,8 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           side={THREE.DoubleSide}
           depthWrite={true}
           depthTest={true}
+          transparent={false}
+          opacity={1}
           polygonOffset
           polygonOffsetFactor={-2}
           polygonOffsetUnits={-2}
@@ -915,6 +1012,8 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
           side={THREE.DoubleSide}
           depthWrite={true}
           depthTest={true}
+          transparent={false}
+          opacity={1}
           polygonOffset
           polygonOffsetFactor={-2}
           polygonOffsetUnits={-2}
@@ -929,12 +1028,12 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     <group>
       {/* Left surface */}
       <mesh geometry={leftGeom} renderOrder={5}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} />
       </mesh>
       
       {/* Right surface */}
       <mesh geometry={rightGeom} renderOrder={5}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} />
       </mesh>
       
       {/* Course lines */}
@@ -1176,8 +1275,8 @@ export function ExternalEngineRenderer({
 
   // Compute building footprint (hull + centroid) for exterior detection
   const buildingFootprint = useMemo(
-    () => computeBuildingFootprint(adjustedWalls),
-    [adjustedWalls]
+    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis),
+    [adjustedWalls, normalizedAnalysis]
   );
   const { hull: footprintHull, centroid: buildingCentroid } = buildingFootprint;
 
