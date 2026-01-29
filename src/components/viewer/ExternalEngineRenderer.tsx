@@ -93,49 +93,122 @@ const STRIPE_HEIGHT_RATIO = 0.85; // 85% of course height
 const STRIPE_OFFSET = 0.002;      // 2mm offset from surface to avoid z-fighting
 
 
-// ===== Building Footprint Calculation (Convex Hull of Centerline Endpoints) =====
+// ===== Building Footprint Calculation (Concave outer polygon; NO convex hull) =====
 
 interface Point2D {
   x: number;
   y: number;
 }
 
-// Compute convex hull using Graham scan algorithm
-function convexHull(points: Point2D[]): Point2D[] {
-  if (points.length < 3) return points;
-  
-  // Find the point with lowest y (and leftmost if tie)
-  let start = 0;
-  for (let i = 1; i < points.length; i++) {
-    if (points[i].y < points[start].y || 
-        (points[i].y === points[start].y && points[i].x < points[start].x)) {
-      start = i;
+type PtKey = string;
+
+function quantizeKey(p: Point2D, tol = 0.01): PtKey {
+  // tol default 10mm in meters
+  const qx = Math.round(p.x / tol);
+  const qy = Math.round(p.y / tol);
+  return `${qx},${qy}`;
+}
+
+function addAdjEdge(adj: Map<PtKey, Set<PtKey>>, a: PtKey, b: PtKey) {
+  if (a === b) return;
+  if (!adj.has(a)) adj.set(a, new Set());
+  if (!adj.has(b)) adj.set(b, new Set());
+  adj.get(a)!.add(b);
+  adj.get(b)!.add(a);
+}
+
+function edgeKey(a: PtKey, b: PtKey): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function angleTurn(prev: Point2D, curr: Point2D, next: Point2D): number {
+  // return signed angle [-pi, pi] between (curr-prev) and (next-curr)
+  const ax = curr.x - prev.x;
+  const ay = curr.y - prev.y;
+  const bx = next.x - curr.x;
+  const by = next.y - curr.y;
+  const aLen = Math.hypot(ax, ay);
+  const bLen = Math.hypot(bx, by);
+  if (aLen === 0 || bLen === 0) return 0;
+  const anx = ax / aLen;
+  const any = ay / aLen;
+  const bnx = bx / bLen;
+  const bny = by / bLen;
+  const cross = anx * bny - any * bnx;
+  const dot = anx * bnx + any * bny;
+  return Math.atan2(cross, dot);
+}
+
+function extractLongestClosedLoop(
+  adj: Map<PtKey, Set<PtKey>>,
+  keyToPoint: Map<PtKey, Point2D>
+): Point2D[] {
+  // Walk edges and try to close cycles; keep the longest cycle found.
+  const visitedEdges = new Set<string>();
+  let bestLoop: PtKey[] = [];
+
+  const keys = [...adj.keys()];
+  for (const start of keys) {
+    const neighbors = [...(adj.get(start) ?? [])];
+    for (const first of neighbors) {
+      const e0 = edgeKey(start, first);
+      if (visitedEdges.has(e0)) continue;
+
+      let prev = start;
+      let curr = first;
+      const path: PtKey[] = [start, first];
+      visitedEdges.add(e0);
+
+      // hard cap to avoid infinite loops on pathological graphs
+      for (let steps = 0; steps < 10000; steps++) {
+        if (curr === start) {
+          // closed (path ends at start)
+          const loop = path.slice(0, -1); // remove duplicated start
+          if (loop.length >= 3 && loop.length > bestLoop.length) bestLoop = loop;
+          break;
+        }
+
+        const currNeighbors = [...(adj.get(curr) ?? [])].filter(n => n !== prev);
+        if (currNeighbors.length === 0) break;
+
+        let next = currNeighbors[0];
+        if (currNeighbors.length > 1) {
+          const prevPt = keyToPoint.get(prev);
+          const currPt = keyToPoint.get(curr);
+          if (prevPt && currPt) {
+            // Choose the neighbor that makes the most consistent boundary walk.
+            // We prefer a RIGHT-HAND traversal (keep exterior on right), i.e.
+            // smallest (most negative) turn; fallback to smallest abs turn.
+            let best = currNeighbors[0];
+            let bestScore = Infinity;
+            for (const cand of currNeighbors) {
+              const candPt = keyToPoint.get(cand);
+              if (!candPt) continue;
+              const turn = angleTurn(prevPt, currPt, candPt);
+              const score = turn > 0 ? 1000 + turn : Math.abs(turn); // prefer <=0
+              if (score < bestScore) {
+                bestScore = score;
+                best = cand;
+              }
+            }
+            next = best;
+          }
+        }
+
+        const e = edgeKey(curr, next);
+        if (visitedEdges.has(e)) break;
+        visitedEdges.add(e);
+
+        prev = curr;
+        curr = next;
+        path.push(curr);
+      }
     }
   }
-  
-  const pivot = points[start];
-  
-  // Sort points by polar angle with respect to pivot
-  const sorted = points
-    .filter((_, i) => i !== start)
-    .map(p => ({ point: p, angle: Math.atan2(p.y - pivot.y, p.x - pivot.x) }))
-    .sort((a, b) => a.angle - b.angle)
-    .map(p => p.point);
-  
-  // Cross product to determine turn direction
-  const cross = (o: Point2D, a: Point2D, b: Point2D) =>
-    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  
-  const hull: Point2D[] = [pivot];
-  
-  for (const p of sorted) {
-    while (hull.length > 1 && cross(hull[hull.length - 2], hull[hull.length - 1], p) <= 0) {
-      hull.pop();
-    }
-    hull.push(p);
-  }
-  
-  return hull;
+
+  // Convert to points
+  const pts = bestLoop.map(k => keyToPoint.get(k)).filter(Boolean) as Point2D[];
+  return pts;
 }
 
 // Point in polygon test (ray casting)
@@ -184,58 +257,55 @@ function extractOuterPolygonFromPayload(
 
 // Build a concave polygon from wall outer edges (fallback when no outerPolygon in payload)
 function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): Point2D[] {
-  // For each wall, collect the polyline that is FURTHER from the centroid (outer edge)
-  const outerEdgePoints: Point2D[] = [];
-  
+  // Requirements:
+  // 1) For each wall, choose the "exterior" polyline between offsets.left/right (higher avg distance to centroid)
+  // 2) Build adjacency from polyline segments (with tolerance snapping)
+  // 3) Extract the longest closed loop (boundary)
+
+  const tol = 0.01; // 10mm
+  const adj = new Map<PtKey, Set<PtKey>>();
+  const accum = new Map<PtKey, { sx: number; sy: number; n: number }>();
+
+  const addPoint = (p: Point2D) => {
+    const k = quantizeKey(p, tol);
+    const a = accum.get(k) ?? { sx: 0, sy: 0, n: 0 };
+    a.sx += p.x;
+    a.sy += p.y;
+    a.n += 1;
+    accum.set(k, a);
+    return k;
+  };
+
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
-    
     if (leftPts.length < 2 || rightPts.length < 2) continue;
-    
-    // Calculate average distance to centroid for each polyline
-    const avgDistLeft = leftPts.reduce((sum, p) => {
-      const dx = p.x - centroid.x;
-      const dy = p.y - centroid.y;
-      return sum + Math.sqrt(dx * dx + dy * dy);
-    }, 0) / leftPts.length;
-    
-    const avgDistRight = rightPts.reduce((sum, p) => {
-      const dx = p.x - centroid.x;
-      const dy = p.y - centroid.y;
-      return sum + Math.sqrt(dx * dx + dy * dy);
-    }, 0) / rightPts.length;
-    
-    // Choose the polyline that is further from centroid (outer edge)
-    const outerPts = avgDistLeft >= avgDistRight ? leftPts : rightPts;
-    outerEdgePoints.push(...outerPts);
-  }
-  
-  if (outerEdgePoints.length < 3) return [];
-  
-  // Sort points by angle from centroid to create ordered polygon
-  const sortedPoints = outerEdgePoints
-    .map(p => ({
-      point: p,
-      angle: Math.atan2(p.y - centroid.y, p.x - centroid.x)
-    }))
-    .sort((a, b) => a.angle - b.angle)
-    .map(item => item.point);
-  
-  // Remove duplicates (within tolerance)
-  const tolerance = 0.01; // 10mm
-  const uniquePoints: Point2D[] = [];
-  for (const p of sortedPoints) {
-    const isDuplicate = uniquePoints.some(existing => 
-      Math.abs(existing.x - p.x) < tolerance && Math.abs(existing.y - p.y) < tolerance
-    );
-    if (!isDuplicate) {
-      uniquePoints.push(p);
+
+    const avgDist = (pts: Point2D[]) =>
+      pts.reduce((sum, p) => sum + Math.hypot(p.x - centroid.x, p.y - centroid.y), 0) / pts.length;
+
+    const outerPts = avgDist(leftPts) >= avgDist(rightPts) ? leftPts : rightPts;
+    // Add segments to adjacency
+    for (let i = 0; i < outerPts.length - 1; i++) {
+      const aKey = addPoint(outerPts[i]);
+      const bKey = addPoint(outerPts[i + 1]);
+      addAdjEdge(adj, aKey, bKey);
     }
   }
-  
-  console.log(`[Footprint] Built concave polygon from wall edges (${uniquePoints.length} points)`);
-  return uniquePoints;
+
+  if (adj.size < 3) return [];
+
+  // Build key -> representative point map (average of snapped samples)
+  const keyToPoint = new Map<PtKey, Point2D>();
+  for (const [k, v] of accum.entries()) {
+    if (v.n > 0) keyToPoint.set(k, { x: v.sx / v.n, y: v.sy / v.n });
+  }
+
+  const loopPts = extractLongestClosedLoop(adj, keyToPoint);
+  if (loopPts.length >= 3) {
+    console.log(`[Footprint] Built concave boundary loop from wall edges (${loopPts.length} points)`);
+  }
+  return loopPts;
 }
 
 // Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
@@ -279,10 +349,9 @@ function computeBuildingFootprint(
     return { centroid, hull: concavePolygon };
   }
   
-  // Fallback: Use convex hull (last resort, may fail for L/U shapes)
-  console.warn('[Footprint] Falling back to convex hull - may misclassify concave walls');
-  const hull = convexHull(allWallPoints);
-  return { centroid, hull };
+  // No convex hull fallback (explicit requirement).
+  console.warn('[Footprint] No outerPolygon in payload and could not build concave loop from walls');
+  return { centroid, hull: [] };
 }
 
 // ===== Wall Geometry Data =====
