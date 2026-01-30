@@ -380,8 +380,12 @@ function chooseOutNormal(
   n: Point2D,
   outerPoly: Point2D[]
 ): { isExterior: boolean; outN: Point2D } {
+  if (outerPoly.length < 3) {
+    return { isExterior: false, outN: n };
+  }
+  
   // Test at multiple distances for robustness
-  const testEps = [0.1, 0.25, 0.5, 0.75, 1.0]; // meters
+  const testEps = [0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1.0]; // meters - added smaller offsets
   
   for (const eps of testEps) {
     const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
@@ -398,8 +402,84 @@ function chooseOutNormal(
     }
   }
   
-  // Both sides equal at all offsets → interior partition wall
+  // Both sides equal at all offsets - check if wall is ON the footprint boundary
+  // This handles edge cases where the wall centerline coincides with the footprint edge
+  const distToEdge = distanceToPolygonEdge(mid, outerPoly);
+  
+  // If wall midpoint is within 200mm of a footprint edge, it's a perimeter wall
+  if (distToEdge < 0.2) {
+    // Determine exterior direction by checking which side is further from centroid
+    // or by testing at a very small offset
+    const pPlus = { x: mid.x + n.x * 0.01, y: mid.y + n.y * 0.01 };
+    const pMinus = { x: mid.x - n.x * 0.01, y: mid.y - n.y * 0.01 };
+    
+    const inPlus = pointInPolygon(pPlus, outerPoly);
+    const inMinus = pointInPolygon(pMinus, outerPoly);
+    
+    // If one is inside, the other is exterior
+    if (inPlus && !inMinus) {
+      return { isExterior: true, outN: n };
+    } else if (!inPlus && inMinus) {
+      return { isExterior: true, outN: { x: -n.x, y: -n.y } };
+    }
+    
+    // If still ambiguous but close to edge, assume exterior with default normal
+    // Use direction away from polygon centroid
+    const centroid = polygonCentroid(outerPoly);
+    const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
+    const dotN = toMid.x * n.x + toMid.y * n.y;
+    const outN = dotN > 0 ? n : { x: -n.x, y: -n.y };
+    
+    return { isExterior: true, outN };
+  }
+  
+  // Both sides equal at all offsets and not on edge → interior partition wall
   return { isExterior: false, outN: n };
+}
+
+// Helper: distance from point to polygon edge
+function distanceToPolygonEdge(p: Point2D, polygon: Point2D[]): number {
+  if (polygon.length < 2) return Infinity;
+  
+  let minDist = Infinity;
+  const n = polygon.length;
+  
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const dist = pointToSegmentDistance(p, polygon[i], polygon[j]);
+    if (dist < minDist) minDist = dist;
+  }
+  
+  return minDist;
+}
+
+// Helper: distance from point to line segment
+function pointToSegmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  
+  if (lenSq < 0.0001) {
+    return Math.sqrt((p.x - a.x) ** 2 + (p.y - a.y) ** 2);
+  }
+  
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  const projX = a.x + t * dx;
+  const projY = a.y + t * dy;
+  
+  return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
+}
+
+// Helper: polygon centroid
+function polygonCentroid(polygon: Point2D[]): Point2D {
+  if (polygon.length === 0) return { x: 0, y: 0 };
+  
+  let cx = 0, cy = 0;
+  for (const p of polygon) {
+    cx += p.x;
+    cy += p.y;
+  }
+  return { x: cx / polygon.length, y: cy / polygon.length };
 }
 
 // A wall is exterior if one side is outside the footprint hull
