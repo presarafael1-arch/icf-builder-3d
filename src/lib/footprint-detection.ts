@@ -698,9 +698,9 @@ export function detectFootprintAndClassify(
       const scoreThreshold = candidates[0].score * 0.5;
       const isHighScorer = cand.score >= scoreThreshold;
       
-      // Relaxed thresholds for high scorers
-      const maxOutsideRatio = isHighScorer ? 0.35 : 0.25;
-      const minPerimeterRatio = isHighScorer ? 0.10 : 0.15;
+      // Relaxed thresholds for high scorers - buildings with many interior walls can have 40%+ "outside" chains
+      const maxOutsideRatio = isHighScorer ? 0.50 : 0.35;
+      const minPerimeterRatio = isHighScorer ? 0.08 : 0.12;
       
       if (outsideRatio > maxOutsideRatio) {
         console.log(`[FootprintDetection] Rejecting candidate ${cand.index}: outsideRatio=${outsideRatio.toFixed(2)} > ${maxOutsideRatio}`);
