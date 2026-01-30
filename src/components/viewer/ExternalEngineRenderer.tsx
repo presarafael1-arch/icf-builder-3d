@@ -1106,12 +1106,12 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     <group>
       {/* Left surface */}
       <mesh geometry={leftGeom} renderOrder={5}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} />
+        <meshBasicMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
       </mesh>
       
       {/* Right surface */}
       <mesh geometry={rightGeom} renderOrder={5}>
-        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} />
+        <meshBasicMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
       </mesh>
       
       {/* Course lines */}
