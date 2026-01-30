@@ -536,43 +536,40 @@ interface PanelSkinProps {
   z1: number;           // Top Y (height)
   startPt: { x: number; y: number };  // Start point of this skin polyline
   u2: { x: number; y: number };       // Direction along wall
-  n2: { x: number; y: number };       // Normal direction (perpendicular, 2D)
   color: number;
   isSelected: boolean;
 }
 
-function PanelSkin({ x0, x1, z0, z1, startPt, u2, n2, color, isSelected }: PanelSkinProps) {
-  // Render as a thin solid box instead of an infinitely-thin quad.
-  // This eliminates depth artefacts that can look like “seeing through” panels.
-  const width = Math.max(0.0001, x1 - x0);
-  const height = Math.max(0.0001, z1 - z0);
-  const depth = EPS_THICKNESS * 0.95; // ~67mm (foam thickness visual)
-
-  const transform = useMemo(() => {
-    const centerT = (x0 + x1) / 2;
-    const cx2 = startPt.x + u2.x * centerT;
-    const cy2 = startPt.y + u2.y * centerT;
-
-    // Push the box “out” from the surface so it doesn't straddle both sides.
-    const px2 = cx2 + n2.x * (depth / 2);
-    const py2 = cy2 + n2.y * (depth / 2);
-
-    const pos = new THREE.Vector3(px2, (z0 + z1) / 2, py2);
-
-    const u3 = new THREE.Vector3(u2.x, 0, u2.y).normalize();
-    const up = new THREE.Vector3(0, 1, 0);
-    const n3 = new THREE.Vector3(n2.x, 0, n2.y).normalize();
-    const m = new THREE.Matrix4().makeBasis(u3, up, n3);
-    const quat = new THREE.Quaternion().setFromRotationMatrix(m);
-
-    return { pos, quat };
-  }, [x0, x1, z0, z1, startPt.x, startPt.y, u2.x, u2.y, n2.x, n2.y, depth]);
-
+function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkinProps) {
+  const geometry = useMemo(() => {
+    // 4 corners of the panel skin
+    const bl = { x: startPt.x + u2.x * x0, y: startPt.y + u2.y * x0 }; // bottom-left
+    const br = { x: startPt.x + u2.x * x1, y: startPt.y + u2.y * x1 }; // bottom-right
+    
+    const vertices = new Float32Array([
+      // Bottom-left
+      bl.x, z0, bl.y,
+      // Bottom-right
+      br.x, z0, br.y,
+      // Top-right
+      br.x, z1, br.y,
+      // Top-left
+      bl.x, z1, bl.y,
+    ]);
+    
+    const indices = [0, 1, 2, 0, 2, 3]; // Two triangles
+    
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    return geom;
+  }, [x0, x1, z0, z1, startPt, u2]);
+  
   const displayColor = isSelected ? COLORS.SELECTED : color;
-
+  
   return (
-    <mesh position={transform.pos} quaternion={transform.quat} renderOrder={5}>
-      <boxGeometry args={[width, height, depth]} />
+    <mesh geometry={geometry} renderOrder={5}>
       <meshBasicMaterial
         color={displayColor}
         side={THREE.DoubleSide}
@@ -769,7 +766,6 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={extStart}
         u2={u2}
-        n2={extNormalDir}
         color={panelColor}
         isSelected={isSelected}
       />
@@ -814,7 +810,6 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={intStart}
         u2={u2}
-        n2={intNormalDir}
         color={panelColor}
         isSelected={isSelected}
       />
