@@ -795,36 +795,49 @@ function computeWallGeometry(
     const DOT_THRESHOLD = 0.15; // threshold for ambiguous cases
     
     if (Math.abs(dotLeft) < DOT_THRESHOLD) {
-      // Ambiguous case: do a more robust inside/outside test using an offset further in the outN direction.
-      // We test points slightly BEYOND each polyline, in the direction away from the wall center.
-      // The side whose test point is outside the footprint is the exterior side.
-      const TEST_OFFSETS = [0.25, 0.6, 1.0]; // meters
-
-      const leftDirLen = Math.max(1e-9, Math.sqrt(toLeft.x * toLeft.x + toLeft.y * toLeft.y));
-      const leftDir = { x: toLeft.x / leftDirLen, y: toLeft.y / leftDirLen };
-      const rightDir = { x: -leftDir.x, y: -leftDir.y };
-
-      const testSide = (mid: Point2D, dir: Point2D) => {
-        for (const d of TEST_OFFSETS) {
-          const p = { x: mid.x + dir.x * d, y: mid.y + dir.y * d };
-          if (!pointInPolygon(p, footprintHull)) return 'outside' as const;
-        }
-        return 'inside' as const;
-      };
-
-      const leftTest = testSide(leftMid, leftDir);
-      const rightTest = testSide(rightMid, rightDir);
-
-      if (leftTest === 'outside' && rightTest !== 'outside') {
-        exteriorSide = 'left';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (offset PIP: left outside)`);
-      } else if (rightTest === 'outside' && leftTest !== 'outside') {
-        exteriorSide = 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (offset PIP: right outside)`);
+      // Ambiguous case: use distance to footprint boundary as the tiebreaker.
+      // The polyline CLOSER to the footprint edge is on the exterior side.
+      const leftDistToBoundary = distanceToPolygonBoundary(leftMid, footprintHull);
+      const rightDistToBoundary = distanceToPolygonBoundary(rightMid, footprintHull);
+      
+      // If one side is significantly closer to boundary (>5cm difference), use that
+      const BOUNDARY_DIFF_THRESHOLD = 0.05; // 50mm
+      const boundaryDiff = leftDistToBoundary - rightDistToBoundary;
+      
+      if (Math.abs(boundaryDiff) > BOUNDARY_DIFF_THRESHOLD) {
+        // Pick the side CLOSER to the footprint boundary (smaller distance)
+        exteriorSide = leftDistToBoundary < rightDistToBoundary ? 'left' : 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (boundary dist: L=${leftDistToBoundary.toFixed(3)}, R=${rightDistToBoundary.toFixed(3)})`);
       } else {
-        // Still ambiguous → fall back to "in outN direction" using dotLeft sign.
-        exteriorSide = dotLeft > 0 ? 'left' : 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (ambiguous offset PIP → dot fallback, dotLeft=${dotLeft.toFixed(3)})`);
+        // Boundary distances are too similar - use offset PIP test
+        const TEST_OFFSETS = [0.25, 0.6, 1.0]; // meters
+
+        const leftDirLen = Math.max(1e-9, Math.sqrt(toLeft.x * toLeft.x + toLeft.y * toLeft.y));
+        const leftDir = { x: toLeft.x / leftDirLen, y: toLeft.y / leftDirLen };
+        const rightDir = { x: -leftDir.x, y: -leftDir.y };
+
+        const testSide = (mid: Point2D, dir: Point2D) => {
+          for (const d of TEST_OFFSETS) {
+            const p = { x: mid.x + dir.x * d, y: mid.y + dir.y * d };
+            if (!pointInPolygon(p, footprintHull)) return 'outside' as const;
+          }
+          return 'inside' as const;
+        };
+
+        const leftTest = testSide(leftMid, leftDir);
+        const rightTest = testSide(rightMid, rightDir);
+
+        if (leftTest === 'outside' && rightTest !== 'outside') {
+          exteriorSide = 'left';
+          console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (offset PIP: left outside)`);
+        } else if (rightTest === 'outside' && leftTest !== 'outside') {
+          exteriorSide = 'right';
+          console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (offset PIP: right outside)`);
+        } else {
+          // Final fallback: use boundary distance (the closer one is exterior)
+          exteriorSide = leftDistToBoundary < rightDistToBoundary ? 'left' : 'right';
+          console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (final fallback boundary: L=${leftDistToBoundary.toFixed(3)}, R=${rightDistToBoundary.toFixed(3)})`);
+        }
       }
     } else {
       exteriorSide = dotLeft > 0 ? 'left' : 'right';
