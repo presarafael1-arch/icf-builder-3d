@@ -384,25 +384,31 @@ interface WallGeometryData {
 // Determine wall exterior status using footprint hull
 // Robust exterior detection using multiple test offsets
 // Tests at various distances to handle walls near the footprint boundary
+// Static counter for debug logging
+let _chooseOutNormalCallCount = 0;
+
 function chooseOutNormal(
   mid: Point2D,
   n: Point2D,
   outerPoly: Point2D[],
   wallId?: string
 ): { isExterior: boolean; outN: Point2D } {
+  _chooseOutNormalCallCount++;
+  const isFirstCall = _chooseOutNormalCallCount === 1;
+  
   if (outerPoly.length < 3) {
-    console.warn(`[Wall ${wallId}] No valid polygon - defaulting to interior`);
+    console.warn(`[Wall ${wallId}] No valid polygon (length=${outerPoly.length}) - defaulting to interior`);
     return { isExterior: false, outN: n };
   }
 
   // Debug: Log first wall's test results in detail
-  const isFirstWall = wallId === '0' || wallId === 'wall_0';
-  if (isFirstWall) {
+  if (isFirstCall) {
     // Calculate footprint bounds for debugging
     const polyMinX = Math.min(...outerPoly.map(p => p.x));
     const polyMaxX = Math.max(...outerPoly.map(p => p.x));
     const polyMinY = Math.min(...outerPoly.map(p => p.y));
     const polyMaxY = Math.max(...outerPoly.map(p => p.y));
+    console.log(`[Footprint Debug] Polygon has ${outerPoly.length} points`);
     console.log(`[Footprint Debug] Polygon bounds: X[${polyMinX.toFixed(2)}, ${polyMaxX.toFixed(2)}] Y[${polyMinY.toFixed(2)}, ${polyMaxY.toFixed(2)}]`);
     console.log(`[Footprint Debug] Wall ${wallId} mid: (${mid.x.toFixed(2)}, ${mid.y.toFixed(2)}), n: (${n.x.toFixed(3)}, ${n.y.toFixed(3)})`);
   }
@@ -419,8 +425,8 @@ function chooseOutNormal(
     const inPlus = pointInPolygon(pPlus, outerPoly);
     const inMinus = pointInPolygon(pMinus, outerPoly);
     
-    // Debug log for first wall
-    if (isFirstWall && eps === 1.0) {
+    // Debug log for first wall at 1m offset
+    if (isFirstCall && eps === 1.0) {
       console.log(`[Footprint Debug] Wall ${wallId} @ eps=1.0m: pPlus(${pPlus.x.toFixed(2)}, ${pPlus.y.toFixed(2)})=${inPlus}, pMinus(${pMinus.x.toFixed(2)}, ${pMinus.y.toFixed(2)})=${inMinus}`);
     }
     
@@ -448,6 +454,9 @@ function chooseOutNormal(
   }
   
   // Both sides equal at all offsets → interior partition wall
+  if (isFirstCall) {
+    console.log(`[Footprint Debug] Wall ${wallId} FAILED classification: boundaryDist=${boundaryDist.toFixed(2)}m, all inPlus===inMinus`);
+  }
   console.log(`[Wall ${wallId}] PARTITION: all tests returned same value (boundaryDist=${boundaryDist.toFixed(2)}m)`);
   return { isExterior: false, outN: n };
 }
