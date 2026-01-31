@@ -705,6 +705,26 @@ function computeWallGeometry(
   
   // Perpendicular: perp(u) = (u.y, -u.x)
   const n2 = { x: u2.y, y: -u2.x };
+
+  // IMPORTANT:
+  // chainSides (detectFootprintAndClassify) defines outsideIsPositivePerp relative to a
+  // deterministic centerline direction (start->end). Some payloads provide wall.axis.u
+  // with arbitrary sign, which flips n2 and can invert exterior side.
+  // To avoid that, we compute a stable centerline-perp (nChain) from averaged endpoints
+  // and use it ONLY for exterior-side decisions.
+  const centerStart = {
+    x: (leftPts[0].x + rightPts[0].x) / 2,
+    y: (leftPts[0].y + rightPts[0].y) / 2,
+  };
+  const centerEnd = {
+    x: (leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2,
+    y: (leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2,
+  };
+  const chainDx = centerEnd.x - centerStart.x;
+  const chainDy = centerEnd.y - centerStart.y;
+  const chainLen = Math.sqrt(chainDx * chainDx + chainDy * chainDy);
+  const uChain = chainLen > 1e-9 ? { x: chainDx / chainLen, y: chainDy / chainLen } : u2;
+  const nChain = { x: uChain.y, y: -uChain.x };
   
   const wallLength = wall.length ?? Math.sqrt(
     Math.pow(leftPts[leftPts.length - 1].x - leftPts[0].x, 2) +
@@ -720,17 +740,18 @@ function computeWallGeometry(
   // Prefer chain-based side classification when available (more robust and deterministic)
   const chainSide = chainSides?.get(String(wall.id));
   let isExterior = false;
-  let outN = n2;
+  let outN = nChain;
   if (chainSide) {
     const cls = chainSide.classification;
     if (!chainSide.isOutsideFootprint && (cls === 'LEFT_EXT' || cls === 'RIGHT_EXT')) {
       isExterior = true;
-      // outsideIsPositivePerp uses the same perp convention (dy/len, -dx/len) as n2.
-      outN = chainSide.outsideIsPositivePerp ? n2 : { x: -n2.x, y: -n2.y };
+      // outsideIsPositivePerp is defined against a deterministic (start->end) perp.
+      // Use nChain here to avoid sign mismatches from wall.axis.u.
+      outN = chainSide.outsideIsPositivePerp ? nChain : { x: -nChain.x, y: -nChain.y };
     } else {
       // If chain-based classification says PARTITION/UNRESOLVED, do a geometric sanity check.
       // This prevents perimeter walls from incorrectly falling into BOTH_INT due to minor graph issues.
-      const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
+      const check = chooseOutNormal(wallCenterMid, nChain, footprintHull, wall.id);
       isExterior = check.isExterior;
       outN = check.outN;
     }
@@ -738,7 +759,7 @@ function computeWallGeometry(
     console.log(`[Wall ${wall.id}] chainSides → cls=${cls}, isOutside=${chainSide.isOutsideFootprint}, outsideIsPosPerp=${chainSide.outsideIsPositivePerp} → isExterior=${isExterior}`);
   } else {
     // Fallback to geometric footprint sampling
-    const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
+    const check = chooseOutNormal(wallCenterMid, nChain, footprintHull, wall.id);
     isExterior = check.isExterior;
     outN = check.outN;
     console.log(`[Wall ${wall.id}] NO chainSide entry → fallback chooseOutNormal → isExterior=${isExterior}`);
@@ -774,33 +795,36 @@ function computeWallGeometry(
     const DOT_THRESHOLD = 0.15; // threshold for ambiguous cases
     
     if (Math.abs(dotLeft) < DOT_THRESHOLD) {
-      // Ambiguous case: test which polyline midpoint is outside the footprint
-      // NOTE: The exterior SKIN should face INWARD toward building (closer to centroid)
-      // because the "exterior polyline" refers to the wall edge, not the skin direction
-      const leftInside = pointInPolygon(leftMid, footprintHull);
-      const rightInside = pointInPolygon(rightMid, footprintHull);
-      
-      if (!leftInside && rightInside) {
-        // Left is outside footprint, so RIGHT is the exterior-facing skin
-        exteriorSide = 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (PIP fallback: left outside → right is ext skin)`);
-      } else if (leftInside && !rightInside) {
-        // Right is outside footprint, so LEFT is the exterior-facing skin
+      // Ambiguous case: do a more robust inside/outside test using an offset further in the outN direction.
+      // We test points slightly BEYOND each polyline, in the direction away from the wall center.
+      // The side whose test point is outside the footprint is the exterior side.
+      const TEST_OFFSETS = [0.25, 0.6, 1.0]; // meters
+
+      const leftDirLen = Math.max(1e-9, Math.sqrt(toLeft.x * toLeft.x + toLeft.y * toLeft.y));
+      const leftDir = { x: toLeft.x / leftDirLen, y: toLeft.y / leftDirLen };
+      const rightDir = { x: -leftDir.x, y: -leftDir.y };
+
+      const testSide = (mid: Point2D, dir: Point2D) => {
+        for (const d of TEST_OFFSETS) {
+          const p = { x: mid.x + dir.x * d, y: mid.y + dir.y * d };
+          if (!pointInPolygon(p, footprintHull)) return 'outside' as const;
+        }
+        return 'inside' as const;
+      };
+
+      const leftTest = testSide(leftMid, leftDir);
+      const rightTest = testSide(rightMid, rightDir);
+
+      if (leftTest === 'outside' && rightTest !== 'outside') {
         exteriorSide = 'left';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: right outside → left is ext skin)`);
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (offset PIP: left outside)`);
+      } else if (rightTest === 'outside' && leftTest !== 'outside') {
+        exteriorSide = 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (offset PIP: right outside)`);
       } else {
-        // Both inside or both outside - use centroid distance as final fallback
-        // The side CLOSER to centroid is the interior skin, so pick the OTHER side
-        const centroid = polygonCentroid(footprintHull);
-        const leftDistToCentroid = Math.sqrt(
-          Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2)
-        );
-        const rightDistToCentroid = Math.sqrt(
-          Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2)
-        );
-        // Pick the side FURTHER from centroid (that's the exterior-facing skin)
-        exteriorSide = leftDistToCentroid > rightDistToCentroid ? 'left' : 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (centroid dist fallback: L=${leftDistToCentroid.toFixed(2)}, R=${rightDistToCentroid.toFixed(2)})`);
+        // Still ambiguous → fall back to "in outN direction" using dotLeft sign.
+        exteriorSide = dotLeft > 0 ? 'left' : 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (ambiguous offset PIP → dot fallback, dotLeft=${dotLeft.toFixed(3)})`);
       }
     } else {
       exteriorSide = dotLeft > 0 ? 'left' : 'right';
