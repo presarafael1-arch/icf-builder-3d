@@ -830,86 +830,43 @@ function computeWallGeometry(
   let exteriorSide: 'left' | 'right' | null = null;
   
   if (isExteriorWall && footprintHull.length >= 3) {
-    // Determine which polyline (left or right) is on the exterior side
-    // by testing which midpoint is further in the outN direction
-    
-    // Calculate midpoints of each polyline.
-    // IMPORTANT: endpoints-midpoint is not reliable when offsets have many segments
-    // (e.g., corners/curves/joins). Use arclength midpoint.
-    const leftMid = polylineMidpoint(leftPts);
-    const rightMid = polylineMidpoint(rightPts);
-    
-    // Vector from wall center to left polyline midpoint
-    const toLeft = { 
-      x: leftMid.x - wallCenterMid.x, 
-      y: leftMid.y - wallCenterMid.y 
-    };
-    
-    // Dot product with outN - positive means left is on exterior side
-    const dotLeft = toLeft.x * outN.x + toLeft.y * outN.y;
-    
-    // If dotLeft is ambiguous (close to 0), use direct point-in-polygon test
-    const DOT_THRESHOLD = 0.15; // threshold for ambiguous cases
-    
-    if (Math.abs(dotLeft) < DOT_THRESHOLD) {
-      // Ambiguous case: use distance to footprint boundary as the tiebreaker.
-      // The polyline CLOSER to the footprint edge is on the exterior side.
-      const leftDistToBoundary = distanceToPolygonBoundary(leftMid, footprintHull);
-      const rightDistToBoundary = distanceToPolygonBoundary(rightMid, footprintHull);
-      
-      // If one side is significantly closer to boundary (>5cm difference), use that
-      const BOUNDARY_DIFF_THRESHOLD = 0.05; // 50mm
-      const boundaryDiff = leftDistToBoundary - rightDistToBoundary;
-      
-      if (Math.abs(boundaryDiff) > BOUNDARY_DIFF_THRESHOLD) {
-        // Pick the side CLOSER to the footprint boundary (smaller distance)
-        exteriorSide = leftDistToBoundary < rightDistToBoundary ? 'left' : 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (boundary dist: L=${leftDistToBoundary.toFixed(3)}, R=${rightDistToBoundary.toFixed(3)})`);
-      } else {
-        // Boundary distances are too similar - use offset PIP test
-        const TEST_OFFSETS = [0.25, 0.6, 1.0]; // meters
-
-        // IMPORTANT:
-        // We MUST test along the wall normal (n2), not along (center->leftMid).
-        // In some geometries center->leftMid can become nearly tangent to the wall,
-        // making the PIP test meaningless and causing the logic to fall back to
-        // boundary distances (which are often equal within 1-2mm).
-        //
-        // Here we probe the two half-spaces (+n2 and -n2) and then map them back
-        // to left/right using the sign of dot(toLeft, n2).
-
-        const dotLeftN = toLeft.x * n2.x + toLeft.y * n2.y;
-        const leftIsPlusN = dotLeftN >= 0;
-
-        const testHalfSpace = (sign: 1 | -1) => {
-          for (const d of TEST_OFFSETS) {
-            const p = { x: wallCenterMid.x + n2.x * d * sign, y: wallCenterMid.y + n2.y * d * sign };
-            if (!pointInPolygon(p, footprintHull)) return 'outside' as const;
-          }
-          return 'inside' as const;
-        };
-
-        const plusTest = testHalfSpace(1);
-        const minusTest = testHalfSpace(-1);
-
-        const leftTest = leftIsPlusN ? plusTest : minusTest;
-        const rightTest = leftIsPlusN ? minusTest : plusTest;
-
-        if (leftTest === 'outside' && rightTest !== 'outside') {
-          exteriorSide = 'left';
-          console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (offset PIP: left outside)`);
-        } else if (rightTest === 'outside' && leftTest !== 'outside') {
-          exteriorSide = 'right';
-          console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (offset PIP: right outside)`);
-        } else {
-          // Final fallback: use boundary distance (the closer one is exterior)
-          exteriorSide = leftDistToBoundary < rightDistToBoundary ? 'left' : 'right';
-          console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (final fallback boundary: L=${leftDistToBoundary.toFixed(3)}, R=${rightDistToBoundary.toFixed(3)})`);
-        }
-      }
+    // Decide which polyline faces exterior.
+    // Robust rule: n2 is normalized to point LEFT->RIGHT. outN is the "outside" normal.
+    // Therefore, if outN aligns with +n2, the exterior side is RIGHT; otherwise LEFT.
+    const outDotN2 = outN.x * n2.x + outN.y * n2.y;
+    const DOT_THRESHOLD = 0.15;
+    if (Math.abs(outDotN2) >= DOT_THRESHOLD) {
+      exteriorSide = outDotN2 > 0 ? 'right' : 'left';
+      console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (outN·n2=${outDotN2.toFixed(3)})`);
     } else {
-      exteriorSide = dotLeft > 0 ? 'left' : 'right';
-      console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotLeft: ${dotLeft.toFixed(3)}`);
+      // Near-perpendicular/unstable: use PIP half-space test along +/-n2.
+      const TEST_OFFSETS = [0.25, 0.6, 1.0]; // meters
+      const testHalfSpace = (sign: 1 | -1) => {
+        for (const d of TEST_OFFSETS) {
+          const p = { x: wallCenterMid.x + n2.x * d * sign, y: wallCenterMid.y + n2.y * d * sign };
+          if (!pointInPolygon(p, footprintHull)) return 'outside' as const;
+        }
+        return 'inside' as const;
+      };
+
+      const plusTest = testHalfSpace(1);
+      const minusTest = testHalfSpace(-1);
+
+      if (plusTest === 'outside' && minusTest !== 'outside') {
+        exteriorSide = 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (offset PIP: +n2 outside)`);
+      } else if (minusTest === 'outside' && plusTest !== 'outside') {
+        exteriorSide = 'left';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (offset PIP: -n2 outside)`);
+      } else {
+        // Last resort: choose the side closer to boundary using arclength midpoints.
+        const leftMid = polylineMidpoint(leftPts);
+        const rightMid = polylineMidpoint(rightPts);
+        const leftDistToBoundary = distanceToPolygonBoundary(leftMid, footprintHull);
+        const rightDistToBoundary = distanceToPolygonBoundary(rightMid, footprintHull);
+        exteriorSide = leftDistToBoundary < rightDistToBoundary ? 'left' : 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (final boundary: L=${leftDistToBoundary.toFixed(3)}, R=${rightDistToBoundary.toFixed(3)})`);
+      }
     }
   } else {
     console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
