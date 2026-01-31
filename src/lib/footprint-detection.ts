@@ -686,43 +686,21 @@ export function detectFootprintAndClassify(
       });
     }
     
-    // Sort by containsCount (primary) then score (secondary)
-    // A candidate that contains other faces is definitively the outer envelope
-    candidates.sort((a, b) => {
-      // Primary: containsCount - the face that contains others IS the footprint
-      if (b.containsCount !== a.containsCount) {
-        return b.containsCount - a.containsCount;
-      }
-      // Secondary: score for tie-breaking
-      return b.score - a.score;
-    });
+    // Sort by score (highest first)
+    candidates.sort((a, b) => b.score - a.score);
     
-    // Select best candidate - if it contains other faces, accept unconditionally
+    // Select best candidate that passes validation
     for (const cand of candidates) {
       const outsideRatio = cand.outsideCount / chains.length;
       const perimeterRatio = cand.perimeterCount / chains.length;
       
-      // If this candidate CONTAINS other faces, it's definitively the outer envelope
-      // Accept it without threshold checks (complex buildings have many interior walls)
-      if (cand.containsCount > 0) {
-        console.log(`[FootprintDetection] Selected candidate ${cand.index} (contains ${cand.containsCount} faces, outsideRatio=${outsideRatio.toFixed(2)}, perimeterRatio=${perimeterRatio.toFixed(2)})`);
-        outerPolygon = cand.polygon;
-        outerArea = cand.area;
-        footprintOrientation = cand.orientation;
-        
-        // Collect interior loops
-        for (let j = 0; j < faces.length; j++) {
-          if (j === cand.index) continue;
-          if (faceMeta[j].area > 1000 && containsCentroid(outerPolygon, faces[j])) {
-            interiorLoops.push(faces[j]);
-          }
-        }
-        break;
-      }
+      // More lenient thresholds for high-scoring candidates
+      const scoreThreshold = candidates[0].score * 0.5;
+      const isHighScorer = cand.score >= scoreThreshold;
       
-      // For candidates with containsCount=0, apply thresholds
-      const maxOutsideRatio = 0.60;
-      const minPerimeterRatio = 0.05;
+      // Relaxed thresholds for high scorers
+      const maxOutsideRatio = isHighScorer ? 0.35 : 0.25;
+      const minPerimeterRatio = isHighScorer ? 0.10 : 0.15;
       
       if (outsideRatio > maxOutsideRatio) {
         console.log(`[FootprintDetection] Rejecting candidate ${cand.index}: outsideRatio=${outsideRatio.toFixed(2)} > ${maxOutsideRatio}`);
@@ -740,7 +718,7 @@ export function detectFootprintAndClassify(
       outerArea = cand.area;
       footprintOrientation = cand.orientation;
       
-      // Collect interior loops
+      // Collect interior loops (all other faces that are inside this one)
       for (let j = 0; j < faces.length; j++) {
         if (j === cand.index) continue;
         if (faceMeta[j].area > 1000 && containsCentroid(outerPolygon, faces[j])) {

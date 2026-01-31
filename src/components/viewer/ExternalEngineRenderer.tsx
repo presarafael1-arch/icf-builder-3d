@@ -18,8 +18,6 @@ import * as THREE from 'three';
 import { ThreeEvent } from '@react-three/fiber';
 import { Text, Html, Line } from '@react-three/drei';
 import { NormalizedExternalAnalysis, GraphWall, Course, GraphNode, EnginePanel, Vec3 } from '@/types/external-engine';
-import { buildWallChainsAutoTuned } from '@/lib/wall-chains';
-import { WallSegment } from '@/types/icf';
 
 interface ExternalEngineRendererProps {
   normalizedAnalysis: NormalizedExternalAnalysis;
@@ -257,61 +255,77 @@ function extractOuterPolygonFromPayload(
   return null;
 }
 
-// Build footprint using the robust wall-chains algorithm (same as DXF footprint detection)
-// Converts GraphWall[] to WallSegment[] (centerlines in mm) and runs buildWallChainsAutoTuned
-function buildFootprintViaWallChains(walls: GraphWall[]): Point2D[] {
-  if (walls.length === 0) return [];
-  
-  // Convert GraphWall[] to WallSegment[] (centerlines in mm)
-  const wallSegmentsMm: WallSegment[] = [];
-  
-  for (let i = 0; i < walls.length; i++) {
-    const wall = walls[i];
+// Build a concave polygon from wall outer edges (fallback when no outerPolygon in payload)
+function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): Point2D[] {
+  // Requirements:
+  // 1) For each wall, choose the "exterior" polyline between offsets.left/right (higher avg distance to centroid)
+  // 2) Build adjacency from polyline segments (with tolerance snapping)
+  // 3) Extract the longest closed loop (boundary)
+
+  // NOTE: Offset polylines at corners often don't share identical endpoints.
+  // We therefore use a slightly looser snap + a secondary "bridging" step.
+  const tol = 0.05; // 50mm
+  const adj = new Map<PtKey, Set<PtKey>>();
+  const accum = new Map<PtKey, { sx: number; sy: number; n: number }>();
+
+  const addPoint = (p: Point2D) => {
+    const k = quantizeKey(p, tol);
+    const a = accum.get(k) ?? { sx: 0, sy: 0, n: 0 };
+    a.sx += p.x;
+    a.sy += p.y;
+    a.n += 1;
+    accum.set(k, a);
+    return k;
+  };
+
+  for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
-    
     if (leftPts.length < 2 || rightPts.length < 2) continue;
-    
-    // Derive centerline endpoints (average of left/right at start and end)
-    const startX = ((leftPts[0].x + rightPts[0].x) / 2) * 1000; // meters to mm
-    const startY = ((leftPts[0].y + rightPts[0].y) / 2) * 1000;
-    const endX = ((leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2) * 1000;
-    const endY = ((leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2) * 1000;
-    
-    const dx = endX - startX;
-    const dy = endY - startY;
-    const length = Math.sqrt(dx * dx + dy * dy);
-    const angle = Math.atan2(dy, dx);
-    
-    wallSegmentsMm.push({
-      id: wall.id || `wall-${i}`,
-      projectId: 'external-engine',
-      startX,
-      startY,
-      endX,
-      endY,
-      length,
-      angle,
-    });
+
+    const avgDist = (pts: Point2D[]) =>
+      pts.reduce((sum, p) => sum + Math.hypot(p.x - centroid.x, p.y - centroid.y), 0) / pts.length;
+
+    const outerPts = avgDist(leftPts) >= avgDist(rightPts) ? leftPts : rightPts;
+    // Add segments to adjacency
+    for (let i = 0; i < outerPts.length - 1; i++) {
+      const aKey = addPoint(outerPts[i]);
+      const bKey = addPoint(outerPts[i + 1]);
+      addAdjEdge(adj, aKey, bKey);
+    }
   }
-  
-  if (wallSegmentsMm.length === 0) return [];
-  
-  // Run the robust chain-based footprint detection
-  const chainsResult = buildWallChainsAutoTuned(wallSegmentsMm);
-  const outerPolygonMm = chainsResult.footprint?.outerPolygon;
-  
-  if (outerPolygonMm && outerPolygonMm.length >= 3) {
-    // Convert back to meters
-    const outerPolygonM = outerPolygonMm.map(pt => ({
-      x: pt.x / 1000,
-      y: pt.y / 1000,
-    }));
-    console.log(`[Footprint] Using chain-based footprint (wall-chains) with ${outerPolygonM.length} vertices`);
-    return outerPolygonM;
+
+  if (adj.size < 3) return [];
+
+  // Build key -> representative point map (average of snapped samples)
+  const keyToPoint = new Map<PtKey, Point2D>();
+  for (const [k, v] of accum.entries()) {
+    if (v.n > 0) keyToPoint.set(k, { x: v.sx / v.n, y: v.sy / v.n });
   }
-  
-  return [];
+
+  // Secondary: bridge near-coincident endpoints so the boundary becomes a closed loop.
+  // This helps in L/U shapes where outer offset corners don't meet perfectly.
+  const keys = [...keyToPoint.keys()];
+  const joinTol = 0.15; // 150mm
+  for (let i = 0; i < keys.length; i++) {
+    const aKey = keys[i];
+    const aPt = keyToPoint.get(aKey);
+    if (!aPt) continue;
+    for (let j = i + 1; j < keys.length; j++) {
+      const bKey = keys[j];
+      const bPt = keyToPoint.get(bKey);
+      if (!bPt) continue;
+      if (Math.hypot(aPt.x - bPt.x, aPt.y - bPt.y) <= joinTol) {
+        addAdjEdge(adj, aKey, bKey);
+      }
+    }
+  }
+
+  const loopPts = extractLongestClosedLoop(adj, keyToPoint);
+  if (loopPts.length >= 3) {
+    console.log(`[Footprint] Built concave boundary loop from wall edges (${loopPts.length} points)`);
+  }
+  return loopPts;
 }
 
 // Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
@@ -349,10 +363,10 @@ function computeBuildingFootprint(
     }
   }
   
-  // Priority #2: Use robust chain-based footprint detection (handles L/U shapes)
-  const chainBasedPolygon = buildFootprintViaWallChains(walls);
-  if (chainBasedPolygon.length >= 3) {
-    return { centroid, hull: chainBasedPolygon };
+  // Priority #2: Build concave polygon from wall outer edges
+  const concavePolygon = buildConcaveFootprintFromWalls(walls, centroid);
+  if (concavePolygon.length >= 3) {
+    return { centroid, hull: concavePolygon };
   }
   
   // No convex hull fallback (explicit requirement).
@@ -570,13 +584,14 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkin
   
   return (
     <mesh geometry={geometry} renderOrder={5}>
-      <meshBasicMaterial
+      <meshStandardMaterial
         color={displayColor}
         side={THREE.DoubleSide}
         depthWrite={true}
         depthTest={true}
         transparent={false}
         opacity={1}
+        // Helps avoid z-fighting artefacts that can look like translucency
         polygonOffset
         polygonOffsetFactor={1}
         polygonOffsetUnits={1}
@@ -1106,12 +1121,12 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     <group>
       {/* Left surface */}
       <mesh geometry={leftGeom} renderOrder={5}>
-        <meshBasicMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} />
       </mesh>
       
       {/* Right surface */}
       <mesh geometry={rightGeom} renderOrder={5}>
-        <meshBasicMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
+        <meshStandardMaterial color={displayColor} side={THREE.DoubleSide} depthWrite={true} depthTest={true} transparent={false} opacity={1} />
       </mesh>
       
       {/* Course lines */}
