@@ -345,7 +345,8 @@ function buildFootprintViaWallChains(walls: GraphWall[]): Point2D[] {
 // Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
 function computeBuildingFootprint(
   walls: GraphWall[],
-  layout?: NormalizedExternalAnalysis
+  layout?: NormalizedExternalAnalysis,
+  offset?: { x: number; y: number }
 ): { 
   centroid: Point2D; 
   hull: Point2D[];
@@ -373,7 +374,13 @@ function computeBuildingFootprint(
   if (layout) {
     const payloadPolygon = extractOuterPolygonFromPayload(layout);
     if (payloadPolygon && payloadPolygon.length >= 3) {
-      return { centroid, hull: payloadPolygon };
+      // IMPORTANT: walls may be re-centered by centerOffset; the payload polygon must be shifted too
+      // otherwise point-in-polygon tests happen in different coordinate systems.
+      const off = offset ?? { x: 0, y: 0 };
+      const shifted = (off.x !== 0 || off.y !== 0)
+        ? payloadPolygon.map(p => ({ x: p.x + off.x, y: p.y + off.y }))
+        : payloadPolygon;
+      return { centroid, hull: shifted };
     }
   }
   
@@ -1312,8 +1319,8 @@ export function ExternalEngineRenderer({
 
   // Compute building footprint (hull + centroid) for exterior detection
   const buildingFootprint = useMemo(
-    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis),
-    [adjustedWalls, normalizedAnalysis]
+    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis, centerOffset),
+    [adjustedWalls, normalizedAnalysis, centerOffset]
   );
   const { hull: footprintHull, centroid: buildingCentroid } = buildingFootprint;
 
