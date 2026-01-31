@@ -171,6 +171,12 @@ function extractOuterPolygonFromPayload(
   return null;
 }
 
+function applyCenterOffsetToPolygon(poly: Point2D[], centerOffset: Point2D): Point2D[] {
+  if (!poly.length) return poly;
+  if (centerOffset.x === 0 && centerOffset.y === 0) return poly;
+  return poly.map((p) => ({ x: p.x + centerOffset.x, y: p.y + centerOffset.y }));
+}
+
 // Build a concave polygon from wall outer edges (fallback when no outerPolygon in payload)
 function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): Point2D[] {
   // For each wall, take the polyline that is FURTHER from centroid (outer edge),
@@ -229,7 +235,8 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
 // Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
 function computeBuildingFootprint(
   walls: GraphWall[],
-  layout?: NormalizedExternalAnalysis
+  layout?: NormalizedExternalAnalysis,
+  centerOffset: Point2D = { x: 0, y: 0 }
 ): { 
   centroid: Point2D; 
   hull: Point2D[];
@@ -257,7 +264,7 @@ function computeBuildingFootprint(
   if (layout) {
     const payloadPolygon = extractOuterPolygonFromPayload(layout);
     if (payloadPolygon && payloadPolygon.length >= 3) {
-      return { centroid, hull: payloadPolygon };
+      return { centroid, hull: applyCenterOffsetToPolygon(payloadPolygon, centerOffset) };
     }
   }
   
@@ -1283,8 +1290,8 @@ export function ExternalEngineRenderer({
 
   // Compute building footprint (hull + centroid) for exterior detection
   const buildingFootprint = useMemo(
-    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis),
-    [adjustedWalls, normalizedAnalysis]
+    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis, centerOffset),
+    [adjustedWalls, normalizedAnalysis, centerOffset]
   );
   const { hull: footprintHull, centroid: buildingCentroid } = buildingFootprint;
 
