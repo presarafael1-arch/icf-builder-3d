@@ -1118,10 +1118,11 @@ interface PanelStripeProps {
   u2: { x: number; y: number };
   n2: { x: number; y: number };
   color: string;
-  offset: number; // positive = front face, negative = back face
+  skinThickness: number;  // Panel thickness in meters
+  face: 'front' | 'back'; // Which face of the panel to render on
 }
 
-function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelStripeProps) {
+function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, skinThickness, face }: PanelStripeProps) {
   const geometry = useMemo(() => {
     // Center of panel along wall
     const centerX = (x0 + x1) / 2;
@@ -1132,15 +1133,23 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
     const stripeZ0 = z0 + (courseHeight - stripeHeight) / 2;
     const stripeZ1 = stripeZ0 + stripeHeight;
     
-    // Stripe width: 100mm centered
-    const halfWidth = STRIPE_WIDTH / 2;
+    // Stripe width: 100mm centered, or 60% of panel width (whichever is smaller)
+    const panelWidth = x1 - x0;
+    const stripeW = Math.min(STRIPE_WIDTH, panelWidth * 0.6);
+    const halfWidth = stripeW / 2;
     const stripeX0 = centerX - halfWidth;
     const stripeX1 = centerX + halfWidth;
     
-    // Apply offset from surface (perpendicular to wall)
+    // Position stripe on the outer surface of the panel box
+    // Front face: startPt + n2 * (skinThickness + small offset)
+    // Back face: startPt + n2 * (-small offset)
+    const surfaceOffset = face === 'front' 
+      ? skinThickness + STRIPE_OFFSET  // Just outside front face
+      : -STRIPE_OFFSET;                 // Just outside back face (startPt side)
+    
     const offsetPt = {
-      x: startPt.x + n2.x * offset,
-      y: startPt.y + n2.y * offset,
+      x: startPt.x + n2.x * surfaceOffset,
+      y: startPt.y + n2.y * surfaceOffset,
     };
     
     // 4 corners of stripe
@@ -1161,20 +1170,20 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
     geom.setIndex(indices);
     geom.computeVertexNormals();
     return geom;
-  }, [x0, x1, z0, z1, startPt, u2, n2, offset]);
+  }, [x0, x1, z0, z1, startPt, u2, n2, skinThickness, face]);
   
   return (
-    <mesh geometry={geometry} renderOrder={15}>
+    <mesh geometry={geometry} renderOrder={20}>
       <meshBasicMaterial
         color={color}
         side={THREE.DoubleSide}
         depthTest={true}
-        depthWrite={true}
+        depthWrite={false}
         transparent={false}
         opacity={1}
         polygonOffset
-        polygonOffsetFactor={-2}
-        polygonOffsetUnits={-2}
+        polygonOffsetFactor={-4}
+        polygonOffsetUnits={-4}
       />
     </mesh>
   );
@@ -1282,7 +1291,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, 
         u2={u2}
         n2={extNormalDir}
         color={exteriorSkinStripeColor}
-        offset={STRIPE_OFFSET}
+        skinThickness={skinThickness}
+        face="front"
       />
       {/* Stripe on back face of exterior skin */}
       <PanelStripe
@@ -1294,7 +1304,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, 
         u2={u2}
         n2={extNormalDir}
         color={exteriorSkinStripeColor}
-        offset={-STRIPE_OFFSET}
+        skinThickness={skinThickness}
+        face="back"
       />
       
       {/* ===== Interior Skin (the panel facing INSIDE the building) ===== */}
@@ -1330,7 +1341,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, 
         u2={u2}
         n2={intNormalDir}
         color={interiorSkinStripeColor}
-        offset={STRIPE_OFFSET}
+        skinThickness={skinThickness}
+        face="front"
       />
       {/* Stripe on back face of interior skin - ALWAYS WHITE */}
       <PanelStripe
@@ -1342,7 +1354,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, 
         u2={u2}
         n2={intNormalDir}
         color={interiorSkinStripeColor}
-        offset={-STRIPE_OFFSET}
+        skinThickness={skinThickness}
+        face="back"
       />
     </group>
   );
