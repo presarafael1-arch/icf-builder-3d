@@ -369,18 +369,62 @@ function computeBuildingFootprint(
     x: allWallPoints.reduce((sum, p) => sum + p.x, 0) / allWallPoints.length,
     y: allWallPoints.reduce((sum, p) => sum + p.y, 0) / allWallPoints.length,
   };
+
+  // Alignment helper: pick the polygon (shifted vs unshifted) that best matches wall geometry.
+  // This avoids a regression where the payload outerPolygon may already be in centered coordinates
+  // (or not), depending on backend version.
+  function aabbOf(pts: Point2D[]) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  const wallsAabb = aabbOf(allWallPoints);
+  const wallsCenter = {
+    x: (wallsAabb.minX + wallsAabb.maxX) / 2,
+    y: (wallsAabb.minY + wallsAabb.maxY) / 2,
+  };
+
+  function alignmentScore(poly: Point2D[]): number {
+    if (poly.length < 3) return Number.POSITIVE_INFINITY;
+    const bb = aabbOf(poly);
+    const polyCenter = { x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 };
+
+    // Center distance dominates; size mismatch is secondary.
+    const centerDist = Math.hypot(polyCenter.x - wallsCenter.x, polyCenter.y - wallsCenter.y);
+    const sizeDx = Math.abs((bb.maxX - bb.minX) - (wallsAabb.maxX - wallsAabb.minX));
+    const sizeDy = Math.abs((bb.maxY - bb.minY) - (wallsAabb.maxY - wallsAabb.minY));
+    return centerDist + 0.25 * (sizeDx + sizeDy);
+  }
   
   // Priority #1: Use outerPolygon from payload if available (handles concave shapes correctly)
   if (layout) {
     const payloadPolygon = extractOuterPolygonFromPayload(layout);
     if (payloadPolygon && payloadPolygon.length >= 3) {
-      // IMPORTANT: walls may be re-centered by centerOffset; the payload polygon must be shifted too
-      // otherwise point-in-polygon tests happen in different coordinate systems.
       const off = offset ?? { x: 0, y: 0 };
-      const shifted = (off.x !== 0 || off.y !== 0)
+
+      // Candidate A: as-is
+      const polyA = payloadPolygon;
+
+      // Candidate B: shifted by centerOffset
+      const polyB = (off.x !== 0 || off.y !== 0)
         ? payloadPolygon.map(p => ({ x: p.x + off.x, y: p.y + off.y }))
         : payloadPolygon;
-      return { centroid, hull: shifted };
+
+      const scoreA = alignmentScore(polyA);
+      const scoreB = alignmentScore(polyB);
+      const useShifted = scoreB < scoreA;
+
+      console.log(
+        `[Footprint] outerPolygon alignment: score(unshifted)=${scoreA.toFixed(3)} score(shifted)=${scoreB.toFixed(3)} -> using ${useShifted ? 'shifted' : 'unshifted'}`
+      );
+
+      return { centroid, hull: useShifted ? polyB : polyA };
     }
   }
   
