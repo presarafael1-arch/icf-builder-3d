@@ -790,7 +790,8 @@ function computeWallGeometry(
         console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: right outside → left is ext skin)`);
       } else {
         // Both inside or both outside - use centroid distance as final fallback
-        // The side CLOSER to centroid is the interior skin, so pick the OTHER side
+        // In this renderer's coordinate convention, the exterior-facing skin is the one
+        // whose offset polyline midpoint is CLOSER to the building centroid.
         const centroid = polygonCentroid(footprintHull);
         const leftDistToCentroid = Math.sqrt(
           Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2)
@@ -798,8 +799,8 @@ function computeWallGeometry(
         const rightDistToCentroid = Math.sqrt(
           Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2)
         );
-        // Pick the side FURTHER from centroid (that's the exterior-facing skin)
-        exteriorSide = leftDistToCentroid > rightDistToCentroid ? 'left' : 'right';
+        // Pick the side CLOSER to centroid
+        exteriorSide = leftDistToCentroid < rightDistToCentroid ? 'left' : 'right';
         console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (centroid dist fallback: L=${leftDistToCentroid.toFixed(2)}, R=${rightDistToCentroid.toFixed(2)})`);
       }
     } else {
