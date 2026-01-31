@@ -611,20 +611,37 @@ function chooseOutNormal(
     }
   }
   
-  // Fallback: If wall midpoint is near boundary, treat as exterior
-  // and use centroid-based direction for outN
-  if (boundaryDist <= 1.0) {
-    // Calculate direction from building centroid to wall midpoint
-    const centroid = polygonCentroid(outerPoly);
-    const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
-    const toMidLen = Math.sqrt(toMid.x * toMid.x + toMid.y * toMid.y);
-    
-    if (toMidLen > 0.01) {
-      // outN points away from centroid (towards exterior)
-      const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
-      console.log(`[Wall ${wallId}] EXTERIOR (boundary fallback): dist=${boundaryDist.toFixed(3)}m`);
-      return { isExterior: true, outN };
-    }
+  // Calculate direction from building centroid to wall midpoint (used for fallbacks)
+  const centroid = polygonCentroid(outerPoly);
+  const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
+  const toMidLen = Math.sqrt(toMid.x * toMid.x + toMid.y * toMid.y);
+  
+  // Fallback #1: If wall midpoint is near boundary (within 2m), treat as exterior
+  if (boundaryDist <= 2.0 && toMidLen > 0.01) {
+    // outN points away from centroid (towards exterior)
+    const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
+    console.log(`[Wall ${wallId}] EXTERIOR (boundary fallback): dist=${boundaryDist.toFixed(3)}m`);
+    return { isExterior: true, outN };
+  }
+  
+  // Fallback #2: Check if wall is on the "edge" of the bounding box of the footprint
+  // This catches perimeter walls that the point-in-polygon test missed
+  const polyMinX = Math.min(...outerPoly.map(p => p.x));
+  const polyMaxX = Math.max(...outerPoly.map(p => p.x));
+  const polyMinY = Math.min(...outerPoly.map(p => p.y));
+  const polyMaxY = Math.max(...outerPoly.map(p => p.y));
+  
+  const edgeMargin = 0.5; // 0.5m margin from bounding box edge
+  const isOnBBoxEdge = 
+    mid.x <= polyMinX + edgeMargin ||
+    mid.x >= polyMaxX - edgeMargin ||
+    mid.y <= polyMinY + edgeMargin ||
+    mid.y >= polyMaxY - edgeMargin;
+  
+  if (isOnBBoxEdge && toMidLen > 0.01) {
+    const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
+    console.log(`[Wall ${wallId}] EXTERIOR (bbox edge fallback): mid=(${mid.x.toFixed(2)}, ${mid.y.toFixed(2)})`);
+    return { isExterior: true, outN };
   }
   
   // Both sides equal at all offsets → interior partition wall
