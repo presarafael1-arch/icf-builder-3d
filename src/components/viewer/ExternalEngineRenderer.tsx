@@ -831,20 +831,31 @@ function computeWallGeometry(
         // Boundary distances are too similar - use offset PIP test
         const TEST_OFFSETS = [0.25, 0.6, 1.0]; // meters
 
-        const leftDirLen = Math.max(1e-9, Math.sqrt(toLeft.x * toLeft.x + toLeft.y * toLeft.y));
-        const leftDir = { x: toLeft.x / leftDirLen, y: toLeft.y / leftDirLen };
-        const rightDir = { x: -leftDir.x, y: -leftDir.y };
+        // IMPORTANT:
+        // We MUST test along the wall normal (n2), not along (center->leftMid).
+        // In some geometries center->leftMid can become nearly tangent to the wall,
+        // making the PIP test meaningless and causing the logic to fall back to
+        // boundary distances (which are often equal within 1-2mm).
+        //
+        // Here we probe the two half-spaces (+n2 and -n2) and then map them back
+        // to left/right using the sign of dot(toLeft, n2).
 
-        const testSide = (mid: Point2D, dir: Point2D) => {
+        const dotLeftN = toLeft.x * n2.x + toLeft.y * n2.y;
+        const leftIsPlusN = dotLeftN >= 0;
+
+        const testHalfSpace = (sign: 1 | -1) => {
           for (const d of TEST_OFFSETS) {
-            const p = { x: mid.x + dir.x * d, y: mid.y + dir.y * d };
+            const p = { x: wallCenterMid.x + n2.x * d * sign, y: wallCenterMid.y + n2.y * d * sign };
             if (!pointInPolygon(p, footprintHull)) return 'outside' as const;
           }
           return 'inside' as const;
         };
 
-        const leftTest = testSide(leftMid, leftDir);
-        const rightTest = testSide(rightMid, rightDir);
+        const plusTest = testHalfSpace(1);
+        const minusTest = testHalfSpace(-1);
+
+        const leftTest = leftIsPlusN ? plusTest : minusTest;
+        const rightTest = leftIsPlusN ? minusTest : plusTest;
 
         if (leftTest === 'outside' && rightTest !== 'outside') {
           exteriorSide = 'left';
