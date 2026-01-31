@@ -619,8 +619,14 @@ function chooseOutNormal(
   // Fallback #1: If wall midpoint is near boundary (within 5m), treat as exterior
   // Increased threshold to catch perimeter walls in buildings with complex footprints
   if (boundaryDist <= 5.0 && toMidLen > 0.01) {
-    // outN points away from centroid (towards exterior)
-    const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
+    // IMPORTANT:
+    // For boundary/bbox fallbacks we only know the wall is likely on the perimeter,
+    // but the centroid->mid vector can be tangent to the wall, making left/right
+    // selection unstable.
+    // We therefore keep outN PERPENDICULAR to the wall (n) and only pick its SIGN
+    // by comparing against the centroid direction.
+    const sign = (n.x * toMid.x + n.y * toMid.y) >= 0 ? 1 : -1;
+    const outN = { x: n.x * sign, y: n.y * sign };
     console.log(`[Wall ${wallId}] EXTERIOR (boundary fallback): dist=${boundaryDist.toFixed(3)}m`);
     return { isExterior: true, outN };
   }
@@ -640,7 +646,8 @@ function chooseOutNormal(
     mid.y >= polyMaxY - edgeMargin;
   
   if (isOnBBoxEdge && toMidLen > 0.01) {
-    const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
+    const sign = (n.x * toMid.x + n.y * toMid.y) >= 0 ? 1 : -1;
+    const outN = { x: n.x * sign, y: n.y * sign };
     console.log(`[Wall ${wallId}] EXTERIOR (bbox edge fallback): mid=(${mid.x.toFixed(2)}, ${mid.y.toFixed(2)})`);
     return { isExterior: true, outN };
   }
