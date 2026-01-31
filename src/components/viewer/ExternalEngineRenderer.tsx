@@ -87,6 +87,15 @@ const COLORS = {
   SELECTED: 0x00bcd4,         // Cyan for selected
 };
 
+// ===== Manual Exterior Side Overrides =====
+// For walls where automatic detection fails, force the exterior side manually.
+// Key: wallId (string), Value: 'left' | 'right' | 'flip'
+// 'flip' means: compute automatically, then invert the result.
+const EXTERIOR_SIDE_OVERRIDES: Record<string, 'left' | 'right' | 'flip'> = {
+  '15': 'flip',
+  '18': 'flip',
+};
+
 // Skin/EPS thickness (1 TOOTH ≈ 70.6mm)
 const EPS_THICKNESS = 0.0706; // meters
 const DEFAULT_CORE_THICKNESS = 0.15; // 150mm default
@@ -870,6 +879,19 @@ function computeWallGeometry(
     }
   } else {
     console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
+  }
+
+  // ===== Apply manual overrides if defined =====
+  const override = EXTERIOR_SIDE_OVERRIDES[String(wall.id)];
+  if (override && isExteriorWall) {
+    if (override === 'flip') {
+      const prev = exteriorSide;
+      exteriorSide = exteriorSide === 'left' ? 'right' : 'left';
+      console.log(`[Wall ${wall.id}] OVERRIDE flip: ${prev} → ${exteriorSide}`);
+    } else {
+      console.log(`[Wall ${wall.id}] OVERRIDE forced: ${exteriorSide} → ${override}`);
+      exteriorSide = override;
+    }
   }
   
   return {
