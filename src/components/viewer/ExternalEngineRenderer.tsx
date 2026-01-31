@@ -444,7 +444,8 @@ function computeBuildingFootprint(
   let chainSides: FootprintResult['chainSides'] | undefined;
   try {
     const chains = buildChainsFromExternalWalls(walls);
-    const fp = detectFootprintAndClassify(chains, 100);
+    // External engine offsets often have small endpoint mismatches; use a more forgiving snap tolerance.
+    const fp = detectFootprintAndClassify(chains, 300);
     if (fp.chainSides && fp.chainSides.size > 0) {
       const map = new Map<
         string,
@@ -511,7 +512,7 @@ function computeBuildingFootprint(
   // This is the most reliable for complex graphs with T-junctions.
   try {
     const chains = buildChainsFromExternalWalls(walls);
-    const fp = detectFootprintAndClassify(chains, 100);
+    const fp = detectFootprintAndClassify(chains, 300);
     if (fp.outerPolygon.length >= 3) {
       const hull = ensureCCW(scalePolygon(fp.outerPolygon, 1 / 1000)); // mm -> m
       const areaM2 = (fp.outerArea / 1e6);
