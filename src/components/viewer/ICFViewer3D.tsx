@@ -1984,8 +1984,17 @@ export function ICFViewer3D({
     <div className={`viewer-container ${className} relative`}>
       <Canvas
         shadows
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3 }}
-        style={{ background: 'transparent' }}
+        gl={{
+          antialias: true,
+          // External Engine visuals must be strictly opaque.
+          // alpha=false prevents blending with underlying DOM/UI.
+          alpha: false,
+          premultipliedAlpha: false,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.3,
+        }}
+        // Use theme background token (HSL) instead of transparent
+        style={{ background: 'hsl(var(--background))' }}
       >
         {/* External mode: render ONLY from external engine or show empty state */}
         {isExternalMode ? (
