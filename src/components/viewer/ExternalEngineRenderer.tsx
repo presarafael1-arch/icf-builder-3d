@@ -694,8 +694,11 @@ function computeWallGeometry(
       // outsideIsPositivePerp uses the same perp convention (dy/len, -dx/len) as n2.
       outN = chainSide.outsideIsPositivePerp ? n2 : { x: -n2.x, y: -n2.y };
     } else {
-      isExterior = false;
-      outN = n2;
+      // If chain-based classification says PARTITION/UNRESOLVED, do a geometric sanity check.
+      // This prevents perimeter walls from incorrectly falling into BOTH_INT due to minor graph issues.
+      const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
+      isExterior = check.isExterior;
+      outN = check.outN;
     }
     // Debug log for chain-based classification
     console.log(`[Wall ${wall.id}] chainSides → cls=${cls}, isOutside=${chainSide.isOutsideFootprint}, outsideIsPosPerp=${chainSide.outsideIsPositivePerp} → isExterior=${isExterior}`);
