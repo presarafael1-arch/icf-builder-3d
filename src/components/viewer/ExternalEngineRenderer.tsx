@@ -378,16 +378,14 @@ interface WallGeometryData {
 function chooseOutNormal(
   mid: Point2D,
   n: Point2D,
-  outerPoly: Point2D[],
-  wallId?: string
+  outerPoly: Point2D[]
 ): { isExterior: boolean; outN: Point2D } {
   if (outerPoly.length < 3) {
-    console.log(`[chooseOutNormal] Wall ${wallId}: No polygon (${outerPoly.length} vertices)`);
     return { isExterior: false, outN: n };
   }
   
-  // Test at multiple distances for robustness - expanded range for better detection
-  const testEps = [0.02, 0.05, 0.1, 0.15, 0.25, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0]; // meters
+  // Test at multiple distances for robustness
+  const testEps = [0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1.0]; // meters - added smaller offsets
   
   for (const eps of testEps) {
     const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
@@ -408,35 +406,34 @@ function chooseOutNormal(
   // This handles edge cases where the wall centerline coincides with the footprint edge
   const distToEdge = distanceToPolygonEdge(mid, outerPoly);
   
-  // If wall midpoint is within 500mm of a footprint edge, it's likely a perimeter wall
-  // Increased tolerance for better detection of edge-aligned walls
-  if (distToEdge < 0.5) {
+  // If wall midpoint is within 200mm of a footprint edge, it's a perimeter wall
+  if (distToEdge < 0.2) {
     // Determine exterior direction by checking which side is further from centroid
+    // or by testing at a very small offset
+    const pPlus = { x: mid.x + n.x * 0.01, y: mid.y + n.y * 0.01 };
+    const pMinus = { x: mid.x - n.x * 0.01, y: mid.y - n.y * 0.01 };
+    
+    const inPlus = pointInPolygon(pPlus, outerPoly);
+    const inMinus = pointInPolygon(pMinus, outerPoly);
+    
+    // If one is inside, the other is exterior
+    if (inPlus && !inMinus) {
+      return { isExterior: true, outN: n };
+    } else if (!inPlus && inMinus) {
+      return { isExterior: true, outN: { x: -n.x, y: -n.y } };
+    }
+    
+    // If still ambiguous but close to edge, assume exterior with default normal
+    // Use direction away from polygon centroid
     const centroid = polygonCentroid(outerPoly);
     const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
     const dotN = toMid.x * n.x + toMid.y * n.y;
     const outN = dotN > 0 ? n : { x: -n.x, y: -n.y };
     
-    console.log(`[chooseOutNormal] Wall ${wallId}: Edge-aligned (dist=${distToEdge.toFixed(3)}m), assuming EXTERIOR`);
-    return { isExterior: true, outN };
-  }
-  
-  // Check if midpoint is OUTSIDE the polygon entirely (both test points outside)
-  // This could mean the wall is outside the main building footprint
-  const midInside = pointInPolygon(mid, outerPoly);
-  if (!midInside) {
-    // Wall midpoint is outside polygon - likely an exterior wall or annex
-    const centroid = polygonCentroid(outerPoly);
-    const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
-    const dotN = toMid.x * n.x + toMid.y * n.y;
-    const outN = dotN > 0 ? n : { x: -n.x, y: -n.y };
-    
-    console.log(`[chooseOutNormal] Wall ${wallId}: Midpoint OUTSIDE polygon, treating as EXTERIOR`);
     return { isExterior: true, outN };
   }
   
   // Both sides equal at all offsets and not on edge → interior partition wall
-  console.log(`[chooseOutNormal] Wall ${wallId}: Both sides inside polygon, PARTITION (distToEdge=${distToEdge.toFixed(3)}m)`);
   return { isExterior: false, outN: n };
 }
 
@@ -525,8 +522,8 @@ function computeWallGeometry(
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
   
-  // Use robust multi-offset detection (pass wallId for debugging)
-  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
+  // Use robust multi-offset detection
+  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull);
   
   let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
