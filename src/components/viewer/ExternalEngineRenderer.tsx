@@ -262,9 +262,7 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
   // 2) Build adjacency from polyline segments (with tolerance snapping)
   // 3) Extract the longest closed loop (boundary)
 
-  // NOTE: Offset polylines at corners often don't share identical endpoints.
-  // We therefore use a slightly looser snap + a secondary "bridging" step.
-  const tol = 0.05; // 50mm
+  const tol = 0.01; // 10mm
   const adj = new Map<PtKey, Set<PtKey>>();
   const accum = new Map<PtKey, { sx: number; sy: number; n: number }>();
 
@@ -301,24 +299,6 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
   const keyToPoint = new Map<PtKey, Point2D>();
   for (const [k, v] of accum.entries()) {
     if (v.n > 0) keyToPoint.set(k, { x: v.sx / v.n, y: v.sy / v.n });
-  }
-
-  // Secondary: bridge near-coincident endpoints so the boundary becomes a closed loop.
-  // This helps in L/U shapes where outer offset corners don't meet perfectly.
-  const keys = [...keyToPoint.keys()];
-  const joinTol = 0.15; // 150mm
-  for (let i = 0; i < keys.length; i++) {
-    const aKey = keys[i];
-    const aPt = keyToPoint.get(aKey);
-    if (!aPt) continue;
-    for (let j = i + 1; j < keys.length; j++) {
-      const bKey = keys[j];
-      const bPt = keyToPoint.get(bKey);
-      if (!bPt) continue;
-      if (Math.hypot(aPt.x - bPt.x, aPt.y - bPt.y) <= joinTol) {
-        addAdjEdge(adj, aKey, bKey);
-      }
-    }
   }
 
   const loopPts = extractLongestClosedLoop(adj, keyToPoint);
@@ -591,10 +571,6 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkin
         depthTest={true}
         transparent={false}
         opacity={1}
-        // Helps avoid z-fighting artefacts that can look like translucency
-        polygonOffset
-        polygonOffsetFactor={1}
-        polygonOffsetUnits={1}
       />
     </mesh>
   );
