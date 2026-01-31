@@ -1929,6 +1929,8 @@ interface ICFViewer3DProps {
   normalizedExternalAnalysis?: NormalizedExternalAnalysis;
   externalSelectedWallId?: string | null;
   onExternalWallClick?: (wallId: string) => void;
+  // Debug options
+  showFootprintDebug?: boolean;
 }
 
 export function ICFViewer3D({
@@ -1952,6 +1954,8 @@ export function ICFViewer3D({
   normalizedExternalAnalysis,
   externalSelectedWallId,
   onExternalWallClick,
+  // Debug options
+  showFootprintDebug = false,
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
@@ -2030,6 +2034,7 @@ export function ICFViewer3D({
                 onWallClick={onExternalWallClick}
                 showCourseMarkers={true}
                 showShiftArrows={true}
+                showFootprintDebug={showFootprintDebug}
               />
             )}
 

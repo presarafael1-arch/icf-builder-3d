@@ -33,6 +33,9 @@ interface ExternalEnginePanelProps {
   onConfigChange: (config: Partial<EngineConfig>) => void;
   onTestConnection: () => Promise<boolean>;
   connectionStatus: 'idle' | 'testing' | 'connected' | 'error';
+  // Debug options
+  showFootprintDebug?: boolean;
+  onShowFootprintDebugChange?: (value: boolean) => void;
 }
 
 export function ExternalEnginePanel({
@@ -46,6 +49,8 @@ export function ExternalEnginePanel({
   onConfigChange,
   onTestConnection,
   connectionStatus,
+  showFootprintDebug = false,
+  onShowFootprintDebugChange,
 }: ExternalEnginePanelProps) {
   const isExternal = engineMode === 'external';
 
@@ -293,6 +298,23 @@ export function ExternalEnginePanel({
                 </div>
               </CollapsibleContent>
             </Collapsible>
+
+            {/* Debug Options */}
+            {analysis && onShowFootprintDebugChange && (
+              <>
+                <Separator />
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="footprint-debug" className="text-xs flex items-center gap-2">
+                    🔍 Debug Footprint
+                  </Label>
+                  <Switch
+                    id="footprint-debug"
+                    checked={showFootprintDebug}
+                    onCheckedChange={onShowFootprintDebugChange}
+                  />
+                </div>
+              </>
+            )}
 
             {/* No analysis yet message */}
             {!analysis && !isLoading && !error && (

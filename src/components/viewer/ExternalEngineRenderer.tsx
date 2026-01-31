@@ -26,6 +26,7 @@ interface ExternalEngineRendererProps {
   onWallClick?: (wallId: string) => void;
   showCourseMarkers?: boolean;
   showShiftArrows?: boolean;
+  showFootprintDebug?: boolean;
 }
 
 // ===== Point Format Helpers =====
@@ -189,19 +190,6 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
     
     if (leftPts.length < 2 || rightPts.length < 2) continue;
     
-    // Calculate average distance to centroid for each polyline
-    const avgDistLeft = leftPts.reduce((sum, p) => {
-      const dx = p.x - centroid.x;
-      const dy = p.y - centroid.y;
-      return sum + Math.sqrt(dx * dx + dy * dy);
-    }, 0) / leftPts.length;
-    
-    const avgDistRight = rightPts.reduce((sum, p) => {
-      const dx = p.x - centroid.x;
-      const dy = p.y - centroid.y;
-      return sum + Math.sqrt(dx * dx + dy * dy);
-    }, 0) / rightPts.length;
-    
     // NOTE: Using only the "outer" polyline can fail to close loops when the
     // engine graph has small gaps/branching. We therefore feed BOTH offset
     // polylines into the face-walking step; it will still select the best face.
@@ -219,29 +207,87 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
   if (segments.length < 3) return [];
 
   // Adaptive snapping: walls/offset polylines often have small gaps at corners.
-  // Try multiple tolerances (20mm → 200mm) and take the first valid loop.
+  // Try multiple tolerances (20mm → 500mm) and take the first valid loop.
   const snapCandidates = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5];
   for (const snapTol of snapCandidates) {
     const outerPoly = findOuterPolygonFromSegments(segments, snapTol);
     if (outerPoly.length >= 3) {
-      console.log(`[Footprint] Built concave polygon from wall edges (${outerPoly.length} points, snap=${Math.round(snapTol * 1000)}mm)`);
+      console.log(`[Footprint] Built concave polygon from wall offsets (${outerPoly.length} points, snap=${Math.round(snapTol * 1000)}mm)`);
       return outerPoly;
     }
   }
 
-  console.warn('[Footprint] Failed to build concave polygon from wall edges');
+  console.warn('[Footprint] Failed to build concave polygon from wall offsets');
   return [];
 }
 
-// Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
+// NEW: Build footprint from graph centerlines (node positions + wall connectivity)
+// This approach often closes loops better than offset polylines because nodes are snapped
+function buildConcaveFootprintFromGraph(
+  nodes: GraphNode[],
+  walls: GraphWall[],
+  centerOffset: Point2D
+): Point2D[] {
+  if (nodes.length < 3 || walls.length < 2) return [];
+  
+  // Build node position lookup (with centerOffset applied)
+  const nodePos = new Map<string, Point2D>();
+  for (const node of nodes) {
+    const x = px(node.position);
+    const y = py(node.position);
+    if (x !== undefined && y !== undefined) {
+      nodePos.set(node.id, { x: x + centerOffset.x, y: y + centerOffset.y });
+    }
+  }
+  
+  // Build segments from wall connectivity
+  const segments: Array<{ a: Point2D; b: Point2D; sourceId?: string }> = [];
+  
+  for (const wall of walls) {
+    const startPos = nodePos.get(wall.start_node);
+    const endPos = nodePos.get(wall.end_node);
+    
+    if (!startPos || !endPos) continue;
+    if (Math.abs(startPos.x - endPos.x) < 1e-6 && Math.abs(startPos.y - endPos.y) < 1e-6) continue;
+    
+    segments.push({ a: startPos, b: endPos, sourceId: wall.id });
+  }
+  
+  if (segments.length < 3) return [];
+  
+  // Use face-walking with adaptive snapping
+  const snapCandidates = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5];
+  for (const snapTol of snapCandidates) {
+    const outerPoly = findOuterPolygonFromSegments(segments, snapTol);
+    if (outerPoly.length >= 3) {
+      console.log(`[Footprint] Built concave polygon from graph centerlines (${outerPoly.length} points, snap=${Math.round(snapTol * 1000)}mm)`);
+      return outerPoly;
+    }
+  }
+  
+  console.warn('[Footprint] Failed to build concave polygon from graph centerlines');
+  return [];
+}
+
+// Footprint source for debug purposes
+export type FootprintSource = 'payload' | 'nodes' | 'offsets' | 'none';
+
+interface FootprintResult {
+  centroid: Point2D;
+  hull: Point2D[];
+  source: FootprintSource;
+}
+
+// Compute the building footprint - tiered approach:
+// Priority #1: payload outerPolygon
+// Priority #2: graph centerlines (nodes + walls)
+// Priority #3: wall offsets (left/right polylines)
 function computeBuildingFootprint(
   walls: GraphWall[],
+  nodes: GraphNode[],
   layout?: NormalizedExternalAnalysis,
   centerOffset: Point2D = { x: 0, y: 0 }
-): { 
-  centroid: Point2D; 
-  hull: Point2D[];
-} {
+): FootprintResult {
   // First: collect all wall points for centroid calculation
   const allWallPoints: Point2D[] = [];
   
@@ -252,7 +298,7 @@ function computeBuildingFootprint(
   }
   
   if (allWallPoints.length === 0) {
-    return { centroid: { x: 0, y: 0 }, hull: [] };
+    return { centroid: { x: 0, y: 0 }, hull: [], source: 'none' };
   }
   
   // Calculate centroid from all points
@@ -265,19 +311,29 @@ function computeBuildingFootprint(
   if (layout) {
     const payloadPolygon = extractOuterPolygonFromPayload(layout);
     if (payloadPolygon && payloadPolygon.length >= 3) {
-      return { centroid, hull: applyCenterOffsetToPolygon(payloadPolygon, centerOffset) };
+      const shiftedPoly = applyCenterOffsetToPolygon(payloadPolygon, centerOffset);
+      console.log(`[Footprint] Source: PAYLOAD (${shiftedPoly.length} points)`);
+      return { centroid, hull: shiftedPoly, source: 'payload' };
     }
   }
   
-  // Priority #2: Build concave polygon from wall outer edges
-  const concavePolygon = buildConcaveFootprintFromWalls(walls, centroid);
-  if (concavePolygon.length >= 3) {
-    return { centroid, hull: concavePolygon };
+  // Priority #2: Build from graph centerlines (tends to close loops better)
+  const graphPolygon = buildConcaveFootprintFromGraph(nodes, walls, { x: 0, y: 0 });
+  if (graphPolygon.length >= 3) {
+    console.log(`[Footprint] Source: GRAPH NODES (${graphPolygon.length} points)`);
+    return { centroid, hull: graphPolygon, source: 'nodes' };
   }
   
-  // No convex hull fallback (convex hull is incorrect for concave buildings)
-  console.warn('[Footprint] No outer polygon available (payload missing + concave build failed)');
-  return { centroid, hull: [] };
+  // Priority #3: Build concave polygon from wall outer edges
+  const concavePolygon = buildConcaveFootprintFromWalls(walls, centroid);
+  if (concavePolygon.length >= 3) {
+    console.log(`[Footprint] Source: WALL OFFSETS (${concavePolygon.length} points)`);
+    return { centroid, hull: concavePolygon, source: 'offsets' };
+  }
+  
+  // No valid footprint found
+  console.warn('[Footprint] No outer polygon available (all methods failed)');
+  return { centroid, hull: [], source: 'none' };
 }
 
 // ===== Wall Geometry Data =====
@@ -1221,6 +1277,66 @@ function SkippedWarning({ count }: { count: number }) {
   );
 }
 
+// ===== Footprint Debug Visualization =====
+
+interface FootprintDebugProps {
+  hull: Point2D[];
+  centroid: Point2D;
+  source: FootprintSource;
+  exteriorWallCount: number;
+  totalWallCount: number;
+}
+
+function FootprintDebugViz({ hull, centroid, source, exteriorWallCount, totalWallCount }: FootprintDebugProps) {
+  if (hull.length < 3) {
+    return (
+      <Html position={[centroid.x, 0.5, centroid.y]} center>
+        <div className="bg-red-600/90 text-white px-3 py-2 rounded-lg text-xs font-mono shadow-lg">
+          <div className="font-bold">⚠️ Footprint: NONE</div>
+          <div className="text-red-200">Source: {source}</div>
+          <div className="text-red-200">Todas paredes = interior</div>
+        </div>
+      </Html>
+    );
+  }
+
+  // Create closed loop for Line
+  const points = hull.map(p => new THREE.Vector3(p.x, 0.02, p.y));
+  points.push(points[0].clone()); // Close the loop
+
+  return (
+    <group>
+      {/* Footprint polygon outline - green */}
+      <Line
+        points={points}
+        color="#22c55e"
+        lineWidth={3}
+        depthTest={false}
+        depthWrite={false}
+        renderOrder={100}
+      />
+      
+      {/* Centroid marker */}
+      <mesh position={[centroid.x, 0.15, centroid.y]}>
+        <sphereGeometry args={[0.15, 16, 16]} />
+        <meshBasicMaterial color="#22c55e" transparent opacity={0.8} depthTest={false} />
+      </mesh>
+      
+      {/* Info label */}
+      <Html position={[centroid.x, 0.8, centroid.y]} center>
+        <div className="bg-green-700/95 text-white px-3 py-2 rounded-lg text-xs font-mono shadow-lg min-w-[160px]">
+          <div className="font-bold text-green-200">🔍 Footprint Debug</div>
+          <div className="border-t border-green-500 my-1 pt-1">
+            <div>Source: <span className="text-green-300 font-bold">{source.toUpperCase()}</span></div>
+            <div>Points: <span className="text-green-300">{hull.length}</span></div>
+            <div>Exterior walls: <span className="text-blue-300">{exteriorWallCount}</span> / {totalWallCount}</div>
+          </div>
+        </div>
+      </Html>
+    </group>
+  );
+}
+
 // ===== No Data Placeholder =====
 
 function NoDataPlaceholder() {
@@ -1240,6 +1356,7 @@ export function ExternalEngineRenderer({
   selectedWallId,
   onWallClick,
   showCourseMarkers = true,
+  showFootprintDebug = false,
 }: ExternalEngineRendererProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [skippedCount, setSkippedCount] = useState(0);
@@ -1291,10 +1408,10 @@ export function ExternalEngineRenderer({
 
   // Compute building footprint (hull + centroid) for exterior detection
   const buildingFootprint = useMemo(
-    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis, centerOffset),
-    [adjustedWalls, normalizedAnalysis, centerOffset]
+    () => computeBuildingFootprint(adjustedWalls, adjustedNodes, normalizedAnalysis, centerOffset),
+    [adjustedWalls, adjustedNodes, normalizedAnalysis, centerOffset]
   );
-  const { hull: footprintHull, centroid: buildingCentroid } = buildingFootprint;
+  const { hull: footprintHull, centroid: buildingCentroid, source: footprintSource } = buildingFootprint;
 
   // Log for debugging
   useEffect(() => {
@@ -1347,23 +1464,28 @@ export function ExternalEngineRenderer({
     return { minX, maxX, minZ, maxZ };
   }, [adjustedNodes, adjustedWalls]);
 
-  // Count skipped walls
-  const validWallsCount = useMemo(() => {
+  // Count skipped walls and exterior walls
+  const wallStats = useMemo(() => {
     let valid = 0;
     let skipped = 0;
+    let exteriorCount = 0;
 
     for (const wall of adjustedWalls) {
       const geom = computeWallGeometry(wall, footprintHull, buildingCentroid);
-      if (!geom) skipped++;
-      else valid++;
+      if (!geom) {
+        skipped++;
+      } else {
+        valid++;
+        if (geom.isExteriorWall) exteriorCount++;
+      }
     }
 
-    return { valid, skipped };
-  }, [adjustedWalls, buildingCentroid]);
+    return { valid, skipped, exteriorCount };
+  }, [adjustedWalls, footprintHull, buildingCentroid]);
 
   useEffect(() => {
-    setSkippedCount(validWallsCount.skipped);
-  }, [validWallsCount.skipped]);
+    setSkippedCount(wallStats.skipped);
+  }, [wallStats.skipped]);
 
   // No data state
   if (walls.length === 0 && nodes.length === 0) {
@@ -1393,6 +1515,16 @@ export function ExternalEngineRenderer({
 
       {showCourseMarkers && courses.length > 0 && (
         <CourseLabels courses={courses} bounds={bounds} />
+      )}
+
+      {showFootprintDebug && (
+        <FootprintDebugViz
+          hull={footprintHull}
+          centroid={buildingCentroid}
+          source={footprintSource}
+          exteriorWallCount={wallStats.exteriorCount}
+          totalWallCount={wallStats.valid}
+        />
       )}
     </group>
   );
