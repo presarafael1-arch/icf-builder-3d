@@ -429,6 +429,36 @@ function computeBuildingFootprint(
     x: allWallPoints.reduce((sum, p) => sum + p.x, 0) / allWallPoints.length,
     y: allWallPoints.reduce((sum, p) => sum + p.y, 0) / allWallPoints.length,
   };
+
+  // Always compute chain-based side classification when possible.
+  // Even if the footprint polygon comes from payload/nodes/offsets (better for concave debug),
+  // chainSides is the most deterministic per-wall EXT/INT source.
+  let chainSides: FootprintResult['chainSides'] | undefined;
+  try {
+    const chains = buildChainsFromExternalWalls(walls);
+    const fp = detectFootprintAndClassify(chains, 100);
+    if (fp.chainSides && fp.chainSides.size > 0) {
+      const map = new Map<
+        string,
+        {
+          outsideIsPositivePerp: boolean;
+          isOutsideFootprint: boolean;
+          classification: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
+        }
+      >();
+      fp.chainSides.forEach((info, chainId) => {
+        map.set(chainId, {
+          outsideIsPositivePerp: info.outsideIsPositivePerp,
+          isOutsideFootprint: info.isOutsideFootprint,
+          classification: info.classification,
+        });
+      });
+      chainSides = map;
+    }
+  } catch (e) {
+    // Non-fatal: will fall back to geometric sampling when chainSides is absent.
+    console.warn('[Footprint] Failed to compute chainSides', e);
+  }
   
   // Priority #1: Use outerPolygon from payload if available (handles concave shapes correctly)
   if (layout) {
@@ -436,7 +466,7 @@ function computeBuildingFootprint(
     if (payloadPolygon && payloadPolygon.length >= 3) {
       const shiftedPoly = applyCenterOffsetToPolygon(payloadPolygon, centerOffset);
       console.log(`[Footprint] Source: PAYLOAD (${shiftedPoly.length} points)`);
-      return { centroid, hull: ensureCCW(shiftedPoly), source: 'payload' };
+      return { centroid, hull: ensureCCW(shiftedPoly), source: 'payload', chainSides };
     }
   }
   
@@ -444,7 +474,7 @@ function computeBuildingFootprint(
   const graphPolygon = buildConcaveFootprintFromGraph(nodes, walls, { x: 0, y: 0 });
   if (graphPolygon.length >= 3) {
     console.log(`[Footprint] Source: GRAPH NODES (${graphPolygon.length} points)`);
-    return { centroid, hull: ensureCCW(graphPolygon), source: 'nodes' };
+    return { centroid, hull: ensureCCW(graphPolygon), source: 'nodes', chainSides };
   }
   
   // Priority #3: Build concave polygon from wall outer edges
@@ -455,7 +485,7 @@ function computeBuildingFootprint(
     const areaM2 = Math.abs(signedPolygonAreaLocal(hull));
     // If the loop is suspiciously small/degenerate, fall through to robust chain-based detection.
     if (areaM2 >= 10 && hull.length >= 8) {
-      return { centroid, hull, source: 'offsets' };
+      return { centroid, hull, source: 'offsets', chainSides };
     }
     console.warn(`[Footprint] Offsets footprint looks degenerate (points=${hull.length}, area=${areaM2.toFixed(2)}m²) - trying chain-based detection`);
   }
@@ -492,7 +522,7 @@ function computeBuildingFootprint(
   
   // No valid footprint found
   console.warn('[Footprint] No outer polygon available (all methods failed)');
-  return { centroid, hull: [], source: 'none' };
+  return { centroid, hull: [], source: 'none', chainSides };
 }
 
 // ===== Wall Geometry Data =====
