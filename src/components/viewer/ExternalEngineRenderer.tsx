@@ -202,16 +202,17 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
       return sum + Math.sqrt(dx * dx + dy * dy);
     }, 0) / rightPts.length;
     
-    // Choose the polyline that is further from centroid (outer edge)
-    const outerPts = avgDistLeft >= avgDistRight ? leftPts : rightPts;
-
-    // Build segments from consecutive points
-    for (let i = 0; i < outerPts.length - 1; i++) {
-      const a = outerPts[i];
-      const b = outerPts[i + 1];
-      // skip near-zero segments
-      if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) continue;
-      segments.push({ a, b, sourceId: String(wall.id ?? '') });
+    // NOTE: Using only the "outer" polyline can fail to close loops when the
+    // engine graph has small gaps/branching. We therefore feed BOTH offset
+    // polylines into the face-walking step; it will still select the best face.
+    const polylines = [leftPts, rightPts];
+    for (const pts of polylines) {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) continue;
+        segments.push({ a, b, sourceId: String(wall.id ?? '') });
+      }
     }
   }
 
@@ -219,7 +220,7 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
 
   // Adaptive snapping: walls/offset polylines often have small gaps at corners.
   // Try multiple tolerances (20mm → 200mm) and take the first valid loop.
-  const snapCandidates = [0.02, 0.05, 0.1, 0.2];
+  const snapCandidates = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5];
   for (const snapTol of snapCandidates) {
     const outerPoly = findOuterPolygonFromSegments(segments, snapTol);
     if (outerPoly.length >= 3) {
