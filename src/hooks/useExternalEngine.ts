@@ -45,6 +45,8 @@ const EMPTY_NORMALIZED: NormalizedExternalAnalysis = {
   wallHeight: 0,
   courseHeight: 0,
   thickness: 0,
+  wallThickness: 0.22,   // Default 220mm total
+  panelThickness: 0.0706, // Default 1 TOOTH (~70.6mm)
 };
 
 // Load persisted analysis from localStorage

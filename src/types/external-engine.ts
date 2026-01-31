@@ -87,7 +87,12 @@ export interface ExternalEngineAnalysis {
   courses?: CoursesInfo;
   walls?: GraphWall[];
   panels?: EnginePanel[];
-  meta?: { units?: string };
+  meta?: {
+    units?: string;
+    wall_thickness?: number;        // Total wall thickness in meters
+    wall_thickness_mm?: number;     // Total wall thickness in mm
+    panel_thickness_mm?: number;    // Single skin/panel thickness in mm
+  };
 }
 
 // Normalized analysis with safe defaults (never undefined)
@@ -98,7 +103,11 @@ export interface NormalizedExternalAnalysis {
   panels: EnginePanel[];
   wallHeight: number;
   courseHeight: number;
-  thickness: number;
+  thickness: number;              // Concrete core thickness in meters
+  
+  // New: thickness values from meta (in meters for easy use in geometry)
+  wallThickness: number;          // Total wall thickness (EPS + core + EPS) in meters
+  panelThickness: number;         // Single EPS/skin thickness in meters
 
   /**
    * Optional footprint polygon (may exist in different places in the raw payload).
@@ -156,7 +165,21 @@ export function normalizeExternalAnalysis(data: unknown): NormalizedExternalAnal
   const courseHeight = (coursesObj.course_height as number) ?? 0;
   const thickness = (graph.thickness as number) ?? (analysis.thickness as number) ?? (root.thickness as number) ?? 0;
 
-  console.log('[ExternalEngine] walls:', walls.length, 'panels:', panels.length, 'units:', (root.meta as { units?: string })?.units ?? 'n/a');
+  // Extract meta thickness values
+  const metaObj = (root.meta ?? analysis.meta ?? {}) as Record<string, unknown>;
+  
+  // Wall thickness: try meta.wall_thickness (m) or meta.wall_thickness_mm (mm -> m)
+  const wallThicknessFromMeta = (metaObj.wall_thickness as number) ?? 
+    ((metaObj.wall_thickness_mm as number) ?? 0) / 1000;
+  // Default: 2 EPS skins (70.6mm each) + core thickness
+  const DEFAULT_EPS = 0.0706;
+  const wallThickness = wallThicknessFromMeta > 0 ? wallThicknessFromMeta : (thickness > 0 ? thickness + 2 * DEFAULT_EPS : 0.22);
+  
+  // Panel/skin thickness: try meta.panel_thickness_mm (mm -> m), default to 1 TOOTH (~70.6mm)
+  const panelThicknessFromMeta = ((metaObj.panel_thickness_mm as number) ?? 0) / 1000;
+  const panelThickness = panelThicknessFromMeta > 0 ? panelThicknessFromMeta : DEFAULT_EPS;
+
+  console.log('[ExternalEngine] walls:', walls.length, 'panels:', panels.length, 'units:', (root.meta as { units?: string })?.units ?? 'n/a', 'wallThickness:', wallThickness.toFixed(4), 'panelThickness:', panelThickness.toFixed(4));
 
   return {
     nodes,
@@ -166,6 +189,8 @@ export function normalizeExternalAnalysis(data: unknown): NormalizedExternalAnal
     wallHeight,
     courseHeight,
     thickness,
+    wallThickness,
+    panelThickness,
 
     // Preserve raw footprint metadata for renderers that need concave envelopes
     analysis: root.analysis,
