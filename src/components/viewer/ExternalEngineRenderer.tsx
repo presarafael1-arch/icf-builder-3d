@@ -775,17 +775,22 @@ function computeWallGeometry(
     
     if (Math.abs(dotLeft) < DOT_THRESHOLD) {
       // Ambiguous case: test which polyline midpoint is outside the footprint
+      // NOTE: The exterior SKIN should face INWARD toward building (closer to centroid)
+      // because the "exterior polyline" refers to the wall edge, not the skin direction
       const leftInside = pointInPolygon(leftMid, footprintHull);
       const rightInside = pointInPolygon(rightMid, footprintHull);
       
       if (!leftInside && rightInside) {
-        exteriorSide = 'left';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: left outside)`);
-      } else if (leftInside && !rightInside) {
+        // Left is outside footprint, so RIGHT is the exterior-facing skin
         exteriorSide = 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (PIP fallback: right outside)`);
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (PIP fallback: left outside → right is ext skin)`);
+      } else if (leftInside && !rightInside) {
+        // Right is outside footprint, so LEFT is the exterior-facing skin
+        exteriorSide = 'left';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: right outside → left is ext skin)`);
       } else {
         // Both inside or both outside - use centroid distance as final fallback
+        // The side CLOSER to centroid is the interior skin, so pick the OTHER side
         const centroid = polygonCentroid(footprintHull);
         const leftDistToCentroid = Math.sqrt(
           Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2)
@@ -793,6 +798,7 @@ function computeWallGeometry(
         const rightDistToCentroid = Math.sqrt(
           Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2)
         );
+        // Pick the side FURTHER from centroid (that's the exterior-facing skin)
         exteriorSide = leftDistToCentroid > rightDistToCentroid ? 'left' : 'right';
         console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (centroid dist fallback: L=${leftDistToCentroid.toFixed(2)}, R=${rightDistToCentroid.toFixed(2)})`);
       }
