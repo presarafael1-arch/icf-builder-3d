@@ -99,6 +99,15 @@ export interface NormalizedExternalAnalysis {
   wallHeight: number;
   courseHeight: number;
   thickness: number;
+
+  /**
+   * Optional footprint polygon (may exist in different places in the raw payload).
+   * Kept as unknown/any on purpose to preserve backend compatibility.
+   */
+  outerPolygon?: unknown;
+  footprint?: unknown;
+  meta?: unknown;
+  analysis?: unknown;
 }
 
 /**
@@ -157,6 +166,12 @@ export function normalizeExternalAnalysis(data: unknown): NormalizedExternalAnal
     wallHeight,
     courseHeight,
     thickness,
+
+    // Preserve raw footprint metadata for renderers that need concave envelopes
+    analysis: root.analysis,
+    meta: root.meta,
+    footprint: root.footprint,
+    outerPolygon: (root as any).outerPolygon,
   };
 }
 
