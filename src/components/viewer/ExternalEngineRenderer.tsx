@@ -721,6 +721,8 @@ function computeWallGeometry(
   const chainSide = chainSides?.get(String(wall.id));
   let isExterior = false;
   let outN = n2;
+  let wasPromotedFromPartition = false; // Track walls promoted via geometric fallback
+  
   if (chainSide) {
     const cls = chainSide.classification;
     if (!chainSide.isOutsideFootprint && (cls === 'LEFT_EXT' || cls === 'RIGHT_EXT')) {
@@ -733,9 +735,11 @@ function computeWallGeometry(
       const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
       isExterior = check.isExterior;
       outN = check.outN;
+      // Mark as promoted if chain said partition but geometric check says exterior
+      wasPromotedFromPartition = isExterior && cls === 'BOTH_INT';
     }
     // Debug log for chain-based classification
-    console.log(`[Wall ${wall.id}] chainSides → cls=${cls}, isOutside=${chainSide.isOutsideFootprint}, outsideIsPosPerp=${chainSide.outsideIsPositivePerp} → isExterior=${isExterior}`);
+    console.log(`[Wall ${wall.id}] chainSides → cls=${cls}, isOutside=${chainSide.isOutsideFootprint}, outsideIsPosPerp=${chainSide.outsideIsPositivePerp} → isExterior=${isExterior}${wasPromotedFromPartition ? ' (PROMOTED)' : ''}`);
   } else {
     // Fallback to geometric footprint sampling
     const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
@@ -774,24 +778,13 @@ function computeWallGeometry(
     const DOT_THRESHOLD = 0.15; // threshold for ambiguous cases
     
     if (Math.abs(dotLeft) < DOT_THRESHOLD) {
-      // Ambiguous case: test which polyline midpoint is outside the footprint
-      // NOTE: The exterior SKIN should face INWARD toward building (closer to centroid)
-      // because the "exterior polyline" refers to the wall edge, not the skin direction
+      // Ambiguous case: use different logic based on whether wall was promoted
       const leftInside = pointInPolygon(leftMid, footprintHull);
       const rightInside = pointInPolygon(rightMid, footprintHull);
       
-      if (!leftInside && rightInside) {
-        // Left is outside footprint, so RIGHT is the exterior-facing skin
-        exteriorSide = 'right';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (PIP fallback: left outside → right is ext skin)`);
-      } else if (leftInside && !rightInside) {
-        // Right is outside footprint, so LEFT is the exterior-facing skin
-        exteriorSide = 'left';
-        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: right outside → left is ext skin)`);
-      } else {
-        // Both inside or both outside - use centroid distance as final fallback
-        // In this renderer's coordinate convention, the exterior-facing skin is the one
-        // whose offset polyline midpoint is CLOSER to the building centroid.
+      if (wasPromotedFromPartition) {
+        // PROMOTED walls (chain said BOTH_INT but geometric check promoted to exterior):
+        // These walls have unreliable outN, use INVERTED centroid logic
         const centroid = polygonCentroid(footprintHull);
         const leftDistToCentroid = Math.sqrt(
           Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2)
@@ -799,8 +792,28 @@ function computeWallGeometry(
         const rightDistToCentroid = Math.sqrt(
           Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2)
         );
-        // Pick the side CLOSER to centroid
+        // For promoted walls: pick the side CLOSER to centroid
         exteriorSide = leftDistToCentroid < rightDistToCentroid ? 'left' : 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (PROMOTED centroid fallback: L=${leftDistToCentroid.toFixed(2)}, R=${rightDistToCentroid.toFixed(2)})`);
+      } else if (!leftInside && rightInside) {
+        // Normal case: left is outside footprint, so left is exterior-facing
+        exteriorSide = 'left';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: left outside)`);
+      } else if (leftInside && !rightInside) {
+        // Normal case: right is outside footprint, so right is exterior-facing
+        exteriorSide = 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (PIP fallback: right outside)`);
+      } else {
+        // Both inside or both outside - use centroid distance (original logic: pick FURTHER)
+        const centroid = polygonCentroid(footprintHull);
+        const leftDistToCentroid = Math.sqrt(
+          Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2)
+        );
+        const rightDistToCentroid = Math.sqrt(
+          Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2)
+        );
+        // Normal walls: pick the side FURTHER from centroid
+        exteriorSide = leftDistToCentroid > rightDistToCentroid ? 'left' : 'right';
         console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (centroid dist fallback: L=${leftDistToCentroid.toFixed(2)}, R=${rightDistToCentroid.toFixed(2)})`);
       }
     } else {
