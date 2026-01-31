@@ -720,6 +720,7 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
   const geometry = useMemo(() => {
     // Center of panel along wall
     const centerX = (x0 + x1) / 2;
+    const panelWidth = x1 - x0;
     
     // Stripe height: 85% of course height, centered vertically
     const courseHeight = z1 - z0;
@@ -727,8 +728,11 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
     const stripeZ0 = z0 + (courseHeight - stripeHeight) / 2;
     const stripeZ1 = stripeZ0 + stripeHeight;
     
-    // Stripe width: 100mm centered
-    const halfWidth = STRIPE_WIDTH / 2;
+    // Stripe width: MINIMUM of 100mm or 60% of panel width
+    // This prevents stripes from covering the entire panel on narrow panels
+    const maxStripeWidthForPanel = panelWidth * 0.6;
+    const actualStripeWidth = Math.min(STRIPE_WIDTH, maxStripeWidthForPanel);
+    const halfWidth = actualStripeWidth / 2;
     const stripeX0 = centerX - halfWidth;
     const stripeX1 = centerX + halfWidth;
     
@@ -1051,8 +1055,11 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     const stripeZ1 = stripeZ0 + stripeHeight;
     
     // Create stripe geometry at center of wall
+    // Stripe width: MINIMUM of 100mm or 60% of wall length (for short walls)
     const centerT = length / 2;
-    const halfW = STRIPE_WIDTH / 2;
+    const maxStripeWidthForWall = length * 0.6;
+    const actualStripeWidth = Math.min(STRIPE_WIDTH, maxStripeWidthForWall);
+    const halfW = actualStripeWidth / 2;
     
     // Left surface stripes (front and back)
     const leftCenter = { x: leftPts[0].x + u2.x * centerT, y: leftPts[0].y + u2.y * centerT };
