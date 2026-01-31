@@ -454,6 +454,15 @@ function computeBuildingFootprint(
         });
       });
       chainSides = map;
+
+      // Debug: Log classification stats
+      let extCount = 0, intCount = 0, unresCount = 0;
+      map.forEach((info) => {
+        if (info.classification === 'LEFT_EXT' || info.classification === 'RIGHT_EXT') extCount++;
+        else if (info.classification === 'BOTH_INT') intCount++;
+        else unresCount++;
+      });
+      console.log(`[Footprint] chainSides: ${map.size} walls → EXT=${extCount}, PARTITION=${intCount}, UNRESOLVED=${unresCount}`);
     }
   } catch (e) {
     // Non-fatal: will fall back to geometric sampling when chainSides is absent.
@@ -670,7 +679,8 @@ function computeWallGeometry(
   let isExterior = false;
   let outN = n2;
   if (chainSide) {
-    if (!chainSide.isOutsideFootprint && (chainSide.classification === 'LEFT_EXT' || chainSide.classification === 'RIGHT_EXT')) {
+    const cls = chainSide.classification;
+    if (!chainSide.isOutsideFootprint && (cls === 'LEFT_EXT' || cls === 'RIGHT_EXT')) {
       isExterior = true;
       // outsideIsPositivePerp uses the same perp convention (dy/len, -dx/len) as n2.
       outN = chainSide.outsideIsPositivePerp ? n2 : { x: -n2.x, y: -n2.y };
@@ -678,11 +688,14 @@ function computeWallGeometry(
       isExterior = false;
       outN = n2;
     }
+    // Debug log for chain-based classification
+    console.log(`[Wall ${wall.id}] chainSides → cls=${cls}, isOutside=${chainSide.isOutsideFootprint}, outsideIsPosPerp=${chainSide.outsideIsPositivePerp} → isExterior=${isExterior}`);
   } else {
     // Fallback to geometric footprint sampling
     const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
     isExterior = check.isExterior;
     outN = check.outN;
+    console.log(`[Wall ${wall.id}] NO chainSide entry → fallback chooseOutNormal → isExterior=${isExterior}`);
   }
   
   let isExteriorWall = isExterior;
