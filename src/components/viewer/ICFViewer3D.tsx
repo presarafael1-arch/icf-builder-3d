@@ -1027,6 +1027,9 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={PANEL_COLORS.FULL}
             emissiveIntensity={0.15}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1046,6 +1049,9 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={PANEL_COLORS.CUT_SINGLE}
             emissiveIntensity={0.15}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1132,6 +1138,9 @@ function BatchedPanelInstances({
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1334,6 +1343,9 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1350,6 +1362,9 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1366,6 +1381,9 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1421,7 +1439,7 @@ function WebsInstances({ walls, settings }: ICFPanelInstancesProps) {
 
   return (
     <instancedMesh ref={meshRef} args={[webGeometry, undefined, count]} frustumCulled={false}>
-      <meshStandardMaterial color="#e8a645" roughness={0.6} metalness={0.3} />
+      <meshStandardMaterial color="#e8a645" roughness={0.6} metalness={0.3} transparent={false} opacity={1} depthWrite={true} />
     </instancedMesh>
   );
 }
@@ -1477,7 +1495,7 @@ function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
 
   return (
     <instancedMesh ref={meshRef} args={[gridGeometry, undefined, count]} frustumCulled={false}>
-      <meshStandardMaterial color="#e53935" roughness={0.5} metalness={0.2} />
+      <meshStandardMaterial color="#e53935" roughness={0.5} metalness={0.2} transparent={false} opacity={1} depthWrite={true} />
     </instancedMesh>
   );
 }
@@ -1986,8 +2004,8 @@ export function ICFViewer3D({
     <div className={`viewer-container ${className} relative`}>
       <Canvas
         shadows
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3 }}
-        style={{ background: 'transparent' }}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3, alpha: false }}
+        style={{ background: '#1a1a2e' }}
       >
         {/* External mode: render ONLY from external engine or show empty state */}
         {isExternalMode ? (
