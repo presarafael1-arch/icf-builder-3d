@@ -762,17 +762,10 @@ function computeWallGeometry(
       isExterior = check.isExterior;
       outN = check.outN;
 
-      // Special case:
-      // If chainSides reports BOTH_INT but the geometric check promotes the wall to EXTERIOR
-      // via boundary/bbox/centroid fallbacks, the returned outN may be nearly tangent to the wall
-      // (or otherwise unstable), making the left/right selection ambiguous.
-      // In that promoted case, prefer the deterministic chain convention to select the exterior side.
-      if (!chainSide.isOutsideFootprint && cls === 'BOTH_INT' && isExterior) {
-        outN = chainSide.outsideIsPositivePerp ? nChain : { x: -nChain.x, y: -nChain.y };
-        console.log(
-          `[Wall ${wall.id}] PROMOTED exterior: using chain outsideIsPosPerp to stabilize outN (outsideIsPosPerp=${chainSide.outsideIsPositivePerp})`
-        );
-      }
+      // NOTE:
+      // For cls=BOTH_INT that gets *promoted* to EXTERIOR via chooseOutNormal (boundary/bbox/etc),
+      // we must NOT force outN from chainSide.outsideIsPositivePerp.
+      // In BOTH_INT cases that flag can be a default and would incorrectly flip the exterior side.
     }
     // Debug log for chain-based classification
     console.log(`[Wall ${wall.id}] chainSides → cls=${cls}, isOutside=${chainSide.isOutsideFootprint}, outsideIsPosPerp=${chainSide.outsideIsPositivePerp} → isExterior=${isExterior}`);
