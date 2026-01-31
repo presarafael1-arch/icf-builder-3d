@@ -1178,8 +1178,12 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
   }
   
   // Normal directions for stripe offset positioning
-  const extNormalDir = exteriorSide === 'right' ? { x: -n2.x, y: -n2.y } : n2;
-  const intNormalDir = exteriorSide === 'right' ? n2 : { x: -n2.x, y: -n2.y };
+  // n2 is normalized to point LEFT -> RIGHT.
+  // Therefore:
+  // - If the EXTERIOR skin is on the LEFT polyline, the "outside" half-space is -n2
+  // - If the EXTERIOR skin is on the RIGHT polyline, the "outside" half-space is +n2
+  const extNormalDir = exteriorSide === 'left' ? { x: -n2.x, y: -n2.y } : n2;
+  const intNormalDir = exteriorSide === 'left' ? n2 : { x: -n2.x, y: -n2.y };
   
   // ============= KEY FIX: Stripe colors per-skin =============
   // EXTERIOR WALL:
@@ -1392,8 +1396,12 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   
   // Generate stripe overlays for fallback (solid rectangles per course)
   const fallbackStripes: JSX.Element[] = [];
-  const leftNormal = n2;
-  const rightNormal = { x: -n2.x, y: -n2.y };
+  // n2 is normalized to point LEFT -> RIGHT. For stripe offsets we want the
+  // outward normal of each surface:
+  // - Left surface outward is -n2
+  // - Right surface outward is +n2
+  const leftNormal = { x: -n2.x, y: -n2.y };
+  const rightNormal = n2;
   
   courses.forEach((course, ci) => {
     const z0 = course.z0 ?? 0;
