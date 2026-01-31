@@ -104,6 +104,40 @@ interface Point2D {
   y: number;
 }
 
+function polylinePointAtDistance(pts: Point2D[], distance: number): Point2D {
+  if (pts.length === 0) return { x: 0, y: 0 };
+  if (pts.length === 1) return pts[0];
+  if (distance <= 0) return pts[0];
+
+  let remaining = distance;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const segLen = Math.sqrt(dx * dx + dy * dy);
+    if (segLen < 1e-12) continue;
+    if (remaining <= segLen) {
+      const t = remaining / segLen;
+      return { x: a.x + dx * t, y: a.y + dy * t };
+    }
+    remaining -= segLen;
+  }
+  return pts[pts.length - 1];
+}
+
+function polylineMidpoint(pts: Point2D[]): Point2D {
+  if (pts.length === 0) return { x: 0, y: 0 };
+  if (pts.length === 1) return pts[0];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = pts[i + 1].x - pts[i].x;
+    const dy = pts[i + 1].y - pts[i].y;
+    total += Math.sqrt(dx * dx + dy * dy);
+  }
+  return polylinePointAtDistance(pts, total / 2);
+}
+
 // Local signed area calculation for CCW normalization
 function signedPolygonAreaLocal(poly: Point2D[]): number {
   if (poly.length < 3) return 0;
@@ -784,15 +818,11 @@ function computeWallGeometry(
     // Determine which polyline (left or right) is on the exterior side
     // by testing which midpoint is further in the outN direction
     
-    // Calculate midpoints of each polyline
-    const leftMid = {
-      x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
-      y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
-    };
-    const rightMid = {
-      x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
-      y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
-    };
+    // Calculate midpoints of each polyline.
+    // IMPORTANT: endpoints-midpoint is not reliable when offsets have many segments
+    // (e.g., corners/curves/joins). Use arclength midpoint.
+    const leftMid = polylineMidpoint(leftPts);
+    const rightMid = polylineMidpoint(rightPts);
     
     // Vector from wall center to left polyline midpoint
     const toLeft = { 
