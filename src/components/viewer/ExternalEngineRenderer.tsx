@@ -489,9 +489,27 @@ function computeWallGeometry(
     x: (leftPts[0].x + leftPts[leftPts.length - 1].x + rightPts[0].x + rightPts[rightPts.length - 1].x) / 4,
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
+
+  // IMPORTANT: For exterior detection, do not rely on n2 derived from (axis.u).
+  // Some payloads can invert axis direction relative to offsets.left/right generation,
+  // which flips n2 and causes point-in-polygon voting to misclassify perimeter walls as partitions.
+  //
+  // Instead, derive a stable wall-normal candidate directly from the offset separation.
+  // This vector is guaranteed to be perpendicular to the wall centerline in the local geometry.
+  const leftMid = {
+    x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
+    y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
+  };
+  const rightMid = {
+    x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
+    y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
+  };
+  const sep = { x: leftMid.x - rightMid.x, y: leftMid.y - rightMid.y };
+  const sepLen = Math.hypot(sep.x, sep.y);
+  const pipNormal = sepLen > 0 ? { x: sep.x / sepLen, y: sep.y / sepLen } : n2;
   
   // Use robust multi-offset detection
-  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull, buildingCentroid);
+  const { isExterior, outN } = chooseOutNormal(wallCenterMid, pipNormal, footprintHull, buildingCentroid);
   
   let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
@@ -500,31 +518,8 @@ function computeWallGeometry(
     // Determine which polyline (left or right) is on the exterior side
     // by testing which midpoint is further in the outN direction
     
-    // Calculate midpoints of each polyline
-    const leftMid = {
-      x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
-      y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
-    };
-    const rightMid = {
-      x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
-      y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
-    };
-    
-    // IMPORTANT: Do NOT rely on wall.axis/u2 for left/right determination.
-    // In some payloads, axis direction can be reversed relative to how offsets.left/right were built,
-    // which flips n2 and makes the “toLeft dot outN” heuristic unstable.
-    //
-    // Instead, derive a stable normal directly from the offset polylines:
-    // vector from right → left (perpendicular to wall core) at the midpoint.
-    const sep = {
-      x: leftMid.x - rightMid.x,
-      y: leftMid.y - rightMid.y,
-    };
-    const sepLen = Math.hypot(sep.x, sep.y);
-    const sepN = sepLen > 0 ? { x: sep.x / sepLen, y: sep.y / sepLen } : { x: 0, y: 0 };
-
     // If outN points in the same direction as (right→left), then LEFT is exterior.
-    const dotOutVsSep = outN.x * sepN.x + outN.y * sepN.y;
+    const dotOutVsSep = outN.x * pipNormal.x + outN.y * pipNormal.y;
     exteriorSide = dotOutVsSep >= 0 ? 'left' : 'right';
 
     // Enhanced debug logging
