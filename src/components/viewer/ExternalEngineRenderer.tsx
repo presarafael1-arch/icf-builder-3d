@@ -108,8 +108,8 @@ function normalizeAngle(angle: number): number {
   return a;
 }
 
-// Skin/EPS thickness (1 TOOTH ≈ 70.6mm)
-const EPS_THICKNESS = 0.0706; // meters
+// Default skin/EPS thickness (1 TOOTH ≈ 70.6mm) - used only as fallback
+const DEFAULT_EPS_THICKNESS = 0.0706; // meters
 const DEFAULT_CORE_THICKNESS = 0.15; // 150mm default
 
 // Stripe dimensions (aligned with internal engine)
@@ -1843,10 +1843,21 @@ export function ExternalEngineRenderer({
   const groupRef = useRef<THREE.Group>(null);
   const [skippedCount, setSkippedCount] = useState(0);
 
-  const { nodes, walls, courses, panels, wallHeight, thickness } = normalizedAnalysis;
+  const { nodes, walls, courses, panels, wallHeight, thickness, wallThickness, panelThickness } = normalizedAnalysis;
 
   const hasPanels = panels.length > 0;
-  const coreThickness = thickness > 0 ? thickness : DEFAULT_CORE_THICKNESS;
+  // Core thickness from API or calculate from wall and panel thickness
+  const coreThickness = thickness > 0 ? thickness : (wallThickness - 2 * panelThickness);
+  // Use dynamic panel thickness from API (or default)
+  const skinThickness = panelThickness > 0 ? panelThickness : DEFAULT_EPS_THICKNESS;
+  
+  // Log thickness values for debugging
+  console.log('[ExternalEngineRenderer] Thickness values:', {
+    wallThickness: wallThickness.toFixed(4),
+    panelThickness: panelThickness.toFixed(4),
+    coreThickness: coreThickness.toFixed(4),
+    skinThickness: skinThickness.toFixed(4),
+  });
 
   // Calculate auto-centering offset
   const centerOffset = useMemo(
