@@ -616,8 +616,9 @@ function chooseOutNormal(
   const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
   const toMidLen = Math.sqrt(toMid.x * toMid.x + toMid.y * toMid.y);
   
-  // Fallback #1: If wall midpoint is near boundary (within 2m), treat as exterior
-  if (boundaryDist <= 2.0 && toMidLen > 0.01) {
+  // Fallback #1: If wall midpoint is near boundary (within 5m), treat as exterior
+  // Increased threshold to catch perimeter walls in buildings with complex footprints
+  if (boundaryDist <= 5.0 && toMidLen > 0.01) {
     // outN points away from centroid (towards exterior)
     const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
     console.log(`[Wall ${wallId}] EXTERIOR (boundary fallback): dist=${boundaryDist.toFixed(3)}m`);
@@ -631,7 +632,7 @@ function chooseOutNormal(
   const polyMinY = Math.min(...outerPoly.map(p => p.y));
   const polyMaxY = Math.max(...outerPoly.map(p => p.y));
   
-  const edgeMargin = 0.5; // 0.5m margin from bounding box edge
+  const edgeMargin = 1.0; // 1.0m margin from bounding box edge
   const isOnBBoxEdge = 
     mid.x <= polyMinX + edgeMargin ||
     mid.x >= polyMaxX - edgeMargin ||
@@ -641,6 +642,22 @@ function chooseOutNormal(
   if (isOnBBoxEdge && toMidLen > 0.01) {
     const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
     console.log(`[Wall ${wallId}] EXTERIOR (bbox edge fallback): mid=(${mid.x.toFixed(2)}, ${mid.y.toFixed(2)})`);
+    return { isExterior: true, outN };
+  }
+  
+  // Fallback #3: Normal alignment with centroid direction
+  // If the wall normal aligns with the direction FROM centroid TO wall, it's likely exterior
+  // This catches walls that are geometrically on the perimeter but failed other tests
+  const normalDotToMid = (n.x * toMid.x + n.y * toMid.y) / toMidLen;
+  const normalAlignment = Math.abs(normalDotToMid); // 0 = perpendicular, 1 = aligned
+  
+  // If normal is roughly aligned with centroid direction (>0.3), treat as exterior
+  if (normalAlignment > 0.3 && toMidLen > 0.01) {
+    // Choose outN direction: same as toMid if positive dot, opposite if negative
+    const outN = normalDotToMid > 0 
+      ? { x: n.x, y: n.y }
+      : { x: -n.x, y: -n.y };
+    console.log(`[Wall ${wallId}] EXTERIOR (normal alignment fallback): alignment=${normalAlignment.toFixed(2)}, dist=${boundaryDist.toFixed(2)}m`);
     return { isExterior: true, outN };
   }
   
