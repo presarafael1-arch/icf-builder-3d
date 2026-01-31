@@ -240,14 +240,27 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
   if (segments.length < 3) return [];
 
   // Adaptive snapping: walls/offset polylines often have small gaps at corners.
-  // Try multiple tolerances (20mm → 500mm) and take the first valid loop.
+  // Try multiple tolerances (20mm → 500mm) and choose the BEST loop by area.
   const snapCandidates = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5];
+
+  type Candidate = { poly: Point2D[]; snapTol: number; areaAbs: number };
+  const candidates: Candidate[] = [];
   for (const snapTol of snapCandidates) {
-    const outerPoly = findOuterPolygonFromSegments(segments, snapTol);
-    if (outerPoly.length >= 3) {
-      console.log(`[Footprint] Built concave polygon from wall offsets (${outerPoly.length} points, snap=${Math.round(snapTol * 1000)}mm)`);
-      return outerPoly;
-    }
+    const poly = findOuterPolygonFromSegments(segments, snapTol);
+    if (poly.length < 3) continue;
+    const areaAbs = Math.abs(signedPolygonAreaLocal(poly));
+    // Reject degenerate loops (e.g., self-intersections collapsing area, tiny internal faces)
+    if (!isFinite(areaAbs) || areaAbs < 1.0) continue;
+    candidates.push({ poly, snapTol, areaAbs });
+  }
+
+  candidates.sort((a, b) => b.areaAbs - a.areaAbs);
+  const best = candidates[0];
+  if (best) {
+    console.log(
+      `[Footprint] Built concave polygon from wall offsets (${best.poly.length} points, snap=${Math.round(best.snapTol * 1000)}mm, area=${best.areaAbs.toFixed(1)}m²)`
+    );
+    return best.poly;
   }
 
   console.warn('[Footprint] Failed to build concave polygon from wall offsets');
@@ -290,12 +303,24 @@ function buildConcaveFootprintFromGraph(
   
   // Use face-walking with adaptive snapping
   const snapCandidates = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5];
+
+  type Candidate = { poly: Point2D[]; snapTol: number; areaAbs: number };
+  const candidates: Candidate[] = [];
   for (const snapTol of snapCandidates) {
-    const outerPoly = findOuterPolygonFromSegments(segments, snapTol);
-    if (outerPoly.length >= 3) {
-      console.log(`[Footprint] Built concave polygon from graph centerlines (${outerPoly.length} points, snap=${Math.round(snapTol * 1000)}mm)`);
-      return outerPoly;
-    }
+    const poly = findOuterPolygonFromSegments(segments, snapTol);
+    if (poly.length < 3) continue;
+    const areaAbs = Math.abs(signedPolygonAreaLocal(poly));
+    if (!isFinite(areaAbs) || areaAbs < 1.0) continue;
+    candidates.push({ poly, snapTol, areaAbs });
+  }
+
+  candidates.sort((a, b) => b.areaAbs - a.areaAbs);
+  const best = candidates[0];
+  if (best) {
+    console.log(
+      `[Footprint] Built concave polygon from graph centerlines (${best.poly.length} points, snap=${Math.round(best.snapTol * 1000)}mm, area=${best.areaAbs.toFixed(1)}m²)`
+    );
+    return best.poly;
   }
   
   console.warn('[Footprint] Failed to build concave polygon from graph centerlines');
