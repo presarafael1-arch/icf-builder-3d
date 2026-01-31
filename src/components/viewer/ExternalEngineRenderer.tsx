@@ -770,10 +770,36 @@ function computeWallGeometry(
     // Dot product with outN - positive means left is on exterior side
     const dotLeft = toLeft.x * outN.x + toLeft.y * outN.y;
     
-    exteriorSide = dotLeft > 0 ? 'left' : 'right';
+    // If dotLeft is ambiguous (close to 0), use direct point-in-polygon test
+    const DOT_THRESHOLD = 0.15; // threshold for ambiguous cases
     
-    // Enhanced debug logging
-    console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotLeft: ${dotLeft.toFixed(3)}`);
+    if (Math.abs(dotLeft) < DOT_THRESHOLD) {
+      // Ambiguous case: test which polyline midpoint is outside the footprint
+      const leftInside = pointInPolygon(leftMid, footprintHull);
+      const rightInside = pointInPolygon(rightMid, footprintHull);
+      
+      if (!leftInside && rightInside) {
+        exteriorSide = 'left';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: left (PIP fallback: left outside)`);
+      } else if (leftInside && !rightInside) {
+        exteriorSide = 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: right (PIP fallback: right outside)`);
+      } else {
+        // Both inside or both outside - use centroid distance as final fallback
+        const centroid = polygonCentroid(footprintHull);
+        const leftDistToCentroid = Math.sqrt(
+          Math.pow(leftMid.x - centroid.x, 2) + Math.pow(leftMid.y - centroid.y, 2)
+        );
+        const rightDistToCentroid = Math.sqrt(
+          Math.pow(rightMid.x - centroid.x, 2) + Math.pow(rightMid.y - centroid.y, 2)
+        );
+        exteriorSide = leftDistToCentroid > rightDistToCentroid ? 'left' : 'right';
+        console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide} (centroid dist fallback: L=${leftDistToCentroid.toFixed(2)}, R=${rightDistToCentroid.toFixed(2)})`);
+      }
+    } else {
+      exteriorSide = dotLeft > 0 ? 'left' : 'right';
+      console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotLeft: ${dotLeft.toFixed(3)}`);
+    }
   } else {
     console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
   }
