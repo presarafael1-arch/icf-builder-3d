@@ -1065,8 +1065,9 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={settings.highlightCornerCuts ? '#FF4444' : PANEL_COLORS.CORNER_CUT}
             emissiveIntensity={settings.highlightCornerCuts ? 0.6 : 0.15}
-            transparent={settings.highlightCornerCuts}
-            opacity={settings.highlightCornerCuts ? 0.9 : 1}
+            // Painéis devem ser sempre opacos (sem ver-através)
+            transparent={false}
+            opacity={1}
           />
         </instancedMesh>
       )}
@@ -1086,10 +1087,11 @@ function BatchedPanelInstances({
             metalness={0.5}
             emissive={previewColor || "#00FFFF"}
             emissiveIntensity={previewColor ? 1.0 : 0.8}
-            transparent
-            opacity={previewColor ? 0.85 : 0.6}
+            // Evita o efeito de translucidez: highlight também fica opaco.
+            transparent={false}
+            opacity={1}
             depthTest={true}
-            depthWrite={false}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
