@@ -954,7 +954,7 @@ function calculateCenterOffset(
 }
 
 // ===== Panel Skin Mesh =====
-// Renders a single panel skin (rectangle) at given Z range
+// Renders a single panel skin as a 3D box with real thickness
 
 interface PanelSkinProps {
   x0: number;           // Start position along wall
@@ -963,35 +963,39 @@ interface PanelSkinProps {
   z1: number;           // Top Y (height)
   startPt: { x: number; y: number };  // Start point of this skin polyline
   u2: { x: number; y: number };       // Direction along wall
+  n2: { x: number; y: number };       // Normal (perpendicular to wall)
+  thickness: number;    // Panel/skin thickness in meters
   color: number;
   isSelected: boolean;
 }
 
-function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkinProps) {
+function PanelSkin({ x0, x1, z0, z1, startPt, u2, n2, thickness, color, isSelected }: PanelSkinProps) {
   const geometry = useMemo(() => {
-    // 4 corners of the panel skin
-    const bl = { x: startPt.x + u2.x * x0, y: startPt.y + u2.y * x0 }; // bottom-left
-    const br = { x: startPt.x + u2.x * x1, y: startPt.y + u2.y * x1 }; // bottom-right
+    // Panel dimensions
+    const panelLength = x1 - x0;
+    const panelHeight = z1 - z0;
     
-    const vertices = new Float32Array([
-      // Bottom-left
-      bl.x, z0, bl.y,
-      // Bottom-right
-      br.x, z0, br.y,
-      // Top-right
-      br.x, z1, br.y,
-      // Top-left
-      bl.x, z1, bl.y,
-    ]);
+    // Center position of the panel
+    const centerX = (x0 + x1) / 2;
+    const centerPos = {
+      x: startPt.x + u2.x * centerX + n2.x * (thickness / 2),
+      y: startPt.y + u2.y * centerX + n2.y * (thickness / 2),
+    };
+    const centerZ = (z0 + z1) / 2;
     
-    const indices = [0, 1, 2, 0, 2, 3]; // Two triangles
+    // Create box geometry
+    const geom = new THREE.BoxGeometry(panelLength, panelHeight, thickness);
     
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geom.setIndex(indices);
-    geom.computeVertexNormals();
+    // Rotate geometry to align with wall direction
+    // Wall direction u2 defines X axis, n2 defines Z axis
+    const angle = Math.atan2(u2.y, u2.x);
+    geom.rotateY(-angle);
+    
+    // Translate to position
+    geom.translate(centerPos.x, centerZ, centerPos.y);
+    
     return geom;
-  }, [x0, x1, z0, z1, startPt, u2]);
+  }, [x0, x1, z0, z1, startPt, u2, n2, thickness]);
   
   const displayColor = isSelected ? COLORS.SELECTED : color;
   
@@ -999,7 +1003,7 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, color, isSelected }: PanelSkin
     <mesh geometry={geometry} renderOrder={5}>
       <meshStandardMaterial
         color={displayColor}
-        side={THREE.DoubleSide}
+        side={THREE.FrontSide}
         depthWrite={true}
         depthTest={true}
         transparent={false}
@@ -1132,10 +1136,11 @@ interface DualSkinPanelProps {
   course: Course;
   wallGeom: WallGeometryData;
   coreThickness: number;
+  skinThickness: number;  // Panel/EPS thickness in meters
   isSelected: boolean;
 }
 
-function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: DualSkinPanelProps) {
+function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, isSelected }: DualSkinPanelProps) {
   const { leftPts, rightPts, u2, n2, isExteriorWall, exteriorSide } = wallGeom;
   
   const z0 = course.z0 ?? 0;
@@ -1195,6 +1200,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={extStart}
         u2={u2}
+        n2={extNormalDir}
+        thickness={skinThickness}
         color={panelColor}
         isSelected={isSelected}
       />
@@ -1239,6 +1246,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         z1={z1}
         startPt={intStart}
         u2={u2}
+        n2={intNormalDir}
+        thickness={skinThickness}
         color={panelColor}
         isSelected={isSelected}
       />
@@ -1599,6 +1608,7 @@ interface WallRendererProps {
     }
   >;
   coreThickness: number;
+  skinThickness: number;  // Panel/EPS thickness in meters
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
   shouldFlipWall?: ShouldFlipWallFn;
@@ -1614,6 +1624,7 @@ function WallRenderer({
   buildingCentroid,
   chainSides,
   coreThickness,
+  skinThickness,
   isSelected,
   onWallClick,
   shouldFlipWall,
@@ -1669,6 +1680,7 @@ function WallRenderer({
               course={course}
               wallGeom={wallGeom}
               coreThickness={coreThickness}
+              skinThickness={skinThickness}
               isSelected={isSelected}
             />
           );
@@ -2000,6 +2012,7 @@ export function ExternalEngineRenderer({
           buildingCentroid={buildingCentroid}
           chainSides={chainSides}
           coreThickness={coreThickness}
+          skinThickness={skinThickness}
           isSelected={wall.id === selectedWallId}
           onWallClick={onWallClick}
           shouldFlipWall={shouldFlipWall}
