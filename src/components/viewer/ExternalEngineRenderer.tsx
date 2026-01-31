@@ -535,8 +535,9 @@ function PanelOutline({ x0, x1, z0, z1, startPt, u2 }: PanelOutlineProps) {
       points={points}
       color={COLORS.OUTLINE}
       lineWidth={1.5}
-      depthTest={false}
-      renderOrder={20}
+      depthTest={true}
+      depthWrite={false}
+      renderOrder={10}
     />
   );
 }
