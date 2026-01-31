@@ -1065,6 +1065,7 @@ export default function ProjectEditor() {
               engineMode={engineMode}
               onEngineModeChange={setEngineMode}
               analysis={externalAnalysis}
+              normalizedAnalysis={normalizedExternalAnalysis}
               isLoading={externalLoading}
               error={externalError}
               selectedWallId={externalSelectedWallId}
