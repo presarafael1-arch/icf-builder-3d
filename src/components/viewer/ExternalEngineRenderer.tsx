@@ -102,6 +102,39 @@ interface Point2D {
   y: number;
 }
 
+// Local signed area calculation for CCW normalization
+function signedPolygonAreaLocal(poly: Point2D[]): number {
+  if (poly.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const j = (i + 1) % poly.length;
+    area += poly[i].x * poly[j].y - poly[j].x * poly[i].y;
+  }
+  return area / 2;
+}
+
+// Ensure polygon is counter-clockwise (positive signed area)
+function ensureCCW(polygon: Point2D[]): Point2D[] {
+  if (polygon.length < 3) return polygon;
+  const area = signedPolygonAreaLocal(polygon);
+  if (area < 0) {
+    console.log('[Footprint] Normalizing polygon to CCW');
+    return [...polygon].reverse();
+  }
+  return polygon;
+}
+
+// Calculate polygon centroid
+function polygonCentroid(poly: Point2D[]): Point2D {
+  if (poly.length === 0) return { x: 0, y: 0 };
+  let x = 0, y = 0;
+  for (const p of poly) {
+    x += p.x;
+    y += p.y;
+  }
+  return { x: x / poly.length, y: y / poly.length };
+}
+
 function pointToSegmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -313,7 +346,7 @@ function computeBuildingFootprint(
     if (payloadPolygon && payloadPolygon.length >= 3) {
       const shiftedPoly = applyCenterOffsetToPolygon(payloadPolygon, centerOffset);
       console.log(`[Footprint] Source: PAYLOAD (${shiftedPoly.length} points)`);
-      return { centroid, hull: shiftedPoly, source: 'payload' };
+      return { centroid, hull: ensureCCW(shiftedPoly), source: 'payload' };
     }
   }
   
@@ -321,14 +354,14 @@ function computeBuildingFootprint(
   const graphPolygon = buildConcaveFootprintFromGraph(nodes, walls, { x: 0, y: 0 });
   if (graphPolygon.length >= 3) {
     console.log(`[Footprint] Source: GRAPH NODES (${graphPolygon.length} points)`);
-    return { centroid, hull: graphPolygon, source: 'nodes' };
+    return { centroid, hull: ensureCCW(graphPolygon), source: 'nodes' };
   }
   
   // Priority #3: Build concave polygon from wall outer edges
   const concavePolygon = buildConcaveFootprintFromWalls(walls, centroid);
   if (concavePolygon.length >= 3) {
     console.log(`[Footprint] Source: WALL OFFSETS (${concavePolygon.length} points)`);
-    return { centroid, hull: concavePolygon, source: 'offsets' };
+    return { centroid, hull: ensureCCW(concavePolygon), source: 'offsets' };
   }
   
   // No valid footprint found
@@ -354,30 +387,18 @@ interface WallGeometryData {
 function chooseOutNormal(
   mid: Point2D,
   n: Point2D,
-  outerPoly: Point2D[]
+  outerPoly: Point2D[],
+  wallId?: string
 ): { isExterior: boolean; outN: Point2D } {
-  // If we're close to the footprint boundary, treat this as perimeter (robust against
-  // tiny polygon errors / snapping artifacts).
-  const boundaryDist = distanceToPolygonBoundary(mid, outerPoly);
-  if (boundaryDist <= 0.5) {
-    // Still need outN direction: infer it from sampling.
-    // (If sampling fails, fall back to n as a stable default.)
-    const testEpsNear = [0.25, 0.5, 1.0];
-    for (const eps of testEpsNear) {
-      const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
-      const pMinus = { x: mid.x - n.x * eps, y: mid.y - n.y * eps };
-      const inPlus = pointInPolygon(pPlus, outerPoly);
-      const inMinus = pointInPolygon(pMinus, outerPoly);
-      if (inPlus !== inMinus) {
-        const outN = inPlus ? { x: -n.x, y: -n.y } : n;
-        return { isExterior: true, outN };
-      }
-    }
-    return { isExterior: true, outN: n };
+  if (outerPoly.length < 3) {
+    console.warn(`[Wall ${wallId}] No valid polygon - defaulting to interior`);
+    return { isExterior: false, outN: n };
   }
 
-  // Test at multiple distances for robustness
-  const testEps = [0.1, 0.25, 0.5, 0.75, 1.0]; // meters
+  const boundaryDist = distanceToPolygonBoundary(mid, outerPoly);
+  
+  // Extended test offsets - go further out for large buildings
+  const testEps = [0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0];
   
   for (const eps of testEps) {
     const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
@@ -387,14 +408,30 @@ function chooseOutNormal(
     const inMinus = pointInPolygon(pMinus, outerPoly);
     
     if (inPlus !== inMinus) {
-      // If pPlus is INSIDE, then outN points in the opposite direction (-n)
-      // If pMinus is INSIDE, then outN = n
       const outN = inPlus ? { x: -n.x, y: -n.y } : n;
+      console.log(`[Wall ${wallId}] EXTERIOR: eps=${eps}m, outN direction determined`);
+      return { isExterior: true, outN };
+    }
+  }
+  
+  // Fallback: If wall midpoint is near boundary, treat as exterior
+  // and use centroid-based direction for outN
+  if (boundaryDist <= 1.0) {
+    // Calculate direction from building centroid to wall midpoint
+    const centroid = polygonCentroid(outerPoly);
+    const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
+    const toMidLen = Math.sqrt(toMid.x * toMid.x + toMid.y * toMid.y);
+    
+    if (toMidLen > 0.01) {
+      // outN points away from centroid (towards exterior)
+      const outN = { x: toMid.x / toMidLen, y: toMid.y / toMidLen };
+      console.log(`[Wall ${wallId}] EXTERIOR (boundary fallback): dist=${boundaryDist.toFixed(3)}m`);
       return { isExterior: true, outN };
     }
   }
   
   // Both sides equal at all offsets → interior partition wall
+  console.log(`[Wall ${wallId}] PARTITION: all tests returned same value`);
   return { isExterior: false, outN: n };
 }
 
@@ -438,8 +475,8 @@ function computeWallGeometry(
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
   
-  // Use robust multi-offset detection
-  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull);
+  // Use robust multi-offset detection (pass wallId for logging)
+  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
   
   let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
@@ -1288,6 +1325,12 @@ interface FootprintDebugProps {
 }
 
 function FootprintDebugViz({ hull, centroid, source, exteriorWallCount, totalWallCount }: FootprintDebugProps) {
+  // Calculate additional debug info
+  const area = hull.length >= 3 ? Math.abs(signedPolygonAreaLocal(hull)) : 0;
+  const orientation = hull.length >= 3 
+    ? (signedPolygonAreaLocal(hull) > 0 ? 'CCW ✓' : 'CW ⚠️') 
+    : 'N/A';
+
   if (hull.length < 3) {
     return (
       <Html position={[centroid.x, 0.5, centroid.y]} center>
@@ -1324,11 +1367,13 @@ function FootprintDebugViz({ hull, centroid, source, exteriorWallCount, totalWal
       
       {/* Info label */}
       <Html position={[centroid.x, 0.8, centroid.y]} center>
-        <div className="bg-green-700/95 text-white px-3 py-2 rounded-lg text-xs font-mono shadow-lg min-w-[160px]">
+        <div className="bg-green-700/95 text-white px-3 py-2 rounded-lg text-xs font-mono shadow-lg min-w-[180px]">
           <div className="font-bold text-green-200">🔍 Footprint Debug</div>
           <div className="border-t border-green-500 my-1 pt-1">
             <div>Source: <span className="text-green-300 font-bold">{source.toUpperCase()}</span></div>
             <div>Points: <span className="text-green-300">{hull.length}</span></div>
+            <div>Orientation: <span className="text-green-300">{orientation}</span></div>
+            <div>Area: <span className="text-green-300">{area.toFixed(1)} m²</span></div>
             <div>Exterior walls: <span className="text-blue-300">{exteriorWallCount}</span> / {totalWallCount}</div>
           </div>
         </div>
