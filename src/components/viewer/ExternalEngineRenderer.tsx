@@ -197,6 +197,35 @@ function distanceToPolygonBoundary(p: Point2D, polygon: Point2D[]): number {
   return best;
 }
 
+function closestBoundaryOutwardNormal(p: Point2D, polygon: Point2D[]): Point2D | null {
+  if (polygon.length < 2) return null;
+  let bestDist = Infinity;
+  let bestA: Point2D | null = null;
+  let bestB: Point2D | null = null;
+
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    const d = pointToSegmentDistance(p, a, b);
+    if (d < bestDist) {
+      bestDist = d;
+      bestA = a;
+      bestB = b;
+    }
+  }
+
+  if (!bestA || !bestB || !isFinite(bestDist)) return null;
+
+  // Polygon is normalized to CCW. For a CCW edge a->b, the interior is to the LEFT
+  // of the edge direction, so the outward normal points to the RIGHT:
+  // rightNormal = (dy, -dx)
+  const dx = bestB.x - bestA.x;
+  const dy = bestB.y - bestA.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1e-9) return null;
+  return { x: dy / len, y: -dx / len };
+}
+
 // Point in polygon test (ray casting)
 function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
   if (polygon.length < 3) return false;
@@ -654,12 +683,12 @@ function chooseOutNormal(
   // Increased threshold to catch perimeter walls in buildings with complex footprints
   if (boundaryDist <= 5.0 && toMidLen > 0.01) {
     // IMPORTANT:
-    // For boundary/bbox fallbacks we only know the wall is likely on the perimeter,
-    // but the centroid->mid vector can be tangent to the wall, making left/right
-    // selection unstable.
-    // We therefore keep outN PERPENDICULAR to the wall (n) and only pick its SIGN
-    // by comparing against the centroid direction.
-    const sign = (n.x * toMid.x + n.y * toMid.y) >= 0 ? 1 : -1;
+    // For concave footprints, centroid-based sign can be wrong.
+    // Use the outward normal of the NEAREST footprint edge (CCW) and align `n` to it.
+    const edgeOut = closestBoundaryOutwardNormal(mid, outerPoly);
+    const sign = edgeOut
+      ? (n.x * edgeOut.x + n.y * edgeOut.y) >= 0 ? 1 : -1
+      : (n.x * toMid.x + n.y * toMid.y) >= 0 ? 1 : -1;
     const outN = { x: n.x * sign, y: n.y * sign };
     console.log(`[Wall ${wallId}] EXTERIOR (boundary fallback): dist=${boundaryDist.toFixed(3)}m`);
     return { isExterior: true, outN };
@@ -680,7 +709,10 @@ function chooseOutNormal(
     mid.y >= polyMaxY - edgeMargin;
   
   if (isOnBBoxEdge && toMidLen > 0.01) {
-    const sign = (n.x * toMid.x + n.y * toMid.y) >= 0 ? 1 : -1;
+    const edgeOut = closestBoundaryOutwardNormal(mid, outerPoly);
+    const sign = edgeOut
+      ? (n.x * edgeOut.x + n.y * edgeOut.y) >= 0 ? 1 : -1
+      : (n.x * toMid.x + n.y * toMid.y) >= 0 ? 1 : -1;
     const outN = { x: n.x * sign, y: n.y * sign };
     console.log(`[Wall ${wallId}] EXTERIOR (bbox edge fallback): mid=(${mid.x.toFixed(2)}, ${mid.y.toFixed(2)})`);
     return { isExterior: true, outN };
