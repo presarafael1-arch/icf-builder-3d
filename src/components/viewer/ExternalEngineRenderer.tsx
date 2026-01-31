@@ -19,6 +19,8 @@ import { ThreeEvent } from '@react-three/fiber';
 import { Text, Html, Line } from '@react-three/drei';
 import { NormalizedExternalAnalysis, GraphWall, Course, GraphNode, EnginePanel, Vec3 } from '@/types/external-engine';
 import { findOuterPolygonFromSegments } from '@/lib/external-engine-footprint';
+import { detectFootprintAndClassify } from '@/lib/footprint-detection';
+import type { WallChain } from '@/lib/wall-chains';
 
 interface ExternalEngineRendererProps {
   normalizedAnalysis: NormalizedExternalAnalysis;
@@ -328,12 +330,75 @@ function buildConcaveFootprintFromGraph(
 }
 
 // Footprint source for debug purposes
-export type FootprintSource = 'payload' | 'nodes' | 'offsets' | 'none';
+export type FootprintSource = 'payload' | 'nodes' | 'offsets' | 'chains' | 'none';
 
 interface FootprintResult {
   centroid: Point2D;
   hull: Point2D[];
   source: FootprintSource;
+  chainSides?: Map<
+    string,
+    {
+      outsideIsPositivePerp: boolean;
+      isOutsideFootprint: boolean;
+      classification: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
+    }
+  >;
+}
+
+function scalePolygon(poly: Array<{ x: number; y: number }>, scale: number): Point2D[] {
+  return poly.map((p) => ({ x: p.x * scale, y: p.y * scale }));
+}
+
+function buildChainsFromExternalWalls(walls: GraphWall[]): WallChain[] {
+  const chains: WallChain[] = [];
+  for (const wall of walls) {
+    const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
+    const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
+    if (leftPts.length < 2 || rightPts.length < 2) continue;
+
+    // Centerline endpoints (average of left/right endpoints)
+    const s = {
+      x: (leftPts[0].x + rightPts[0].x) / 2,
+      y: (leftPts[0].y + rightPts[0].y) / 2,
+    };
+    const e = {
+      x: (leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2,
+      y: (leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2,
+    };
+
+    const dx = e.x - s.x;
+    const dy = e.y - s.y;
+    const lenM = Math.sqrt(dx * dx + dy * dy);
+    if (lenM < 1e-6) continue;
+
+    // Footprint module operates in millimeters
+    const startX = s.x * 1000;
+    const startY = s.y * 1000;
+    const endX = e.x * 1000;
+    const endY = e.y * 1000;
+    const lengthMm = lenM * 1000;
+    const angle = (() => {
+      let a = Math.atan2(endY - startY, endX - startX);
+      if (a < 0) a += Math.PI;
+      if (a >= Math.PI) a -= Math.PI;
+      return a;
+    })();
+
+    chains.push({
+      id: String(wall.id),
+      segments: [],
+      lengthMm,
+      angle,
+      startX,
+      startY,
+      endX,
+      endY,
+      startNodeId: null,
+      endNodeId: null,
+    });
+  }
+  return chains;
 }
 
 // Compute the building footprint - tiered approach:
@@ -386,7 +451,43 @@ function computeBuildingFootprint(
   const concavePolygon = buildConcaveFootprintFromWalls(walls, centroid);
   if (concavePolygon.length >= 3) {
     console.log(`[Footprint] Source: WALL OFFSETS (${concavePolygon.length} points)`);
-    return { centroid, hull: ensureCCW(concavePolygon), source: 'offsets' };
+    const hull = ensureCCW(concavePolygon);
+    const areaM2 = Math.abs(signedPolygonAreaLocal(hull));
+    // If the loop is suspiciously small/degenerate, fall through to robust chain-based detection.
+    if (areaM2 >= 10 && hull.length >= 8) {
+      return { centroid, hull, source: 'offsets' };
+    }
+    console.warn(`[Footprint] Offsets footprint looks degenerate (points=${hull.length}, area=${areaM2.toFixed(2)}m²) - trying chain-based detection`);
+  }
+
+  // Priority #4: Use robust chain-based footprint + side classification (same module used elsewhere)
+  // This is the most reliable for complex graphs with T-junctions.
+  try {
+    const chains = buildChainsFromExternalWalls(walls);
+    const fp = detectFootprintAndClassify(chains, 100);
+    if (fp.outerPolygon.length >= 3) {
+      const hull = ensureCCW(scalePolygon(fp.outerPolygon, 1 / 1000)); // mm -> m
+      const areaM2 = (fp.outerArea / 1e6);
+      const chainSides = new Map<
+        string,
+        {
+          outsideIsPositivePerp: boolean;
+          isOutsideFootprint: boolean;
+          classification: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
+        }
+      >();
+      fp.chainSides.forEach((info, chainId) => {
+        chainSides.set(chainId, {
+          outsideIsPositivePerp: info.outsideIsPositivePerp,
+          isOutsideFootprint: info.isOutsideFootprint,
+          classification: info.classification,
+        });
+      });
+      console.log(`[Footprint] Source: CHAINS (${hull.length} points, area=${areaM2.toFixed(1)}m²)`);
+      return { centroid, hull, source: 'chains', chainSides };
+    }
+  } catch (e) {
+    console.warn('[Footprint] Chain-based detection failed', e);
   }
   
   // No valid footprint found
@@ -491,7 +592,15 @@ function chooseOutNormal(
 function computeWallGeometry(
   wall: GraphWall,
   footprintHull: Point2D[],
-  buildingCentroid: Point2D
+  buildingCentroid: Point2D,
+  chainSides?: Map<
+    string,
+    {
+      outsideIsPositivePerp: boolean;
+      isOutsideFootprint: boolean;
+      classification: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
+    }
+  >
 ): WallGeometryData | null {
   const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
   const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
@@ -526,8 +635,25 @@ function computeWallGeometry(
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
   
-  // Use robust multi-offset detection (pass wallId for logging)
-  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
+  // Prefer chain-based side classification when available (more robust and deterministic)
+  const chainSide = chainSides?.get(String(wall.id));
+  let isExterior = false;
+  let outN = n2;
+  if (chainSide) {
+    if (!chainSide.isOutsideFootprint && (chainSide.classification === 'LEFT_EXT' || chainSide.classification === 'RIGHT_EXT')) {
+      isExterior = true;
+      // outsideIsPositivePerp uses the same perp convention (dy/len, -dx/len) as n2.
+      outN = chainSide.outsideIsPositivePerp ? n2 : { x: -n2.x, y: -n2.y };
+    } else {
+      isExterior = false;
+      outN = n2;
+    }
+  } else {
+    // Fallback to geometric footprint sampling
+    const check = chooseOutNormal(wallCenterMid, n2, footprintHull, wall.id);
+    isExterior = check.isExterior;
+    outN = check.outN;
+  }
   
   let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
@@ -1239,6 +1365,14 @@ interface WallRendererProps {
   panels: EnginePanel[];
   footprintHull: Point2D[];
   buildingCentroid: Point2D;
+  chainSides?: Map<
+    string,
+    {
+      outsideIsPositivePerp: boolean;
+      isOutsideFootprint: boolean;
+      classification: 'LEFT_EXT' | 'RIGHT_EXT' | 'BOTH_INT' | 'UNRESOLVED';
+    }
+  >;
   coreThickness: number;
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
@@ -1251,13 +1385,14 @@ function WallRenderer({
   panels,
   footprintHull,
   buildingCentroid,
+  chainSides,
   coreThickness,
   isSelected,
   onWallClick,
 }: WallRendererProps) {
   const wallGeom = useMemo(
-    () => computeWallGeometry(wall, footprintHull, buildingCentroid),
-    [wall, footprintHull, buildingCentroid]
+    () => computeWallGeometry(wall, footprintHull, buildingCentroid, chainSides),
+    [wall, footprintHull, buildingCentroid, chainSides]
   );
 
   if (!wallGeom) return null;
@@ -1507,7 +1642,7 @@ export function ExternalEngineRenderer({
     () => computeBuildingFootprint(adjustedWalls, adjustedNodes, normalizedAnalysis, centerOffset),
     [adjustedWalls, adjustedNodes, normalizedAnalysis, centerOffset]
   );
-  const { hull: footprintHull, centroid: buildingCentroid, source: footprintSource } = buildingFootprint;
+  const { hull: footprintHull, centroid: buildingCentroid, source: footprintSource, chainSides } = buildingFootprint;
 
   // Log for debugging
   useEffect(() => {
@@ -1567,7 +1702,7 @@ export function ExternalEngineRenderer({
     let exteriorCount = 0;
 
     for (const wall of adjustedWalls) {
-      const geom = computeWallGeometry(wall, footprintHull, buildingCentroid);
+      const geom = computeWallGeometry(wall, footprintHull, buildingCentroid, chainSides);
       if (!geom) {
         skipped++;
       } else {
@@ -1577,7 +1712,7 @@ export function ExternalEngineRenderer({
     }
 
     return { valid, skipped, exteriorCount };
-  }, [adjustedWalls, footprintHull, buildingCentroid]);
+  }, [adjustedWalls, footprintHull, buildingCentroid, chainSides]);
 
   useEffect(() => {
     setSkippedCount(wallStats.skipped);
@@ -1601,6 +1736,7 @@ export function ExternalEngineRenderer({
           panels={panels}
           footprintHull={footprintHull}
           buildingCentroid={buildingCentroid}
+          chainSides={chainSides}
           coreThickness={coreThickness}
           isSelected={wall.id === selectedWallId}
           onWallClick={onWallClick}
