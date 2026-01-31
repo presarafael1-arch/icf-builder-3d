@@ -1013,7 +1013,8 @@ function PanelSkin({ x0, x1, z0, z1, startPt, u2, n2, thickness, color, isSelect
   );
 }
 
-// ===== Panel Outline =====
+// ===== Panel Outline (per-panel 3D box) =====
+// Renders outline around all edges of a 3D panel box
 
 interface PanelOutlineProps {
   x0: number;
@@ -1022,29 +1023,85 @@ interface PanelOutlineProps {
   z1: number;
   startPt: { x: number; y: number };
   u2: { x: number; y: number };
+  n2: { x: number; y: number };
+  thickness: number;  // Panel thickness in meters
 }
 
-function PanelOutline({ x0, x1, z0, z1, startPt, u2 }: PanelOutlineProps) {
-  const bl = { x: startPt.x + u2.x * x0, y: startPt.y + u2.y * x0 };
-  const br = { x: startPt.x + u2.x * x1, y: startPt.y + u2.y * x1 };
+function PanelOutline({ x0, x1, z0, z1, startPt, u2, n2, thickness }: PanelOutlineProps) {
+  // Calculate 4 corners at both front and back faces
+  const bl_front = { 
+    x: startPt.x + u2.x * x0, 
+    y: startPt.y + u2.y * x0 
+  };
+  const br_front = { 
+    x: startPt.x + u2.x * x1, 
+    y: startPt.y + u2.y * x1 
+  };
+  const bl_back = { 
+    x: bl_front.x + n2.x * thickness, 
+    y: bl_front.y + n2.y * thickness 
+  };
+  const br_back = { 
+    x: br_front.x + n2.x * thickness, 
+    y: br_front.y + n2.y * thickness 
+  };
   
-  const points = [
-    new THREE.Vector3(bl.x, z0, bl.y),
-    new THREE.Vector3(br.x, z0, br.y),
-    new THREE.Vector3(br.x, z1, br.y),
-    new THREE.Vector3(bl.x, z1, bl.y),
-    new THREE.Vector3(bl.x, z0, bl.y),
+  // Front face outline (closed loop)
+  const frontPoints = [
+    new THREE.Vector3(bl_front.x, z0, bl_front.y),
+    new THREE.Vector3(br_front.x, z0, br_front.y),
+    new THREE.Vector3(br_front.x, z1, br_front.y),
+    new THREE.Vector3(bl_front.x, z1, bl_front.y),
+    new THREE.Vector3(bl_front.x, z0, bl_front.y),
+  ];
+  
+  // Back face outline (closed loop)
+  const backPoints = [
+    new THREE.Vector3(bl_back.x, z0, bl_back.y),
+    new THREE.Vector3(br_back.x, z0, br_back.y),
+    new THREE.Vector3(br_back.x, z1, br_back.y),
+    new THREE.Vector3(bl_back.x, z1, bl_back.y),
+    new THREE.Vector3(bl_back.x, z0, bl_back.y),
+  ];
+  
+  // Connecting edges (4 depth edges)
+  const connectingEdges = [
+    [new THREE.Vector3(bl_front.x, z0, bl_front.y), new THREE.Vector3(bl_back.x, z0, bl_back.y)],
+    [new THREE.Vector3(br_front.x, z0, br_front.y), new THREE.Vector3(br_back.x, z0, br_back.y)],
+    [new THREE.Vector3(bl_front.x, z1, bl_front.y), new THREE.Vector3(bl_back.x, z1, bl_back.y)],
+    [new THREE.Vector3(br_front.x, z1, br_front.y), new THREE.Vector3(br_back.x, z1, br_back.y)],
   ];
   
   return (
-    <Line
-      points={points}
-      color={COLORS.OUTLINE}
-      lineWidth={1.5}
-      depthTest={true}
-      depthWrite={false}
-      renderOrder={10}
-    />
+    <group>
+      <Line
+        points={frontPoints}
+        color={COLORS.OUTLINE}
+        lineWidth={1.5}
+        depthTest={true}
+        depthWrite={false}
+        renderOrder={10}
+      />
+      <Line
+        points={backPoints}
+        color={COLORS.OUTLINE}
+        lineWidth={1.5}
+        depthTest={true}
+        depthWrite={false}
+        renderOrder={10}
+      />
+      {connectingEdges.map((edge, idx) => (
+        <Line
+          key={idx}
+          points={edge}
+          color={COLORS.OUTLINE}
+          lineWidth={1.5}
+          depthTest={true}
+          depthWrite={false}
+          renderOrder={10}
+        />
+      ))}
+    </group>
   );
 }
 
@@ -1212,6 +1269,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, 
         z1={z1}
         startPt={extStart}
         u2={u2}
+        n2={extNormalDir}
+        thickness={skinThickness}
       />
       {/* Stripe on front face of exterior skin */}
       <PanelStripe
@@ -1258,6 +1317,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, skinThickness, 
         z1={z1}
         startPt={intStart}
         u2={u2}
+        n2={intNormalDir}
+        thickness={skinThickness}
       />
       {/* Stripe on front face of interior skin - ALWAYS WHITE */}
       <PanelStripe
