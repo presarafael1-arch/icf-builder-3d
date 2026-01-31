@@ -510,19 +510,27 @@ function computeWallGeometry(
       y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
     };
     
-    // Vector from wall center to left polyline midpoint
-    const toLeft = { 
-      x: leftMid.x - wallCenterMid.x, 
-      y: leftMid.y - wallCenterMid.y 
+    // IMPORTANT: Do NOT rely on wall.axis/u2 for left/right determination.
+    // In some payloads, axis direction can be reversed relative to how offsets.left/right were built,
+    // which flips n2 and makes the “toLeft dot outN” heuristic unstable.
+    //
+    // Instead, derive a stable normal directly from the offset polylines:
+    // vector from right → left (perpendicular to wall core) at the midpoint.
+    const sep = {
+      x: leftMid.x - rightMid.x,
+      y: leftMid.y - rightMid.y,
     };
-    
-    // Dot product with outN - positive means left is on exterior side
-    const dotLeft = toLeft.x * outN.x + toLeft.y * outN.y;
-    
-    exteriorSide = dotLeft > 0 ? 'left' : 'right';
-    
+    const sepLen = Math.hypot(sep.x, sep.y);
+    const sepN = sepLen > 0 ? { x: sep.x / sepLen, y: sep.y / sepLen } : { x: 0, y: 0 };
+
+    // If outN points in the same direction as (right→left), then LEFT is exterior.
+    const dotOutVsSep = outN.x * sepN.x + outN.y * sepN.y;
+    exteriorSide = dotOutVsSep >= 0 ? 'left' : 'right';
+
     // Enhanced debug logging
-    console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotLeft: ${dotLeft.toFixed(3)}`);
+    console.log(
+      `[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotOutVsSep: ${dotOutVsSep.toFixed(3)}`
+    );
   } else {
     console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
   }
@@ -793,8 +801,14 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
   }
   
   // Normal directions for stripe offset positioning
-  const extNormalDir = exteriorSide === 'right' ? { x: -n2.x, y: -n2.y } : n2;
-  const intNormalDir = exteriorSide === 'right' ? n2 : { x: -n2.x, y: -n2.y };
+  // IMPORTANT: derive a stable perpendicular from the actual separation between the two skins,
+  // not from (u2 -> n2). This avoids cases where axis direction is inverted, causing exterior
+  // stripes to appear on the interior skin.
+  const sep = { x: extStart.x - intStart.x, y: extStart.y - intStart.y };
+  const sepLen = Math.hypot(sep.x, sep.y);
+  const sepN = sepLen > 0 ? { x: sep.x / sepLen, y: sep.y / sepLen } : n2;
+  const extNormalDir = sepN;
+  const intNormalDir = { x: -sepN.x, y: -sepN.y };
   
   // ============= KEY FIX: Stripe colors per-skin =============
   // EXTERIOR WALL:
