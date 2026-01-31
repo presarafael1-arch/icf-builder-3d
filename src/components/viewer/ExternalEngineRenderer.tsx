@@ -22,6 +22,16 @@ import { findOuterPolygonFromSegments } from '@/lib/external-engine-footprint';
 import { detectFootprintAndClassify } from '@/lib/footprint-detection';
 import type { WallChain } from '@/lib/wall-chains';
 
+// Manual side corrections callback type
+export type ShouldFlipWallFn = (fingerprint: WallFingerprint) => boolean;
+
+export interface WallFingerprint {
+  midX: number;
+  midY: number;
+  length: number;
+  angle: number;
+}
+
 interface ExternalEngineRendererProps {
   normalizedAnalysis: NormalizedExternalAnalysis;
   selectedWallId: string | null;
@@ -29,6 +39,9 @@ interface ExternalEngineRendererProps {
   showCourseMarkers?: boolean;
   showShiftArrows?: boolean;
   showFootprintDebug?: boolean;
+  // Manual corrections
+  shouldFlipWall?: ShouldFlipWallFn;
+  onWallFingerprint?: (wallId: string, fingerprint: WallFingerprint) => void;
 }
 
 // ===== Point Format Helpers =====
@@ -87,14 +100,13 @@ const COLORS = {
   SELECTED: 0x00bcd4,         // Cyan for selected
 };
 
-// ===== Manual Exterior Side Overrides =====
-// For walls where automatic detection fails, force the exterior side manually.
-// Key: wallId (string), Value: 'left' | 'right' | 'flip'
-// 'flip' means: compute automatically, then invert the result.
-const EXTERIOR_SIDE_OVERRIDES: Record<string, 'left' | 'right' | 'flip'> = {
-  '15': 'flip',
-  '18': 'flip',
-};
+// ===== Angle normalization for fingerprints =====
+// Walls have 180° symmetry, so normalize to [0, π)
+function normalizeAngle(angle: number): number {
+  let a = angle % Math.PI;
+  if (a < 0) a += Math.PI;
+  return a;
+}
 
 // Skin/EPS thickness (1 TOOTH ≈ 70.6mm)
 const EPS_THICKNESS = 0.0706; // meters
@@ -596,6 +608,7 @@ interface WallGeometryData {
   length: number;
   isExteriorWall: boolean;           // True if wall is on building perimeter
   exteriorSide: 'left' | 'right' | null;  // Which side faces exterior
+  fingerprint: WallFingerprint;      // Geometric fingerprint for manual corrections
 }
 
 // Determine wall exterior status using footprint hull
@@ -881,18 +894,16 @@ function computeWallGeometry(
     console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
   }
 
-  // ===== Apply manual overrides if defined =====
-  const override = EXTERIOR_SIDE_OVERRIDES[String(wall.id)];
-  if (override && isExteriorWall) {
-    if (override === 'flip') {
-      const prev = exteriorSide;
-      exteriorSide = exteriorSide === 'left' ? 'right' : 'left';
-      console.log(`[Wall ${wall.id}] OVERRIDE flip: ${prev} → ${exteriorSide}`);
-    } else {
-      console.log(`[Wall ${wall.id}] OVERRIDE forced: ${exteriorSide} → ${override}`);
-      exteriorSide = override;
-    }
-  }
+  // ===== Create fingerprint for manual corrections =====
+  const midPt = polylineMidpoint(leftPts);
+  const fingerprint: WallFingerprint = {
+    midX: midPt.x,
+    midY: midPt.y,
+    length: wallLength,
+    angle: normalizeAngle(Math.atan2(u2.y, u2.x)),
+  };
+  
+  // NOTE: Manual flip corrections are applied at render time via shouldFlipWall callback
   
   return {
     leftPts,
@@ -902,6 +913,7 @@ function computeWallGeometry(
     length: wallLength,
     isExteriorWall,
     exteriorSide,
+    fingerprint,
   };
 }
 
@@ -1589,6 +1601,8 @@ interface WallRendererProps {
   coreThickness: number;
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
+  shouldFlipWall?: ShouldFlipWallFn;
+  onWallFingerprint?: (wallId: string, fingerprint: WallFingerprint) => void;
 }
 
 function WallRenderer({
@@ -1602,11 +1616,33 @@ function WallRenderer({
   coreThickness,
   isSelected,
   onWallClick,
+  shouldFlipWall,
+  onWallFingerprint,
 }: WallRendererProps) {
-  const wallGeom = useMemo(
+  const wallGeomBase = useMemo(
     () => computeWallGeometry(wall, footprintHull, buildingCentroid, chainSides),
     [wall, footprintHull, buildingCentroid, chainSides]
   );
+
+  // Apply manual flip correction if needed
+  const wallGeom = useMemo(() => {
+    if (!wallGeomBase) return null;
+    
+    // Notify parent of this wall's fingerprint (for UI selection)
+    onWallFingerprint?.(wall.id, wallGeomBase.fingerprint);
+    
+    // Check if this wall should be flipped via manual correction
+    if (shouldFlipWall && wallGeomBase.isExteriorWall && shouldFlipWall(wallGeomBase.fingerprint)) {
+      const flipped = wallGeomBase.exteriorSide === 'left' ? 'right' : 'left';
+      console.log(`[Wall ${wall.id}] MANUAL CORRECTION flip: ${wallGeomBase.exteriorSide} → ${flipped}`);
+      return {
+        ...wallGeomBase,
+        exteriorSide: flipped as 'left' | 'right',
+      };
+    }
+    
+    return wallGeomBase;
+  }, [wallGeomBase, shouldFlipWall, wall.id, onWallFingerprint]);
 
   if (!wallGeom) return null;
 
@@ -1801,6 +1837,8 @@ export function ExternalEngineRenderer({
   onWallClick,
   showCourseMarkers = true,
   showFootprintDebug = false,
+  shouldFlipWall,
+  onWallFingerprint,
 }: ExternalEngineRendererProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [skippedCount, setSkippedCount] = useState(0);
@@ -1953,6 +1991,8 @@ export function ExternalEngineRenderer({
           coreThickness={coreThickness}
           isSelected={wall.id === selectedWallId}
           onWallClick={onWallClick}
+          shouldFlipWall={shouldFlipWall}
+          onWallFingerprint={onWallFingerprint}
         />
       ))}
 
