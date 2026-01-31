@@ -443,6 +443,9 @@ export default function ProjectEditor() {
   // Preview color for classification hover
   const [previewColor, setPreviewColor] = useState<string | null>(null);
   
+  // Footprint debug toggle (for external engine mode)
+  const [showFootprintDebug, setShowFootprintDebug] = useState(false);
+  
   // Apply DXF transformations to walls before chain building
   const transformedWalls = useMemo(() => {
     return applyDXFTransform(walls, {
@@ -1049,6 +1052,8 @@ export default function ProjectEditor() {
             normalizedExternalAnalysis={normalizedExternalAnalysis}
             externalSelectedWallId={externalSelectedWallId}
             onExternalWallClick={setExternalSelectedWallId}
+            // Debug options
+            showFootprintDebug={showFootprintDebug}
           />
           {/* Show ViewerControls in Internal mode */}
           {engineMode === 'internal' && (
@@ -1072,6 +1077,8 @@ export default function ProjectEditor() {
               onConfigChange={setExternalConfig}
               onTestConnection={testConnection}
               connectionStatus={connectionStatus}
+              showFootprintDebug={showFootprintDebug}
+              onShowFootprintDebugChange={setShowFootprintDebug}
             />
           </div>
           
