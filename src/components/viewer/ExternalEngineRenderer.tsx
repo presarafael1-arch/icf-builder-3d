@@ -214,22 +214,50 @@ function extractLongestClosedLoop(
 }
 
 // Point in polygon test (ray casting)
-function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
+function distPointToSegment(p: Point2D, a: Point2D, b: Point2D): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const apx = p.x - a.x;
+  const apy = p.y - a.y;
+  const abLen2 = abx * abx + aby * aby;
+  if (abLen2 === 0) return Math.hypot(apx, apy);
+  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLen2));
+  const cx = a.x + abx * t;
+  const cy = a.y + aby * t;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
+function distanceToPolygonEdges(point: Point2D, polygon: Point2D[]): number {
+  if (polygon.length < 2) return Infinity;
+  let best = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    best = Math.min(best, distPointToSegment(point, a, b));
+  }
+  return best;
+}
+
+// Ray casting with edge tolerance: if point is very close to an edge, treat as inside.
+function pointInPolygon(point: Point2D, polygon: Point2D[], edgeTol = 0.005): boolean {
   if (polygon.length < 3) return false;
-  
+
+  // Treat boundary points as inside (prevents ambiguous classification near footprint edges)
+  if (distanceToPolygonEdges(point, polygon) <= edgeTol) return true;
+
   let inside = false;
   const n = polygon.length;
-  
+
   for (let i = 0, j = n - 1; i < n; j = i++) {
     const xi = polygon[i].x, yi = polygon[i].y;
     const xj = polygon[j].x, yj = polygon[j].y;
-    
+
     if (((yi > point.y) !== (yj > point.y)) &&
         (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
       inside = !inside;
     }
   }
-  
+
   return inside;
 }
 
@@ -378,7 +406,8 @@ interface WallGeometryData {
 function chooseOutNormal(
   mid: Point2D,
   n: Point2D,
-  outerPoly: Point2D[]
+  outerPoly: Point2D[],
+  centroid: Point2D
 ): { isExterior: boolean; outN: Point2D } {
   // Test at multiple distances for robustness
   const testEps = [0.1, 0.25, 0.5, 0.75, 1.0]; // meters
@@ -397,7 +426,19 @@ function chooseOutNormal(
       return { isExterior: true, outN };
     }
   }
-  
+
+  // If the wall centerline is extremely close to the footprint boundary,
+  // treat it as perimeter and pick the outward normal using the building centroid.
+  // This fixes common DXF cases where offsets lie on/near edges and PIP votes become ambiguous.
+  const nearBoundary = distanceToPolygonEdges(mid, outerPoly) <= 0.5; // 500mm
+  if (nearBoundary) {
+    const vx = mid.x - centroid.x;
+    const vy = mid.y - centroid.y;
+    const dot = vx * n.x + vy * n.y;
+    const outN = dot >= 0 ? n : { x: -n.x, y: -n.y };
+    return { isExterior: true, outN };
+  }
+
   // Both sides equal at all offsets → interior partition wall
   return { isExterior: false, outN: n };
 }
@@ -443,7 +484,7 @@ function computeWallGeometry(
   };
   
   // Use robust multi-offset detection
-  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull);
+  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull, buildingCentroid);
   
   let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
