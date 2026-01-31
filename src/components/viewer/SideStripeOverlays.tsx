@@ -15,8 +15,8 @@ const STRIPE_OFFSET_MM = 1; // 1mm offset from panel surface
 const EXTERIOR_COLOR = '#3B82F6'; // Blue for EXT panels
 const INTERIOR_COLOR = '#FFFFFF'; // White for INT panels
 
-// Stripe opacity - FULLY OPAQUE (no see-through)
-const STRIPE_OPACITY = 1.0;
+// Stripe opacity (80% as requested)
+const STRIPE_OPACITY = 0.8;
 
 interface SideStripeOverlaysProps {
   allPanels: ClassifiedPanel[];
@@ -169,11 +169,10 @@ export function SideStripeOverlays({ allPanels, concreteThickness, visible = tru
           >
             <meshBasicMaterial
               color={EXTERIOR_COLOR}
-              transparent={false}
-              opacity={1}
+              transparent
+              opacity={STRIPE_OPACITY}
               side={THREE.DoubleSide}
-              depthWrite={true}
-              depthTest={true}
+              depthWrite={false}
               polygonOffset
               polygonOffsetFactor={-1}
               polygonOffsetUnits={-1}
@@ -187,11 +186,10 @@ export function SideStripeOverlays({ allPanels, concreteThickness, visible = tru
           >
             <meshBasicMaterial
               color={EXTERIOR_COLOR}
-              transparent={false}
-              opacity={1}
+              transparent
+              opacity={STRIPE_OPACITY}
               side={THREE.DoubleSide}
-              depthWrite={true}
-              depthTest={true}
+              depthWrite={false}
               polygonOffset
               polygonOffsetFactor={-1}
               polygonOffsetUnits={-1}
@@ -211,11 +209,10 @@ export function SideStripeOverlays({ allPanels, concreteThickness, visible = tru
           >
             <meshBasicMaterial
               color={INTERIOR_COLOR}
-              transparent={false}
-              opacity={1}
+              transparent
+              opacity={STRIPE_OPACITY}
               side={THREE.DoubleSide}
-              depthWrite={true}
-              depthTest={true}
+              depthWrite={false}
               polygonOffset
               polygonOffsetFactor={-1}
               polygonOffsetUnits={-1}
@@ -229,11 +226,10 @@ export function SideStripeOverlays({ allPanels, concreteThickness, visible = tru
           >
             <meshBasicMaterial
               color={INTERIOR_COLOR}
-              transparent={false}
-              opacity={1}
+              transparent
+              opacity={STRIPE_OPACITY}
               side={THREE.DoubleSide}
-              depthWrite={true}
-              depthTest={true}
+              depthWrite={false}
               polygonOffset
               polygonOffsetFactor={-1}
               polygonOffsetUnits={-1}
