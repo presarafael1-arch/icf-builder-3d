@@ -24,7 +24,7 @@ function normalizeAngle(a: number): number {
   return ((a % twoPi) + twoPi) % twoPi;
 }
 
-function signedPolygonArea(poly: Point2D[]): number {
+export function signedPolygonArea(poly: Point2D[]): number {
   if (poly.length < 3) return 0;
   let area = 0;
   for (let i = 0; i < poly.length; i++) {
@@ -202,5 +202,14 @@ export function findOuterPolygonFromSegments(
     return b.areaAbs - a.areaAbs;
   });
 
-  return metas[0]?.face ?? [];
+  const bestFace = metas[0]?.face ?? [];
+  if (bestFace.length < 3) return [];
+
+  // Ensure CCW orientation (positive signed area)
+  const area = signedPolygonArea(bestFace);
+  if (area < 0) {
+    console.log('[Footprint] Reversing polygon from CW to CCW');
+    return [...bestFace].reverse();
+  }
+  return bestFace;
 }
