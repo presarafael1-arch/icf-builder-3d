@@ -22,6 +22,7 @@ import { usePanelSelection } from '@/hooks/usePanelSelection';
 import { usePanelOverrides } from '@/hooks/usePanelOverrides';
 import { useChainOverrides } from '@/hooks/useChainOverrides';
 import { useExternalEngine } from '@/hooks/useExternalEngine';
+import { useWallSideCorrections, createWallFingerprint, WallFingerprint } from '@/hooks/useWallSideCorrections';
 import { WallSegment, ViewerSettings, ConcreteThickness, RebarSpacing, DXFRotation } from '@/types/icf';
 import { OpeningData, OpeningCandidate } from '@/types/openings';
 import { ExtendedPanelData, CoreConcreteMm, coreThicknessToWallThickness, parsePanelId, getTopoType, ThicknessDetectionResult } from '@/types/panel-selection';
@@ -283,6 +284,20 @@ export default function ProjectEditor() {
     testConnection,
     connectionStatus,
   } = useExternalEngine();
+  
+  // Wall side corrections (manual EXT/INT flip per wall)
+  const {
+    corrections: wallCorrections,
+    applyCorrections,
+    addCorrection,
+    removeCorrection,
+    setApplyCorrections,
+    hasCorrection,
+    shouldFlip,
+  } = useWallSideCorrections(id ?? null);
+  
+  // Track wall fingerprints for the currently selected wall
+  const wallFingerprintsRef = useRef<Map<string, WallFingerprint>>(new Map());
   
   // DXF file reference for external engine upload
   const dxfFileRef = useRef<File | null>(null);
@@ -1054,6 +1069,9 @@ export default function ProjectEditor() {
             onExternalWallClick={setExternalSelectedWallId}
             // Debug options
             showFootprintDebug={showFootprintDebug}
+            // Manual side corrections
+            shouldFlipWall={shouldFlip}
+            onWallFingerprint={(wallId, fp) => wallFingerprintsRef.current.set(wallId, fp)}
           />
           {/* Show ViewerControls in Internal mode */}
           {engineMode === 'internal' && (
@@ -1079,6 +1097,25 @@ export default function ProjectEditor() {
               connectionStatus={connectionStatus}
               showFootprintDebug={showFootprintDebug}
               onShowFootprintDebugChange={setShowFootprintDebug}
+              // Manual corrections
+              correctionsCount={wallCorrections.length}
+              applyCorrections={applyCorrections}
+              onApplyCorrectionsChange={setApplyCorrections}
+              onFlipSelectedWall={externalSelectedWallId ? () => {
+                const fp = wallFingerprintsRef.current.get(externalSelectedWallId);
+                if (fp) {
+                  if (hasCorrection(fp)) {
+                    removeCorrection(fp);
+                  } else {
+                    addCorrection(fp, `Wall ${externalSelectedWallId}`);
+                  }
+                }
+              } : undefined}
+              hasSelectedWallCorrection={
+                externalSelectedWallId 
+                  ? hasCorrection(wallFingerprintsRef.current.get(externalSelectedWallId) ?? { midX: 0, midY: 0, length: 0, angle: 0 })
+                  : false
+              }
             />
           </div>
           

@@ -1931,6 +1931,9 @@ interface ICFViewer3DProps {
   onExternalWallClick?: (wallId: string) => void;
   // Debug options
   showFootprintDebug?: boolean;
+  // Manual side corrections
+  shouldFlipWall?: (fingerprint: { midX: number; midY: number; length: number; angle: number }) => boolean;
+  onWallFingerprint?: (wallId: string, fingerprint: { midX: number; midY: number; length: number; angle: number }) => void;
 }
 
 export function ICFViewer3D({
@@ -1956,6 +1959,9 @@ export function ICFViewer3D({
   onExternalWallClick,
   // Debug options
   showFootprintDebug = false,
+  // Manual side corrections
+  shouldFlipWall,
+  onWallFingerprint,
 }: ICFViewer3DProps) {
   const [panelInstancesCount, setPanelInstancesCount] = useState(0);
   const [panelCounts, setPanelCounts] = useState<PanelCounts>({
@@ -2035,6 +2041,8 @@ export function ICFViewer3D({
                 showCourseMarkers={true}
                 showShiftArrows={true}
                 showFootprintDebug={showFootprintDebug}
+                shouldFlipWall={shouldFlipWall}
+                onWallFingerprint={onWallFingerprint}
               />
             )}
 

@@ -9,7 +9,7 @@
  * - Engine configuration
  */
 
-import { Server, Home, Layers, Box, Settings, AlertCircle, Loader2, CheckCircle2, XCircle, Wifi } from 'lucide-react';
+import { Server, Home, Layers, Box, Settings, AlertCircle, Loader2, CheckCircle2, XCircle, Wifi, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -36,6 +36,12 @@ interface ExternalEnginePanelProps {
   // Debug options
   showFootprintDebug?: boolean;
   onShowFootprintDebugChange?: (value: boolean) => void;
+  // Manual corrections
+  correctionsCount?: number;
+  applyCorrections?: boolean;
+  onApplyCorrectionsChange?: (apply: boolean) => void;
+  onFlipSelectedWall?: () => void;
+  hasSelectedWallCorrection?: boolean;
 }
 
 export function ExternalEnginePanel({
@@ -51,6 +57,11 @@ export function ExternalEnginePanel({
   connectionStatus,
   showFootprintDebug = false,
   onShowFootprintDebugChange,
+  correctionsCount = 0,
+  applyCorrections = true,
+  onApplyCorrectionsChange,
+  onFlipSelectedWall,
+  hasSelectedWallCorrection = false,
 }: ExternalEnginePanelProps) {
   const isExternal = engineMode === 'external';
 
@@ -219,6 +230,19 @@ export function ExternalEnginePanel({
                       </div>
                     </div>
                   </ScrollArea>
+                  
+                  {/* Flip EXT/INT button for selected wall */}
+                  {onFlipSelectedWall && (
+                    <Button
+                      variant={hasSelectedWallCorrection ? 'default' : 'outline'}
+                      size="sm"
+                      className="w-full mt-2"
+                      onClick={onFlipSelectedWall}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      {hasSelectedWallCorrection ? 'Remover correção EXT/INT' : 'Swap EXT/INT'}
+                    </Button>
+                  )}
                 </div>
               </>
             )}
@@ -298,6 +322,31 @@ export function ExternalEnginePanel({
                 </div>
               </CollapsibleContent>
             </Collapsible>
+
+            {/* Manual Corrections Section */}
+            {analysis && onApplyCorrectionsChange && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="apply-corrections" className="text-xs flex items-center gap-2">
+                      {applyCorrections ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                      Aplicar correções manuais
+                    </Label>
+                    <Switch
+                      id="apply-corrections"
+                      checked={applyCorrections}
+                      onCheckedChange={onApplyCorrectionsChange}
+                    />
+                  </div>
+                  {correctionsCount > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      {correctionsCount} correção(ões) guardada(s)
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* Debug Options */}
             {analysis && onShowFootprintDebugChange && (
