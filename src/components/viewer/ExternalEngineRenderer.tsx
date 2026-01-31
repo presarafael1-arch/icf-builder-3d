@@ -745,7 +745,22 @@ function computeWallGeometry(
   }
   
   // Perpendicular: perp(u) = (u.y, -u.x)
-  const n2 = { x: u2.y, y: -u2.x };
+  let n2 = { x: u2.y, y: -u2.x };
+
+  // IMPORTANT (rendering normal orientation):
+  // Some payloads can flip wall.axis.u, which flips n2. That doesn't just affect
+  // classification—it's critical for *rendering* because we offset stripes and
+  // skin surfaces along +/-n2.
+  //
+  // We therefore normalize n2 so that +n2 always points from the LEFT polyline
+  // towards the RIGHT polyline (geometrically), independent of axis sign.
+  {
+    const lMid = polylineMidpoint(leftPts);
+    const rMid = polylineMidpoint(rightPts);
+    const toRight = { x: rMid.x - lMid.x, y: rMid.y - lMid.y };
+    const dot = toRight.x * n2.x + toRight.y * n2.y;
+    if (dot < 0) n2 = { x: -n2.x, y: -n2.y };
+  }
 
   // IMPORTANT:
   // chainSides (detectFootprintAndClassify) defines outsideIsPositivePerp relative to a
