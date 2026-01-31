@@ -20,12 +20,13 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { EngineMode, ExternalEngineAnalysis, EngineConfig, GraphWall } from '@/types/external-engine';
+import { EngineMode, ExternalEngineAnalysis, EngineConfig, GraphWall, NormalizedExternalAnalysis } from '@/types/external-engine';
 
 interface ExternalEnginePanelProps {
   engineMode: EngineMode;
   onEngineModeChange: (mode: EngineMode) => void;
   analysis: ExternalEngineAnalysis | null;
+  normalizedAnalysis: NormalizedExternalAnalysis;
   isLoading: boolean;
   error: string | null;
   selectedWallId: string | null;
@@ -39,6 +40,7 @@ export function ExternalEnginePanel({
   engineMode,
   onEngineModeChange,
   analysis,
+  normalizedAnalysis,
   isLoading,
   error,
   selectedWallId,
@@ -50,9 +52,7 @@ export function ExternalEnginePanel({
   const isExternal = engineMode === 'external';
 
   // Get selected wall details
-  const selectedWall: GraphWall | undefined = analysis?.graph.walls.find(
-    (w) => w.id === selectedWallId
-  );
+  const selectedWall: GraphWall | undefined = normalizedAnalysis.walls.find((w) => w.id === selectedWallId);
 
   const getConnectionIcon = () => {
     switch (connectionStatus) {
