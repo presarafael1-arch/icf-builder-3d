@@ -144,7 +144,8 @@ function DXFDebugLines({ walls }: { walls: WallSegment[] }) {
 
   return (
     <lineSegments geometry={geometry} frustumCulled={false}>
-      <lineBasicMaterial color={'#666666'} linewidth={1} opacity={0.5} transparent />
+      {/* Keep debug lines solid so they don't look like scene translucency */}
+      <lineBasicMaterial color={'#666666'} linewidth={1} opacity={1} transparent={false} />
     </lineSegments>
   );
 }
@@ -303,10 +304,12 @@ function UnresolvedHighlights({ allPanels, concreteThickness, visible = true }: 
     >
       <meshStandardMaterial 
         color="#FF00FF"
-        opacity={0.5} 
-        transparent 
+        // IMPORTANT: keep fully opaque (user requirement: no translucency anywhere)
+        transparent={false}
+        opacity={1}
         side={THREE.DoubleSide}
-        depthWrite={false}
+        depthWrite={true}
+        depthTest={true}
         emissive="#FF00FF"
         emissiveIntensity={0.8}
       />
@@ -1027,6 +1030,9 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={PANEL_COLORS.FULL}
             emissiveIntensity={0.15}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1046,6 +1052,9 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={PANEL_COLORS.CUT_SINGLE}
             emissiveIntensity={0.15}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1065,8 +1074,9 @@ function BatchedPanelInstances({
             wireframe={wireframe}
             emissive={settings.highlightCornerCuts ? '#FF4444' : PANEL_COLORS.CORNER_CUT}
             emissiveIntensity={settings.highlightCornerCuts ? 0.6 : 0.15}
-            transparent={settings.highlightCornerCuts}
-            opacity={settings.highlightCornerCuts ? 0.9 : 1}
+            // Painéis devem ser sempre opacos (sem ver-através)
+            transparent={false}
+            opacity={1}
           />
         </instancedMesh>
       )}
@@ -1086,10 +1096,11 @@ function BatchedPanelInstances({
             metalness={0.5}
             emissive={previewColor || "#00FFFF"}
             emissiveIntensity={previewColor ? 1.0 : 0.8}
-            transparent
-            opacity={previewColor ? 0.85 : 0.6}
+            // Evita o efeito de translucidez: highlight também fica opaco.
+            transparent={false}
+            opacity={1}
             depthTest={true}
-            depthWrite={false}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1130,6 +1141,9 @@ function BatchedPanelInstances({
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1332,6 +1346,9 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1348,6 +1365,9 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1364,6 +1384,9 @@ function OpeningsVisualization({ walls, settings, openings = [] }: ICFPanelInsta
             metalness={0.2}
             emissive={PANEL_COLORS.TOPO}
             emissiveIntensity={0.2}
+            transparent={false}
+            opacity={1}
+            depthWrite={true}
           />
         </instancedMesh>
       )}
@@ -1419,7 +1442,7 @@ function WebsInstances({ walls, settings }: ICFPanelInstancesProps) {
 
   return (
     <instancedMesh ref={meshRef} args={[webGeometry, undefined, count]} frustumCulled={false}>
-      <meshStandardMaterial color="#e8a645" roughness={0.6} metalness={0.3} />
+      <meshStandardMaterial color="#e8a645" roughness={0.6} metalness={0.3} transparent={false} opacity={1} depthWrite={true} />
     </instancedMesh>
   );
 }
@@ -1475,7 +1498,7 @@ function GridsInstances({ walls, settings }: ICFPanelInstancesProps) {
 
   return (
     <instancedMesh ref={meshRef} args={[gridGeometry, undefined, count]} frustumCulled={false}>
-      <meshStandardMaterial color="#e53935" roughness={0.5} metalness={0.2} />
+      <meshStandardMaterial color="#e53935" roughness={0.5} metalness={0.2} transparent={false} opacity={1} depthWrite={true} />
     </instancedMesh>
   );
 }
@@ -1984,17 +2007,8 @@ export function ICFViewer3D({
     <div className={`viewer-container ${className} relative`}>
       <Canvas
         shadows
-        gl={{
-          antialias: true,
-          // External Engine visuals must be strictly opaque.
-          // alpha=false prevents blending with underlying DOM/UI.
-          alpha: false,
-          premultipliedAlpha: false,
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.3,
-        }}
-        // Use theme background token (HSL) instead of transparent
-        style={{ background: 'hsl(var(--background))' }}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3, alpha: false }}
+        style={{ background: '#1a1a2e' }}
       >
         {/* External mode: render ONLY from external engine or show empty state */}
         {isExternalMode ? (

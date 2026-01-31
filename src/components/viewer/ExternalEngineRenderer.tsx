@@ -214,50 +214,22 @@ function extractLongestClosedLoop(
 }
 
 // Point in polygon test (ray casting)
-function distPointToSegment(p: Point2D, a: Point2D, b: Point2D): number {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const apx = p.x - a.x;
-  const apy = p.y - a.y;
-  const abLen2 = abx * abx + aby * aby;
-  if (abLen2 === 0) return Math.hypot(apx, apy);
-  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLen2));
-  const cx = a.x + abx * t;
-  const cy = a.y + aby * t;
-  return Math.hypot(p.x - cx, p.y - cy);
-}
-
-function distanceToPolygonEdges(point: Point2D, polygon: Point2D[]): number {
-  if (polygon.length < 2) return Infinity;
-  let best = Infinity;
-  for (let i = 0; i < polygon.length; i++) {
-    const a = polygon[i];
-    const b = polygon[(i + 1) % polygon.length];
-    best = Math.min(best, distPointToSegment(point, a, b));
-  }
-  return best;
-}
-
-// Ray casting with edge tolerance: if point is very close to an edge, treat as inside.
-function pointInPolygon(point: Point2D, polygon: Point2D[], edgeTol = 0.005): boolean {
+function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
   if (polygon.length < 3) return false;
-
-  // Treat boundary points as inside (prevents ambiguous classification near footprint edges)
-  if (distanceToPolygonEdges(point, polygon) <= edgeTol) return true;
-
+  
   let inside = false;
   const n = polygon.length;
-
+  
   for (let i = 0, j = n - 1; i < n; j = i++) {
     const xi = polygon[i].x, yi = polygon[i].y;
     const xj = polygon[j].x, yj = polygon[j].y;
-
+    
     if (((yi > point.y) !== (yj > point.y)) &&
         (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
       inside = !inside;
     }
   }
-
+  
   return inside;
 }
 
@@ -345,8 +317,7 @@ function buildFootprintViaWallChains(walls: GraphWall[]): Point2D[] {
 // Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
 function computeBuildingFootprint(
   walls: GraphWall[],
-  layout?: NormalizedExternalAnalysis,
-  offset?: { x: number; y: number }
+  layout?: NormalizedExternalAnalysis
 ): { 
   centroid: Point2D; 
   hull: Point2D[];
@@ -369,62 +340,12 @@ function computeBuildingFootprint(
     x: allWallPoints.reduce((sum, p) => sum + p.x, 0) / allWallPoints.length,
     y: allWallPoints.reduce((sum, p) => sum + p.y, 0) / allWallPoints.length,
   };
-
-  // Alignment helper: pick the polygon (shifted vs unshifted) that best matches wall geometry.
-  // This avoids a regression where the payload outerPolygon may already be in centered coordinates
-  // (or not), depending on backend version.
-  function aabbOf(pts: Point2D[]) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of pts) {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    }
-    return { minX, minY, maxX, maxY };
-  }
-
-  const wallsAabb = aabbOf(allWallPoints);
-  const wallsCenter = {
-    x: (wallsAabb.minX + wallsAabb.maxX) / 2,
-    y: (wallsAabb.minY + wallsAabb.maxY) / 2,
-  };
-
-  function alignmentScore(poly: Point2D[]): number {
-    if (poly.length < 3) return Number.POSITIVE_INFINITY;
-    const bb = aabbOf(poly);
-    const polyCenter = { x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 };
-
-    // Center distance dominates; size mismatch is secondary.
-    const centerDist = Math.hypot(polyCenter.x - wallsCenter.x, polyCenter.y - wallsCenter.y);
-    const sizeDx = Math.abs((bb.maxX - bb.minX) - (wallsAabb.maxX - wallsAabb.minX));
-    const sizeDy = Math.abs((bb.maxY - bb.minY) - (wallsAabb.maxY - wallsAabb.minY));
-    return centerDist + 0.25 * (sizeDx + sizeDy);
-  }
   
   // Priority #1: Use outerPolygon from payload if available (handles concave shapes correctly)
   if (layout) {
     const payloadPolygon = extractOuterPolygonFromPayload(layout);
     if (payloadPolygon && payloadPolygon.length >= 3) {
-      const off = offset ?? { x: 0, y: 0 };
-
-      // Candidate A: as-is
-      const polyA = payloadPolygon;
-
-      // Candidate B: shifted by centerOffset
-      const polyB = (off.x !== 0 || off.y !== 0)
-        ? payloadPolygon.map(p => ({ x: p.x + off.x, y: p.y + off.y }))
-        : payloadPolygon;
-
-      const scoreA = alignmentScore(polyA);
-      const scoreB = alignmentScore(polyB);
-      const useShifted = scoreB < scoreA;
-
-      console.log(
-        `[Footprint] outerPolygon alignment: score(unshifted)=${scoreA.toFixed(3)} score(shifted)=${scoreB.toFixed(3)} -> using ${useShifted ? 'shifted' : 'unshifted'}`
-      );
-
-      return { centroid, hull: useShifted ? polyB : polyA };
+      return { centroid, hull: payloadPolygon };
     }
   }
   
@@ -457,11 +378,14 @@ interface WallGeometryData {
 function chooseOutNormal(
   mid: Point2D,
   n: Point2D,
-  outerPoly: Point2D[],
-  centroid: Point2D
+  outerPoly: Point2D[]
 ): { isExterior: boolean; outN: Point2D } {
+  if (outerPoly.length < 3) {
+    return { isExterior: false, outN: n };
+  }
+  
   // Test at multiple distances for robustness
-  const testEps = [0.1, 0.25, 0.5, 0.75, 1.0]; // meters
+  const testEps = [0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1.0]; // meters - added smaller offsets
   
   for (const eps of testEps) {
     const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
@@ -477,21 +401,85 @@ function chooseOutNormal(
       return { isExterior: true, outN };
     }
   }
-
-  // If the wall centerline is extremely close to the footprint boundary,
-  // treat it as perimeter and pick the outward normal using the building centroid.
-  // This fixes common DXF cases where offsets lie on/near edges and PIP votes become ambiguous.
-  const nearBoundary = distanceToPolygonEdges(mid, outerPoly) <= 0.5; // 500mm
-  if (nearBoundary) {
-    const vx = mid.x - centroid.x;
-    const vy = mid.y - centroid.y;
-    const dot = vx * n.x + vy * n.y;
-    const outN = dot >= 0 ? n : { x: -n.x, y: -n.y };
+  
+  // Both sides equal at all offsets - check if wall is ON the footprint boundary
+  // This handles edge cases where the wall centerline coincides with the footprint edge
+  const distToEdge = distanceToPolygonEdge(mid, outerPoly);
+  
+  // If wall midpoint is within 200mm of a footprint edge, it's a perimeter wall
+  if (distToEdge < 0.2) {
+    // Determine exterior direction by checking which side is further from centroid
+    // or by testing at a very small offset
+    const pPlus = { x: mid.x + n.x * 0.01, y: mid.y + n.y * 0.01 };
+    const pMinus = { x: mid.x - n.x * 0.01, y: mid.y - n.y * 0.01 };
+    
+    const inPlus = pointInPolygon(pPlus, outerPoly);
+    const inMinus = pointInPolygon(pMinus, outerPoly);
+    
+    // If one is inside, the other is exterior
+    if (inPlus && !inMinus) {
+      return { isExterior: true, outN: n };
+    } else if (!inPlus && inMinus) {
+      return { isExterior: true, outN: { x: -n.x, y: -n.y } };
+    }
+    
+    // If still ambiguous but close to edge, assume exterior with default normal
+    // Use direction away from polygon centroid
+    const centroid = polygonCentroid(outerPoly);
+    const toMid = { x: mid.x - centroid.x, y: mid.y - centroid.y };
+    const dotN = toMid.x * n.x + toMid.y * n.y;
+    const outN = dotN > 0 ? n : { x: -n.x, y: -n.y };
+    
     return { isExterior: true, outN };
   }
-
-  // Both sides equal at all offsets → interior partition wall
+  
+  // Both sides equal at all offsets and not on edge → interior partition wall
   return { isExterior: false, outN: n };
+}
+
+// Helper: distance from point to polygon edge
+function distanceToPolygonEdge(p: Point2D, polygon: Point2D[]): number {
+  if (polygon.length < 2) return Infinity;
+  
+  let minDist = Infinity;
+  const n = polygon.length;
+  
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const dist = pointToSegmentDistance(p, polygon[i], polygon[j]);
+    if (dist < minDist) minDist = dist;
+  }
+  
+  return minDist;
+}
+
+// Helper: distance from point to line segment
+function pointToSegmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  
+  if (lenSq < 0.0001) {
+    return Math.sqrt((p.x - a.x) ** 2 + (p.y - a.y) ** 2);
+  }
+  
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  const projX = a.x + t * dx;
+  const projY = a.y + t * dy;
+  
+  return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
+}
+
+// Helper: polygon centroid
+function polygonCentroid(polygon: Point2D[]): Point2D {
+  if (polygon.length === 0) return { x: 0, y: 0 };
+  
+  let cx = 0, cy = 0;
+  for (const p of polygon) {
+    cx += p.x;
+    cy += p.y;
+  }
+  return { x: cx / polygon.length, y: cy / polygon.length };
 }
 
 // A wall is exterior if one side is outside the footprint hull
@@ -533,27 +521,9 @@ function computeWallGeometry(
     x: (leftPts[0].x + leftPts[leftPts.length - 1].x + rightPts[0].x + rightPts[rightPts.length - 1].x) / 4,
     y: (leftPts[0].y + leftPts[leftPts.length - 1].y + rightPts[0].y + rightPts[rightPts.length - 1].y) / 4,
   };
-
-  // IMPORTANT: For exterior detection, do not rely on n2 derived from (axis.u).
-  // Some payloads can invert axis direction relative to offsets.left/right generation,
-  // which flips n2 and causes point-in-polygon voting to misclassify perimeter walls as partitions.
-  //
-  // Instead, derive a stable wall-normal candidate directly from the offset separation.
-  // This vector is guaranteed to be perpendicular to the wall centerline in the local geometry.
-  const leftMid = {
-    x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
-    y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
-  };
-  const rightMid = {
-    x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
-    y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
-  };
-  const sep = { x: leftMid.x - rightMid.x, y: leftMid.y - rightMid.y };
-  const sepLen = Math.hypot(sep.x, sep.y);
-  const pipNormal = sepLen > 0 ? { x: sep.x / sepLen, y: sep.y / sepLen } : n2;
   
   // Use robust multi-offset detection
-  const { isExterior, outN } = chooseOutNormal(wallCenterMid, pipNormal, footprintHull, buildingCentroid);
+  const { isExterior, outN } = chooseOutNormal(wallCenterMid, n2, footprintHull);
   
   let isExteriorWall = isExterior;
   let exteriorSide: 'left' | 'right' | null = null;
@@ -562,14 +532,29 @@ function computeWallGeometry(
     // Determine which polyline (left or right) is on the exterior side
     // by testing which midpoint is further in the outN direction
     
-    // If outN points in the same direction as (right→left), then LEFT is exterior.
-    const dotOutVsSep = outN.x * pipNormal.x + outN.y * pipNormal.y;
-    exteriorSide = dotOutVsSep >= 0 ? 'left' : 'right';
-
+    // Calculate midpoints of each polyline
+    const leftMid = {
+      x: (leftPts[0].x + leftPts[leftPts.length - 1].x) / 2,
+      y: (leftPts[0].y + leftPts[leftPts.length - 1].y) / 2,
+    };
+    const rightMid = {
+      x: (rightPts[0].x + rightPts[rightPts.length - 1].x) / 2,
+      y: (rightPts[0].y + rightPts[rightPts.length - 1].y) / 2,
+    };
+    
+    // Vector from wall center to left polyline midpoint
+    const toLeft = { 
+      x: leftMid.x - wallCenterMid.x, 
+      y: leftMid.y - wallCenterMid.y 
+    };
+    
+    // Dot product with outN - positive means left is on exterior side
+    const dotLeft = toLeft.x * outN.x + toLeft.y * outN.y;
+    
+    exteriorSide = dotLeft > 0 ? 'left' : 'right';
+    
     // Enhanced debug logging
-    console.log(
-      `[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotOutVsSep: ${dotOutVsSep.toFixed(3)}`
-    );
+    console.log(`[Wall ${wall.id}] isExterior: true, exteriorPolyline: ${exteriorSide}, dotLeft: ${dotLeft.toFixed(3)}`);
   } else {
     console.log(`[Wall ${wall.id}] isExterior: ${isExteriorWall} (partition)`);
   }
@@ -708,7 +693,7 @@ function PanelOutline({ x0, x1, z0, z1, startPt, u2 }: PanelOutlineProps) {
       points={points}
       color={COLORS.OUTLINE}
       lineWidth={1.5}
-      // Must be depth-tested so back-side outlines don't bleed through solid panels
+      // IMPORTANT: must respect depth buffer so you can't see outlines through panels
       depthTest={true}
       renderOrder={20}
     />
@@ -735,6 +720,7 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
   const geometry = useMemo(() => {
     // Center of panel along wall
     const centerX = (x0 + x1) / 2;
+    const panelWidth = x1 - x0;
     
     // Stripe height: 85% of course height, centered vertically
     const courseHeight = z1 - z0;
@@ -742,8 +728,11 @@ function PanelStripe({ x0, x1, z0, z1, startPt, u2, n2, color, offset }: PanelSt
     const stripeZ0 = z0 + (courseHeight - stripeHeight) / 2;
     const stripeZ1 = stripeZ0 + stripeHeight;
     
-    // Stripe width: 100mm centered
-    const halfWidth = STRIPE_WIDTH / 2;
+    // Stripe width: MINIMUM of 100mm or 60% of panel width
+    // This prevents stripes from covering the entire panel on narrow panels
+    const maxStripeWidthForPanel = panelWidth * 0.6;
+    const actualStripeWidth = Math.min(STRIPE_WIDTH, maxStripeWidthForPanel);
+    const halfWidth = actualStripeWidth / 2;
     const stripeX0 = centerX - halfWidth;
     const stripeX1 = centerX + halfWidth;
     
@@ -840,14 +829,8 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
   }
   
   // Normal directions for stripe offset positioning
-  // IMPORTANT: derive a stable perpendicular from the actual separation between the two skins,
-  // not from (u2 -> n2). This avoids cases where axis direction is inverted, causing exterior
-  // stripes to appear on the interior skin.
-  const sep = { x: extStart.x - intStart.x, y: extStart.y - intStart.y };
-  const sepLen = Math.hypot(sep.x, sep.y);
-  const sepN = sepLen > 0 ? { x: sep.x / sepLen, y: sep.y / sepLen } : n2;
-  const extNormalDir = sepN;
-  const intNormalDir = { x: -sepN.x, y: -sepN.y };
+  const extNormalDir = exteriorSide === 'right' ? { x: -n2.x, y: -n2.y } : n2;
+  const intNormalDir = exteriorSide === 'right' ? n2 : { x: -n2.x, y: -n2.y };
   
   // ============= KEY FIX: Stripe colors per-skin =============
   // EXTERIOR WALL:
@@ -879,7 +862,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={extStart}
         u2={u2}
       />
-      {/* Single stripe on exterior skin - on the OUTWARD-facing side only */}
+      {/* Stripe on front face of exterior skin */}
       <PanelStripe
         x0={x0}
         x1={x1}
@@ -890,6 +873,18 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         n2={extNormalDir}
         color={exteriorSkinStripeColor}
         offset={STRIPE_OFFSET}
+      />
+      {/* Stripe on back face of exterior skin */}
+      <PanelStripe
+        x0={x0}
+        x1={x1}
+        z0={z0}
+        z1={z1}
+        startPt={extStart}
+        u2={u2}
+        n2={extNormalDir}
+        color={exteriorSkinStripeColor}
+        offset={-STRIPE_OFFSET}
       />
       
       {/* ===== Interior Skin (the panel facing INSIDE the building) ===== */}
@@ -911,7 +906,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={intStart}
         u2={u2}
       />
-      {/* Single stripe on interior skin - on the INWARD-facing side only */}
+      {/* Stripe on front face of interior skin - ALWAYS WHITE */}
       <PanelStripe
         x0={x0}
         x1={x1}
@@ -922,6 +917,18 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         n2={intNormalDir}
         color={interiorSkinStripeColor}
         offset={STRIPE_OFFSET}
+      />
+      {/* Stripe on back face of interior skin - ALWAYS WHITE */}
+      <PanelStripe
+        x0={x0}
+        x1={x1}
+        z0={z0}
+        z1={z1}
+        startPt={intStart}
+        u2={u2}
+        n2={intNormalDir}
+        color={interiorSkinStripeColor}
+        offset={-STRIPE_OFFSET}
       />
     </group>
   );
@@ -1035,7 +1042,6 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   }
   
   // Generate stripe overlays for fallback (solid rectangles per course)
-  // Only ONE stripe per surface (on the outward-facing side)
   const fallbackStripes: JSX.Element[] = [];
   const leftNormal = n2;
   const rightNormal = { x: -n2.x, y: -n2.y };
@@ -1049,16 +1055,20 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     const stripeZ1 = stripeZ0 + stripeHeight;
     
     // Create stripe geometry at center of wall
+    // Stripe width: MINIMUM of 100mm or 60% of wall length (for short walls)
     const centerT = length / 2;
-    const halfW = STRIPE_WIDTH / 2;
+    const maxStripeWidthForWall = length * 0.6;
+    const actualStripeWidth = Math.min(STRIPE_WIDTH, maxStripeWidthForWall);
+    const halfW = actualStripeWidth / 2;
     
-    // Left surface stripe (single, on outward side only)
+    // Left surface stripes (front and back)
     const leftCenter = { x: leftPts[0].x + u2.x * centerT, y: leftPts[0].y + u2.y * centerT };
     const leftBl = { x: leftCenter.x + u2.x * (-halfW), y: leftCenter.y + u2.y * (-halfW) };
     const leftBr = { x: leftCenter.x + u2.x * halfW, y: leftCenter.y + u2.y * halfW };
     
+    // Front stripe on left surface
     fallbackStripes.push(
-      <mesh key={`left-${ci}`} renderOrder={10}>
+      <mesh key={`left-front-${ci}`} renderOrder={10}>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
@@ -1085,13 +1095,43 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
       </mesh>
     );
     
-    // Right surface stripe (single, on outward side only)
+    // Back stripe on left surface
+    fallbackStripes.push(
+      <mesh key={`left-back-${ci}`} renderOrder={10}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array([
+              leftBl.x - leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBl.y - leftNormal.y * STRIPE_OFFSET,
+              leftBr.x - leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBr.y - leftNormal.y * STRIPE_OFFSET,
+              leftBr.x - leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBr.y - leftNormal.y * STRIPE_OFFSET,
+              leftBl.x - leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBl.y - leftNormal.y * STRIPE_OFFSET,
+            ]), 3]}
+          />
+          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+        </bufferGeometry>
+        <meshBasicMaterial
+          color={leftStripeColor}
+          side={THREE.DoubleSide}
+          depthWrite={true}
+          depthTest={true}
+          transparent={false}
+          opacity={1}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+        />
+      </mesh>
+    );
+    
+    // Right surface stripes
     const rightCenter = { x: rightPts[0].x + u2.x * centerT, y: rightPts[0].y + u2.y * centerT };
     const rightBl = { x: rightCenter.x + u2.x * (-halfW), y: rightCenter.y + u2.y * (-halfW) };
     const rightBr = { x: rightCenter.x + u2.x * halfW, y: rightCenter.y + u2.y * halfW };
     
+    // Front stripe on right surface
     fallbackStripes.push(
-      <mesh key={`right-${ci}`} renderOrder={10}>
+      <mesh key={`right-front-${ci}`} renderOrder={10}>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
@@ -1100,6 +1140,35 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
               rightBr.x + rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBr.y + rightNormal.y * STRIPE_OFFSET,
               rightBr.x + rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBr.y + rightNormal.y * STRIPE_OFFSET,
               rightBl.x + rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBl.y + rightNormal.y * STRIPE_OFFSET,
+            ]), 3]}
+          />
+          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+        </bufferGeometry>
+        <meshBasicMaterial
+          color={rightStripeColor}
+          side={THREE.DoubleSide}
+          depthWrite={true}
+          depthTest={true}
+          transparent={false}
+          opacity={1}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+        />
+      </mesh>
+    );
+    
+    // Back stripe on right surface
+    fallbackStripes.push(
+      <mesh key={`right-back-${ci}`} renderOrder={10}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array([
+              rightBl.x - rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBl.y - rightNormal.y * STRIPE_OFFSET,
+              rightBr.x - rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBr.y - rightNormal.y * STRIPE_OFFSET,
+              rightBr.x - rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBr.y - rightNormal.y * STRIPE_OFFSET,
+              rightBl.x - rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBl.y - rightNormal.y * STRIPE_OFFSET,
             ]), 3]}
           />
           <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
@@ -1372,8 +1441,8 @@ export function ExternalEngineRenderer({
 
   // Compute building footprint (hull + centroid) for exterior detection
   const buildingFootprint = useMemo(
-    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis, centerOffset),
-    [adjustedWalls, normalizedAnalysis, centerOffset]
+    () => computeBuildingFootprint(adjustedWalls, normalizedAnalysis),
+    [adjustedWalls, normalizedAnalysis]
   );
   const { hull: footprintHull, centroid: buildingCentroid } = buildingFootprint;
 

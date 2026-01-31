@@ -147,13 +147,56 @@ export function normalizeExternalAnalysis(data: unknown): NormalizedExternalAnal
   const courseHeight = (coursesObj.course_height as number) ?? 0;
   const thickness = (graph.thickness as number) ?? (analysis.thickness as number) ?? (root.thickness as number) ?? 0;
 
+  // Ensure wall IDs are always unique.
+  // Some backends may emit duplicated/empty wall ids; that breaks selection (multiple walls become selected).
+  const wallIdMap = new Map<string, string>(); // original -> normalized
+  const usedWallIds = new Set<string>();
+
+  const normalizedWalls: GraphWall[] = walls.map((w, idx) => {
+    const rawId = typeof (w as any)?.id === 'string' ? (w as any).id : '';
+    const baseId = rawId.trim() || `wall`;
+    let nextId = baseId;
+    if (usedWallIds.has(nextId)) {
+      nextId = `${baseId}-${idx}`;
+    }
+    // still defensive
+    while (usedWallIds.has(nextId)) {
+      nextId = `${baseId}-${idx}-${Math.random().toString(16).slice(2, 6)}`;
+    }
+
+    usedWallIds.add(nextId);
+    wallIdMap.set(rawId, nextId);
+
+    return {
+      ...w,
+      id: nextId,
+    };
+  });
+
+  const normalizedPanels: EnginePanel[] = panels.map((p, idx) => {
+    const rawWallId = typeof (p as any)?.wall_id === 'string' ? (p as any).wall_id : '';
+    const mapped = wallIdMap.get(rawWallId);
+    return {
+      ...p,
+      wall_id: mapped ?? (rawWallId || `wall-${idx}`),
+    };
+  });
+
+  const normalizedNodes: GraphNode[] = nodes.map((n) => {
+    const ws = Array.isArray((n as any)?.walls) ? ((n as any).walls as string[]) : [];
+    return {
+      ...n,
+      walls: ws.map((wid) => wallIdMap.get(wid) ?? wid),
+    };
+  });
+
   console.log('[ExternalEngine] walls:', walls.length, 'panels:', panels.length, 'units:', (root.meta as { units?: string })?.units ?? 'n/a');
 
   return {
-    nodes,
-    walls,
+    nodes: normalizedNodes,
+    walls: normalizedWalls,
     courses: coursesArray,
-    panels,
+    panels: normalizedPanels,
     wallHeight,
     courseHeight,
     thickness,
