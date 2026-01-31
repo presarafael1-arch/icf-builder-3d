@@ -144,7 +144,8 @@ function DXFDebugLines({ walls }: { walls: WallSegment[] }) {
 
   return (
     <lineSegments geometry={geometry} frustumCulled={false}>
-      <lineBasicMaterial color={'#666666'} linewidth={1} opacity={0.5} transparent />
+      {/* Keep debug lines solid so they don't look like scene translucency */}
+      <lineBasicMaterial color={'#666666'} linewidth={1} opacity={1} transparent={false} />
     </lineSegments>
   );
 }
@@ -303,10 +304,12 @@ function UnresolvedHighlights({ allPanels, concreteThickness, visible = true }: 
     >
       <meshStandardMaterial 
         color="#FF00FF"
-        opacity={0.5} 
-        transparent 
+        // IMPORTANT: keep fully opaque (user requirement: no translucency anywhere)
+        transparent={false}
+        opacity={1}
         side={THREE.DoubleSide}
-        depthWrite={false}
+        depthWrite={true}
+        depthTest={true}
         emissive="#FF00FF"
         emissiveIntensity={0.8}
       />

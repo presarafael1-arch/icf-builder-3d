@@ -693,7 +693,8 @@ function PanelOutline({ x0, x1, z0, z1, startPt, u2 }: PanelOutlineProps) {
       points={points}
       color={COLORS.OUTLINE}
       lineWidth={1.5}
-      depthTest={false}
+      // IMPORTANT: must respect depth buffer so you can't see outlines through panels
+      depthTest={true}
       renderOrder={20}
     />
   );
