@@ -395,6 +395,18 @@ function chooseOutNormal(
     return { isExterior: false, outN: n };
   }
 
+  // Debug: Log first wall's test results in detail
+  const isFirstWall = wallId === '0' || wallId === 'wall_0';
+  if (isFirstWall) {
+    // Calculate footprint bounds for debugging
+    const polyMinX = Math.min(...outerPoly.map(p => p.x));
+    const polyMaxX = Math.max(...outerPoly.map(p => p.x));
+    const polyMinY = Math.min(...outerPoly.map(p => p.y));
+    const polyMaxY = Math.max(...outerPoly.map(p => p.y));
+    console.log(`[Footprint Debug] Polygon bounds: X[${polyMinX.toFixed(2)}, ${polyMaxX.toFixed(2)}] Y[${polyMinY.toFixed(2)}, ${polyMaxY.toFixed(2)}]`);
+    console.log(`[Footprint Debug] Wall ${wallId} mid: (${mid.x.toFixed(2)}, ${mid.y.toFixed(2)}), n: (${n.x.toFixed(3)}, ${n.y.toFixed(3)})`);
+  }
+
   const boundaryDist = distanceToPolygonBoundary(mid, outerPoly);
   
   // Extended test offsets - go further out for large buildings
@@ -406,6 +418,11 @@ function chooseOutNormal(
     
     const inPlus = pointInPolygon(pPlus, outerPoly);
     const inMinus = pointInPolygon(pMinus, outerPoly);
+    
+    // Debug log for first wall
+    if (isFirstWall && eps === 1.0) {
+      console.log(`[Footprint Debug] Wall ${wallId} @ eps=1.0m: pPlus(${pPlus.x.toFixed(2)}, ${pPlus.y.toFixed(2)})=${inPlus}, pMinus(${pMinus.x.toFixed(2)}, ${pMinus.y.toFixed(2)})=${inMinus}`);
+    }
     
     if (inPlus !== inMinus) {
       const outN = inPlus ? { x: -n.x, y: -n.y } : n;
@@ -431,7 +448,7 @@ function chooseOutNormal(
   }
   
   // Both sides equal at all offsets → interior partition wall
-  console.log(`[Wall ${wallId}] PARTITION: all tests returned same value`);
+  console.log(`[Wall ${wallId}] PARTITION: all tests returned same value (boundaryDist=${boundaryDist.toFixed(2)}m)`);
   return { isExterior: false, outN: n };
 }
 
