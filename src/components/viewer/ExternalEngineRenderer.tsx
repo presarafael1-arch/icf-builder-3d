@@ -350,21 +350,30 @@ function scalePolygon(poly: Array<{ x: number; y: number }>, scale: number): Poi
   return poly.map((p) => ({ x: p.x * scale, y: p.y * scale }));
 }
 
-function buildChainsFromExternalWalls(walls: GraphWall[]): WallChain[] {
+/**
+ * Build WallChain objects from external walls, centered around origin.
+ * @param walls - External engine walls (coordinates in meters, world space)
+ * @param centerOffset - Offset to subtract to center the building at origin (meters)
+ * @returns WallChain[] with coordinates in mm, centered at origin
+ */
+function buildChainsFromExternalWalls(
+  walls: GraphWall[],
+  centerOffset: Point2D = { x: 0, y: 0 }
+): WallChain[] {
   const chains: WallChain[] = [];
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
     if (leftPts.length < 2 || rightPts.length < 2) continue;
 
-    // Centerline endpoints (average of left/right endpoints)
+    // Centerline endpoints (average of left/right endpoints), then apply centerOffset
     const s = {
-      x: (leftPts[0].x + rightPts[0].x) / 2,
-      y: (leftPts[0].y + rightPts[0].y) / 2,
+      x: (leftPts[0].x + rightPts[0].x) / 2 - centerOffset.x,
+      y: (leftPts[0].y + rightPts[0].y) / 2 - centerOffset.y,
     };
     const e = {
-      x: (leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2,
-      y: (leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2,
+      x: (leftPts[leftPts.length - 1].x + rightPts[rightPts.length - 1].x) / 2 - centerOffset.x,
+      y: (leftPts[leftPts.length - 1].y + rightPts[rightPts.length - 1].y) / 2 - centerOffset.y,
     };
 
     const dx = e.x - s.x;
@@ -372,7 +381,7 @@ function buildChainsFromExternalWalls(walls: GraphWall[]): WallChain[] {
     const lenM = Math.sqrt(dx * dx + dy * dy);
     if (lenM < 1e-6) continue;
 
-    // Footprint module operates in millimeters
+    // Footprint module operates in millimeters (now centered around origin)
     const startX = s.x * 1000;
     const startY = s.y * 1000;
     const endX = e.x * 1000;
@@ -398,6 +407,14 @@ function buildChainsFromExternalWalls(walls: GraphWall[]): WallChain[] {
       endNodeId: null,
     });
   }
+  
+  // Debug: log the coordinate range after centering
+  if (chains.length > 0) {
+    const xs = chains.flatMap(c => [c.startX, c.endX]);
+    const ys = chains.flatMap(c => [c.startY, c.endY]);
+    console.log(`[buildChainsFromExternalWalls] ${chains.length} chains, X range: [${Math.min(...xs).toFixed(0)}, ${Math.max(...xs).toFixed(0)}], Y range: [${Math.min(...ys).toFixed(0)}, ${Math.max(...ys).toFixed(0)}]`);
+  }
+  
   return chains;
 }
 
@@ -435,7 +452,7 @@ function computeBuildingFootprint(
   // chainSides is the most deterministic per-wall EXT/INT source.
   let chainSides: FootprintResult['chainSides'] | undefined;
   try {
-    const chains = buildChainsFromExternalWalls(walls);
+    const chains = buildChainsFromExternalWalls(walls, centerOffset);
     const fp = detectFootprintAndClassify(chains, 100);
     if (fp.chainSides && fp.chainSides.size > 0) {
       const map = new Map<
@@ -502,7 +519,7 @@ function computeBuildingFootprint(
   // Priority #4: Use robust chain-based footprint + side classification (same module used elsewhere)
   // This is the most reliable for complex graphs with T-junctions.
   try {
-    const chains = buildChainsFromExternalWalls(walls);
+    const chains = buildChainsFromExternalWalls(walls, centerOffset);
     const fp = detectFootprintAndClassify(chains, 100);
     if (fp.outerPolygon.length >= 3) {
       const hull = ensureCCW(scalePolygon(fp.outerPolygon, 1 / 1000)); // mm -> m
