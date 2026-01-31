@@ -101,6 +101,32 @@ interface Point2D {
   y: number;
 }
 
+function pointToSegmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-12) {
+    const ddx = p.x - a.x;
+    const ddy = p.y - a.y;
+    return Math.sqrt(ddx * ddx + ddy * ddy);
+  }
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  const proj = { x: a.x + t * dx, y: a.y + t * dy };
+  const ddx = p.x - proj.x;
+  const ddy = p.y - proj.y;
+  return Math.sqrt(ddx * ddx + ddy * ddy);
+}
+
+function distanceToPolygonBoundary(p: Point2D, polygon: Point2D[]): number {
+  if (polygon.length < 2) return Infinity;
+  let best = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const j = (i + 1) % polygon.length;
+    best = Math.min(best, pointToSegmentDistance(p, polygon[i], polygon[j]));
+  }
+  return best;
+}
+
 // Point in polygon test (ray casting)
 function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
   if (polygon.length < 3) return false;
@@ -185,12 +211,19 @@ function buildConcaveFootprintFromWalls(walls: GraphWall[], centroid: Point2D): 
 
   if (segments.length < 3) return [];
 
-  // Snap tolerance: 50mm in meters
-  const outerPoly = findOuterPolygonFromSegments(segments, 0.05);
-  if (outerPoly.length >= 3) {
-    console.log(`[Footprint] Built concave polygon from wall edges (${outerPoly.length} points)`);
+  // Adaptive snapping: walls/offset polylines often have small gaps at corners.
+  // Try multiple tolerances (20mm → 200mm) and take the first valid loop.
+  const snapCandidates = [0.02, 0.05, 0.1, 0.2];
+  for (const snapTol of snapCandidates) {
+    const outerPoly = findOuterPolygonFromSegments(segments, snapTol);
+    if (outerPoly.length >= 3) {
+      console.log(`[Footprint] Built concave polygon from wall edges (${outerPoly.length} points, snap=${Math.round(snapTol * 1000)}mm)`);
+      return outerPoly;
+    }
   }
-  return outerPoly;
+
+  console.warn('[Footprint] Failed to build concave polygon from wall edges');
+  return [];
 }
 
 // Compute the building footprint - prioritizes payload outerPolygon, falls back to concave construction
@@ -259,6 +292,26 @@ function chooseOutNormal(
   n: Point2D,
   outerPoly: Point2D[]
 ): { isExterior: boolean; outN: Point2D } {
+  // If we're close to the footprint boundary, treat this as perimeter (robust against
+  // tiny polygon errors / snapping artifacts).
+  const boundaryDist = distanceToPolygonBoundary(mid, outerPoly);
+  if (boundaryDist <= 0.5) {
+    // Still need outN direction: infer it from sampling.
+    // (If sampling fails, fall back to n as a stable default.)
+    const testEpsNear = [0.25, 0.5, 1.0];
+    for (const eps of testEpsNear) {
+      const pPlus = { x: mid.x + n.x * eps, y: mid.y + n.y * eps };
+      const pMinus = { x: mid.x - n.x * eps, y: mid.y - n.y * eps };
+      const inPlus = pointInPolygon(pPlus, outerPoly);
+      const inMinus = pointInPolygon(pMinus, outerPoly);
+      if (inPlus !== inMinus) {
+        const outN = inPlus ? { x: -n.x, y: -n.y } : n;
+        return { isExterior: true, outN };
+      }
+    }
+    return { isExterior: true, outN: n };
+  }
+
   // Test at multiple distances for robustness
   const testEps = [0.1, 0.25, 0.5, 0.75, 1.0]; // meters
   
