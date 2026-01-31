@@ -777,7 +777,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={extStart}
         u2={u2}
       />
-      {/* Stripe on front face of exterior skin */}
+      {/* Single stripe on exterior skin - on the OUTWARD-facing side only */}
       <PanelStripe
         x0={x0}
         x1={x1}
@@ -788,18 +788,6 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         n2={extNormalDir}
         color={exteriorSkinStripeColor}
         offset={STRIPE_OFFSET}
-      />
-      {/* Stripe on back face of exterior skin */}
-      <PanelStripe
-        x0={x0}
-        x1={x1}
-        z0={z0}
-        z1={z1}
-        startPt={extStart}
-        u2={u2}
-        n2={extNormalDir}
-        color={exteriorSkinStripeColor}
-        offset={-STRIPE_OFFSET}
       />
       
       {/* ===== Interior Skin (the panel facing INSIDE the building) ===== */}
@@ -821,7 +809,7 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         startPt={intStart}
         u2={u2}
       />
-      {/* Stripe on front face of interior skin - ALWAYS WHITE */}
+      {/* Single stripe on interior skin - on the INWARD-facing side only */}
       <PanelStripe
         x0={x0}
         x1={x1}
@@ -832,18 +820,6 @@ function DualSkinPanel({ panel, course, wallGeom, coreThickness, isSelected }: D
         n2={intNormalDir}
         color={interiorSkinStripeColor}
         offset={STRIPE_OFFSET}
-      />
-      {/* Stripe on back face of interior skin - ALWAYS WHITE */}
-      <PanelStripe
-        x0={x0}
-        x1={x1}
-        z0={z0}
-        z1={z1}
-        startPt={intStart}
-        u2={u2}
-        n2={intNormalDir}
-        color={interiorSkinStripeColor}
-        offset={-STRIPE_OFFSET}
       />
     </group>
   );
@@ -957,6 +933,7 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   }
   
   // Generate stripe overlays for fallback (solid rectangles per course)
+  // Only ONE stripe per surface (on the outward-facing side)
   const fallbackStripes: JSX.Element[] = [];
   const leftNormal = n2;
   const rightNormal = { x: -n2.x, y: -n2.y };
@@ -973,14 +950,13 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
     const centerT = length / 2;
     const halfW = STRIPE_WIDTH / 2;
     
-    // Left surface stripes (front and back)
+    // Left surface stripe (single, on outward side only)
     const leftCenter = { x: leftPts[0].x + u2.x * centerT, y: leftPts[0].y + u2.y * centerT };
     const leftBl = { x: leftCenter.x + u2.x * (-halfW), y: leftCenter.y + u2.y * (-halfW) };
     const leftBr = { x: leftCenter.x + u2.x * halfW, y: leftCenter.y + u2.y * halfW };
     
-    // Front stripe on left surface
     fallbackStripes.push(
-      <mesh key={`left-front-${ci}`} renderOrder={10}>
+      <mesh key={`left-${ci}`} renderOrder={10}>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
@@ -1007,43 +983,13 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
       </mesh>
     );
     
-    // Back stripe on left surface
-    fallbackStripes.push(
-      <mesh key={`left-back-${ci}`} renderOrder={10}>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            args={[new Float32Array([
-              leftBl.x - leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBl.y - leftNormal.y * STRIPE_OFFSET,
-              leftBr.x - leftNormal.x * STRIPE_OFFSET, stripeZ0, leftBr.y - leftNormal.y * STRIPE_OFFSET,
-              leftBr.x - leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBr.y - leftNormal.y * STRIPE_OFFSET,
-              leftBl.x - leftNormal.x * STRIPE_OFFSET, stripeZ1, leftBl.y - leftNormal.y * STRIPE_OFFSET,
-            ]), 3]}
-          />
-          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
-        </bufferGeometry>
-        <meshBasicMaterial
-          color={leftStripeColor}
-          side={THREE.DoubleSide}
-          depthWrite={true}
-          depthTest={true}
-          transparent={false}
-          opacity={1}
-          polygonOffset
-          polygonOffsetFactor={-2}
-          polygonOffsetUnits={-2}
-        />
-      </mesh>
-    );
-    
-    // Right surface stripes
+    // Right surface stripe (single, on outward side only)
     const rightCenter = { x: rightPts[0].x + u2.x * centerT, y: rightPts[0].y + u2.y * centerT };
     const rightBl = { x: rightCenter.x + u2.x * (-halfW), y: rightCenter.y + u2.y * (-halfW) };
     const rightBr = { x: rightCenter.x + u2.x * halfW, y: rightCenter.y + u2.y * halfW };
     
-    // Front stripe on right surface
     fallbackStripes.push(
-      <mesh key={`right-front-${ci}`} renderOrder={10}>
+      <mesh key={`right-${ci}`} renderOrder={10}>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
@@ -1052,35 +998,6 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
               rightBr.x + rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBr.y + rightNormal.y * STRIPE_OFFSET,
               rightBr.x + rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBr.y + rightNormal.y * STRIPE_OFFSET,
               rightBl.x + rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBl.y + rightNormal.y * STRIPE_OFFSET,
-            ]), 3]}
-          />
-          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
-        </bufferGeometry>
-        <meshBasicMaterial
-          color={rightStripeColor}
-          side={THREE.DoubleSide}
-          depthWrite={true}
-          depthTest={true}
-          transparent={false}
-          opacity={1}
-          polygonOffset
-          polygonOffsetFactor={-2}
-          polygonOffsetUnits={-2}
-        />
-      </mesh>
-    );
-    
-    // Back stripe on right surface
-    fallbackStripes.push(
-      <mesh key={`right-back-${ci}`} renderOrder={10}>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            args={[new Float32Array([
-              rightBl.x - rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBl.y - rightNormal.y * STRIPE_OFFSET,
-              rightBr.x - rightNormal.x * STRIPE_OFFSET, stripeZ0, rightBr.y - rightNormal.y * STRIPE_OFFSET,
-              rightBr.x - rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBr.y - rightNormal.y * STRIPE_OFFSET,
-              rightBl.x - rightNormal.x * STRIPE_OFFSET, stripeZ1, rightBl.y - rightNormal.y * STRIPE_OFFSET,
             ]), 3]}
           />
           <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
