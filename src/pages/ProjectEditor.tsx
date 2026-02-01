@@ -267,7 +267,7 @@ export default function ProjectEditor() {
     overrides: chainOverrides 
   } = useChainOverrides(id);
   
-  // External engine integration
+  // External engine integration (pass project ID to scope analysis per-project)
   const {
     engineMode,
     setEngineMode,
@@ -283,7 +283,7 @@ export default function ProjectEditor() {
     setConfig: setExternalConfig,
     testConnection,
     connectionStatus,
-  } = useExternalEngine();
+  } = useExternalEngine(id);
   
   // Wall side corrections (manual EXT/INT flip per wall)
   const {

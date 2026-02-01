@@ -2,6 +2,7 @@
  * Hook for managing external ICF engine state and API calls
  * 
  * External Engine is the "source of truth" - no fallback to internal rendering.
+ * Analysis data is now stored per-project to avoid cross-contamination.
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -34,7 +35,9 @@ interface UseExternalEngineResult {
 // Persistence keys for localStorage
 const ENGINE_MODE_KEY = 'omni-icf-engine-mode';
 const ENGINE_CONFIG_KEY = 'omni-icf-engine-config';
-const ENGINE_ANALYSIS_KEY = 'omni-icf-engine-analysis';
+// Analysis is stored per-project
+const getEngineAnalysisKey = (projectId: string | null) => 
+  projectId ? `omni-icf-engine-analysis-${projectId}` : null;
 
 // Empty normalized analysis (safe defaults)
 const EMPTY_NORMALIZED: NormalizedExternalAnalysis = {
@@ -49,11 +52,14 @@ const EMPTY_NORMALIZED: NormalizedExternalAnalysis = {
   panelThickness: 0.0706, // Default 1 TOOTH (~70.6mm)
 };
 
-// Load persisted analysis from localStorage
-function loadPersistedAnalysis(): { analysis: ExternalEngineAnalysis | null; normalized: NormalizedExternalAnalysis } {
-  if (typeof window === 'undefined') return { analysis: null, normalized: EMPTY_NORMALIZED };
+// Load persisted analysis from localStorage for a specific project
+function loadPersistedAnalysis(projectId: string | null): { analysis: ExternalEngineAnalysis | null; normalized: NormalizedExternalAnalysis } {
+  if (typeof window === 'undefined' || !projectId) return { analysis: null, normalized: EMPTY_NORMALIZED };
+  const key = getEngineAnalysisKey(projectId);
+  if (!key) return { analysis: null, normalized: EMPTY_NORMALIZED };
+  
   try {
-    const saved = localStorage.getItem(ENGINE_ANALYSIS_KEY);
+    const saved = localStorage.getItem(key);
     if (saved) {
       const parsed = JSON.parse(saved);
       const normalized = normalizeExternalAnalysis(parsed);
@@ -65,22 +71,28 @@ function loadPersistedAnalysis(): { analysis: ExternalEngineAnalysis | null; nor
   return { analysis: null, normalized: EMPTY_NORMALIZED };
 }
 
-// Save analysis to localStorage
-function persistAnalysis(rawData: unknown): void {
-  if (typeof window === 'undefined') return;
+// Save analysis to localStorage for a specific project
+function persistAnalysis(projectId: string | null, rawData: unknown): void {
+  if (typeof window === 'undefined' || !projectId) return;
+  const key = getEngineAnalysisKey(projectId);
+  if (!key) return;
+  
   try {
-    localStorage.setItem(ENGINE_ANALYSIS_KEY, JSON.stringify(rawData));
-    console.log('[ExternalEngine] Analysis persisted to localStorage');
+    localStorage.setItem(key, JSON.stringify(rawData));
+    console.log('[ExternalEngine] Analysis persisted to localStorage for project:', projectId);
   } catch (e) {
     console.warn('[ExternalEngine] Failed to persist analysis:', e);
   }
 }
 
-// Clear persisted analysis
-function clearPersistedAnalysis(): void {
-  if (typeof window === 'undefined') return;
+// Clear persisted analysis for a specific project
+function clearPersistedAnalysis(projectId: string | null): void {
+  if (typeof window === 'undefined' || !projectId) return;
+  const key = getEngineAnalysisKey(projectId);
+  if (!key) return;
+  
   try {
-    localStorage.removeItem(ENGINE_ANALYSIS_KEY);
+    localStorage.removeItem(key);
   } catch {}
 }
 
@@ -99,7 +111,7 @@ function loadPersistedConfig(): EngineConfig {
   return DEFAULT_ENGINE_CONFIG;
 }
 
-export function useExternalEngine(): UseExternalEngineResult {
+export function useExternalEngine(projectId?: string | null): UseExternalEngineResult {
   // Load initial mode from localStorage (default: external ON)
   const [engineMode, setEngineModeState] = useState<EngineMode>(() => {
     if (typeof window === 'undefined') return 'external';
@@ -107,25 +119,33 @@ export function useExternalEngine(): UseExternalEngineResult {
     return (saved === 'internal' || saved === 'external') ? saved : 'external';
   });
 
-  // Load persisted analysis from localStorage on mount
-  const persistedData = loadPersistedAnalysis();
-  const [analysis, setAnalysis] = useState<ExternalEngineAnalysis | null>(persistedData.analysis);
-  const [normalizedAnalysis, setNormalizedAnalysis] = useState<NormalizedExternalAnalysis>(persistedData.normalized);
+  const [analysis, setAnalysis] = useState<ExternalEngineAnalysis | null>(null);
+  const [normalizedAnalysis, setNormalizedAnalysis] = useState<NormalizedExternalAnalysis>(EMPTY_NORMALIZED);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [config, setConfigState] = useState<EngineConfig>(loadPersistedConfig);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
 
-  // Log when analysis is loaded from persistence
+  // Load persisted analysis when projectId changes
   useEffect(() => {
-    if (engineMode === 'external' && persistedData.analysis) {
-      console.log('[ExternalEngine] Loaded persisted analysis:', {
-        nodesCount: persistedData.normalized.nodes.length,
-        wallsCount: persistedData.normalized.walls.length,
-      });
+    if (projectId) {
+      const persistedData = loadPersistedAnalysis(projectId);
+      setAnalysis(persistedData.analysis);
+      setNormalizedAnalysis(persistedData.normalized);
+      
+      if (engineMode === 'external' && persistedData.analysis) {
+        console.log('[ExternalEngine] Loaded persisted analysis for project:', projectId, {
+          nodesCount: persistedData.normalized.nodes.length,
+          wallsCount: persistedData.normalized.walls.length,
+        });
+      }
+    } else {
+      // No project ID - clear analysis
+      setAnalysis(null);
+      setNormalizedAnalysis(EMPTY_NORMALIZED);
     }
-  }, []);
+  }, [projectId, engineMode]);
 
   // Persist engine mode
   const setEngineMode = useCallback((mode: EngineMode) => {
@@ -265,7 +285,7 @@ export function useExternalEngine(): UseExternalEngineResult {
       const result: ExternalEngineAnalysis = rawData.analysis || rawData;
       setAnalysis(result);
       setNormalizedAnalysis(normalized);
-      persistAnalysis(rawData);
+      persistAnalysis(projectId ?? null, rawData);
       return result;
     } catch (err) {
       let message: string;
@@ -282,17 +302,17 @@ export function useExternalEngine(): UseExternalEngineResult {
     } finally {
       setIsLoading(false);
     }
-  }, [config]);
+  }, [config, projectId]);
 
-  // Clear analysis data (also clears localStorage)
+  // Clear analysis data (also clears localStorage for this project)
   const clearAnalysis = useCallback(() => {
     setAnalysis(null);
     setNormalizedAnalysis(EMPTY_NORMALIZED);
     setSelectedWallId(null);
     setError(null);
-    clearPersistedAnalysis();
-    console.log('[ExternalEngine] Analysis cleared');
-  }, []);
+    clearPersistedAnalysis(projectId ?? null);
+    console.log('[ExternalEngine] Analysis cleared for project:', projectId);
+  }, [projectId]);
 
   return {
     engineMode,
