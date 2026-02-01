@@ -1871,9 +1871,9 @@ function WallRenderer({
   onWallFingerprint,
   nodePositions,
 }: WallRendererProps) {
-  // Get wall start/end from node positions
-  const wallStart = nodePositions.get(wall.start_node);
-  const wallEnd = nodePositions.get(wall.end_node);
+  // Get wall start/end from node positions lookup
+  const wallStartFromNode = nodePositions.get(wall.start_node);
+  const wallEndFromNode = nodePositions.get(wall.end_node);
   
   // Fallback: try to get from offsets if nodes not found
   const wallGeomBase = useMemo(
@@ -1881,25 +1881,55 @@ function WallRenderer({
     [wall, footprintHull, buildingCentroid, chainSides]
   );
 
-  // Validate wall geometry
-  const hasValidNodes = wallStart && wallEnd;
-  const hasValidOffsets = wallGeomBase !== null;
+  // Calculate start/end from offset polylines (centerline = average of left/right)
+  const startFromOffsets = useMemo(() => {
+    if (!wallGeomBase || wallGeomBase.leftPts.length === 0 || wallGeomBase.rightPts.length === 0) return null;
+    return {
+      x: (wallGeomBase.leftPts[0].x + wallGeomBase.rightPts[0].x) / 2,
+      y: (wallGeomBase.leftPts[0].y + wallGeomBase.rightPts[0].y) / 2,
+    };
+  }, [wallGeomBase]);
+  
+  const endFromOffsets = useMemo(() => {
+    if (!wallGeomBase || wallGeomBase.leftPts.length === 0 || wallGeomBase.rightPts.length === 0) return null;
+    const lastIdx = Math.min(wallGeomBase.leftPts.length - 1, wallGeomBase.rightPts.length - 1);
+    return {
+      x: (wallGeomBase.leftPts[lastIdx].x + wallGeomBase.rightPts[lastIdx].x) / 2,
+      y: (wallGeomBase.leftPts[lastIdx].y + wallGeomBase.rightPts[lastIdx].y) / 2,
+    };
+  }, [wallGeomBase]);
+
+  // Validate wall geometry - need at least one source of start/end points
+  const hasValidNodes = wallStartFromNode && wallEndFromNode;
+  const hasValidOffsets = startFromOffsets && endFromOffsets;
   
   if (!hasValidNodes && !hasValidOffsets) {
-    console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry (missing nodes and offsets)`);
+    console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry:`, {
+      start_node: wall.start_node,
+      end_node: wall.end_node,
+      hasNodePositions: nodePositions.size,
+      hasOffsets: !!wall.offsets,
+    });
     return null;
   }
   
-  // Use node positions if available, otherwise calculate from offset polylines
-  const effectiveStart = wallStart ?? (wallGeomBase ? {
-    x: (wallGeomBase.leftPts[0].x + wallGeomBase.rightPts[0].x) / 2,
-    y: (wallGeomBase.leftPts[0].y + wallGeomBase.rightPts[0].y) / 2,
-  } : { x: 0, y: 0 });
+  // Use node positions if available and valid, otherwise use offset-derived centerline
+  const effectiveStart = wallStartFromNode ?? startFromOffsets ?? { x: 0, y: 0 };
+  const effectiveEnd = wallEndFromNode ?? endFromOffsets ?? { x: 1, y: 0 };
   
-  const effectiveEnd = wallEnd ?? (wallGeomBase ? {
-    x: (wallGeomBase.leftPts[wallGeomBase.leftPts.length - 1].x + wallGeomBase.rightPts[wallGeomBase.rightPts.length - 1].x) / 2,
-    y: (wallGeomBase.leftPts[wallGeomBase.leftPts.length - 1].y + wallGeomBase.rightPts[wallGeomBase.rightPts.length - 1].y) / 2,
-  } : { x: 1, y: 0 });
+  // Validate that start != end (wall has actual length)
+  const dx = effectiveEnd.x - effectiveStart.x;
+  const dy = effectiveEnd.y - effectiveStart.y;
+  const wallLen = Math.sqrt(dx * dx + dy * dy);
+  
+  if (wallLen < 0.001) {
+    console.warn(`[WallRenderer] Wall ${wall.id} has zero length - skipping:`, {
+      start: effectiveStart,
+      end: effectiveEnd,
+      wallLen,
+    });
+    return null;
+  }
 
   // Apply manual flip correction if needed (for legacy wallGeom)
   const wallGeom = useMemo(() => {
@@ -2189,8 +2219,28 @@ export function ExternalEngineRenderer({
         map.set(node.id, { x, y });
       }
     }
+    
+    // Log node mapping diagnostics
+    if (adjustedNodes.length > 0 || walls.length > 0) {
+      const wallNodeIds = new Set<string>();
+      for (const w of walls) {
+        if (w.start_node) wallNodeIds.add(w.start_node);
+        if (w.end_node) wallNodeIds.add(w.end_node);
+      }
+      const missingNodes = [...wallNodeIds].filter(id => !map.has(id));
+      
+      console.log('[ExternalEngineRenderer] Node mapping:', {
+        nodesCount: adjustedNodes.length,
+        mappedNodes: map.size,
+        wallsCount: walls.length,
+        wallNodeRefs: wallNodeIds.size,
+        missingNodeRefs: missingNodes.length,
+        missingNodes: missingNodes.slice(0, 5), // Show first 5 missing
+      });
+    }
+    
     return map;
-  }, [adjustedNodes]);
+  }, [adjustedNodes, walls]);
 
   // Course height from API or default
   const courseHeight = normalizedAnalysis.courseHeight > 0 ? normalizedAnalysis.courseHeight : 0.4;
