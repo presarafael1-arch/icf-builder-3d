@@ -42,6 +42,9 @@ export interface GraphWall {
   length: number;
   axis: WallAxis;
   offsets?: WallOffsets;
+  // Direct start/end coords (some engines provide these instead of node refs)
+  start?: Vec3 | number[];
+  end?: Vec3 | number[];
 }
 
 // Graph structure

@@ -926,6 +926,7 @@ function calculateCenterOffset(
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
 
+  // From nodes
   for (const node of nodes) {
     const x = px(node.position);
     const y = py(node.position);
@@ -937,6 +938,7 @@ function calculateCenterOffset(
     }
   }
 
+  // From wall offsets
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
@@ -946,11 +948,38 @@ function calculateCenterOffset(
       minY = Math.min(minY, p.y);
       maxY = Math.max(maxY, p.y);
     }
+    
+    // Also check direct start/end coords on walls
+    if (wall.start) {
+      const sx = px(wall.start);
+      const sy = py(wall.start);
+      if (sx !== undefined && sy !== undefined) {
+        minX = Math.min(minX, sx);
+        maxX = Math.max(maxX, sx);
+        minY = Math.min(minY, sy);
+        maxY = Math.max(maxY, sy);
+      }
+    }
+    if (wall.end) {
+      const ex = px(wall.end);
+      const ey = py(wall.end);
+      if (ex !== undefined && ey !== undefined) {
+        minX = Math.min(minX, ex);
+        maxX = Math.max(maxX, ex);
+        minY = Math.min(minY, ey);
+        maxY = Math.max(maxY, ey);
+      }
+    }
   }
 
-  if (!isFinite(minX) || !isFinite(minY)) return { x: 0, y: 0 };
+  if (!isFinite(minX) || !isFinite(minY)) {
+    console.log('[CenterOffset] No valid geometry found, using (0,0)');
+    return { x: 0, y: 0 };
+  }
 
-  return { x: -(minX + maxX) / 2, y: -(minY + maxY) / 2 };
+  const offset = { x: -(minX + maxX) / 2, y: -(minY + maxY) / 2 };
+  console.log('[CenterOffset] Calculated:', { minX, maxX, minY, maxY, offset });
+  return offset;
 }
 
 // ===== Engine-Compliant Panel Renderer =====
@@ -1875,7 +1904,41 @@ function WallRenderer({
   const wallStartFromNode = nodePositions.get(wall.start_node);
   const wallEndFromNode = nodePositions.get(wall.end_node);
   
-  // Fallback: try to get from offsets if nodes not found
+  // Fallback 1: try to get start/end directly from wall object (some engines provide this)
+  const startFromWallDirect = useMemo(() => {
+    if (!wall.start) return null;
+    const x = px(wall.start);
+    const y = py(wall.start);
+    if (x === undefined || y === undefined) return null;
+    return { x, y };
+  }, [wall.start]);
+  
+  const endFromWallDirect = useMemo(() => {
+    if (!wall.end) return null;
+    const x = px(wall.end);
+    const y = py(wall.end);
+    if (x === undefined || y === undefined) return null;
+    return { x, y };
+  }, [wall.end]);
+  
+  // Fallback 2: calculate from axis.u and length (if axis exists)
+  const startEndFromAxis = useMemo(() => {
+    if (!wall.axis?.u || !wall.length || wall.length < 0.001) return null;
+    const ux = px(wall.axis.u) ?? 0;
+    const uy = py(wall.axis.u) ?? 0;
+    const uLen = Math.sqrt(ux * ux + uy * uy);
+    if (uLen < 1e-9) return null;
+    
+    // Use origin or any reference point - the center offset will adjust
+    // For now, just create a wall centered at origin along the axis direction
+    const halfLen = wall.length / 2;
+    return {
+      start: { x: -ux * halfLen / uLen, y: -uy * halfLen / uLen },
+      end: { x: ux * halfLen / uLen, y: uy * halfLen / uLen },
+    };
+  }, [wall.axis, wall.length]);
+
+  // Fallback 3: try to get from offsets if nothing else works
   const wallGeomBase = useMemo(
     () => computeWallGeometry(wall, footprintHull, buildingCentroid, chainSides),
     [wall, footprintHull, buildingCentroid, chainSides]
@@ -1901,21 +1964,25 @@ function WallRenderer({
 
   // Validate wall geometry - need at least one source of start/end points
   const hasValidNodes = wallStartFromNode && wallEndFromNode;
+  const hasValidDirect = startFromWallDirect && endFromWallDirect;
+  const hasValidAxis = startEndFromAxis !== null;
   const hasValidOffsets = startFromOffsets && endFromOffsets;
   
-  if (!hasValidNodes && !hasValidOffsets) {
+  if (!hasValidNodes && !hasValidDirect && !hasValidAxis && !hasValidOffsets) {
     console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry:`, {
       start_node: wall.start_node,
       end_node: wall.end_node,
       hasNodePositions: nodePositions.size,
+      hasDirectCoords: !!(wall.start || wall.end),
+      hasAxis: !!wall.axis?.u,
       hasOffsets: !!wall.offsets,
     });
     return null;
   }
   
-  // Use node positions if available and valid, otherwise use offset-derived centerline
-  const effectiveStart = wallStartFromNode ?? startFromOffsets ?? { x: 0, y: 0 };
-  const effectiveEnd = wallEndFromNode ?? endFromOffsets ?? { x: 1, y: 0 };
+  // Priority: node positions > direct coords > axis-derived > offset-derived
+  const effectiveStart = wallStartFromNode ?? startFromWallDirect ?? startEndFromAxis?.start ?? startFromOffsets ?? { x: 0, y: 0 };
+  const effectiveEnd = wallEndFromNode ?? endFromWallDirect ?? startEndFromAxis?.end ?? endFromOffsets ?? { x: 1, y: 0 };
   
   // Validate that start != end (wall has actual length)
   const dx = effectiveEnd.x - effectiveStart.x;
@@ -1927,6 +1994,7 @@ function WallRenderer({
       start: effectiveStart,
       end: effectiveEnd,
       wallLen,
+      sources: { hasValidNodes, hasValidDirect, hasValidAxis, hasValidOffsets },
     });
     return null;
   }
@@ -2210,8 +2278,11 @@ export function ExternalEngineRenderer({
   }, [nodes, centerOffset]);
 
   // Create node position lookup map for WallRenderer
+  // Also extract direct start/end coords from walls if nodes aren't available
   const nodePositions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
+    
+    // First, add all nodes from the nodes array
     for (const node of adjustedNodes) {
       const x = px(node.position);
       const y = py(node.position);
@@ -2220,24 +2291,53 @@ export function ExternalEngineRenderer({
       }
     }
     
-    // Log node mapping diagnostics
-    if (adjustedNodes.length > 0 || walls.length > 0) {
-      const wallNodeIds = new Set<string>();
-      for (const w of walls) {
-        if (w.start_node) wallNodeIds.add(w.start_node);
-        if (w.end_node) wallNodeIds.add(w.end_node);
-      }
-      const missingNodes = [...wallNodeIds].filter(id => !map.has(id));
+    // If walls have direct start/end coords, add synthetic node entries
+    // This handles engines that send coords instead of node references
+    for (const wall of walls) {
+      const startId = wall.start_node;
+      const endId = wall.end_node;
       
-      console.log('[ExternalEngineRenderer] Node mapping:', {
-        nodesCount: adjustedNodes.length,
-        mappedNodes: map.size,
-        wallsCount: walls.length,
-        wallNodeRefs: wallNodeIds.size,
-        missingNodeRefs: missingNodes.length,
-        missingNodes: missingNodes.slice(0, 5), // Show first 5 missing
-      });
+      // Check if we need to extract from wall.start
+      if (startId && !map.has(startId) && wall.start) {
+        const x = px(wall.start);
+        const y = py(wall.start);
+        if (x !== undefined && y !== undefined) {
+          // Apply center offset
+          map.set(startId, { x: x + centerOffset.x, y: y + centerOffset.y });
+        }
+      }
+      
+      // Check if we need to extract from wall.end
+      if (endId && !map.has(endId) && wall.end) {
+        const x = px(wall.end);
+        const y = py(wall.end);
+        if (x !== undefined && y !== undefined) {
+          // Apply center offset
+          map.set(endId, { x: x + centerOffset.x, y: y + centerOffset.y });
+        }
+      }
     }
+    
+    // Log node mapping diagnostics
+    const wallNodeIds = new Set<string>();
+    const wallsWithDirectCoords = { start: 0, end: 0 };
+    for (const w of walls) {
+      if (w.start_node) wallNodeIds.add(w.start_node);
+      if (w.end_node) wallNodeIds.add(w.end_node);
+      if (w.start) wallsWithDirectCoords.start++;
+      if (w.end) wallsWithDirectCoords.end++;
+    }
+    const missingNodes = [...wallNodeIds].filter(id => !map.has(id));
+    
+    console.log('[ExternalEngineRenderer] Node mapping:', {
+      nodesFromPayload: adjustedNodes.length,
+      mappedNodes: map.size,
+      wallsCount: walls.length,
+      wallNodeRefs: wallNodeIds.size,
+      wallsWithDirectCoords,
+      missingNodeRefs: missingNodes.length,
+      missingNodes: missingNodes.slice(0, 5), // Show first 5 missing
+    });
     
     return map;
   }, [adjustedNodes, walls]);
