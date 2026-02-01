@@ -79,6 +79,7 @@ export interface EnginePanel {
   x1: number;
   type: 'FULL' | 'CUT';
   cut_reason?: string;
+  face?: 'EXTERIOR' | 'INTERIOR';  // Which face of the wall this panel is on
 }
 
 // Full analysis result from the external engine

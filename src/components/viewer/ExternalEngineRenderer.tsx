@@ -953,8 +953,169 @@ function calculateCenterOffset(
   return { x: -(minX + maxX) / 2, y: -(minY + maxY) / 2 };
 }
 
-// ===== Panel Skin Mesh =====
-// Renders a single panel skin as a 3D box with real thickness
+// ===== Engine-Compliant Panel Renderer =====
+// Renders panels EXACTLY as specified by the external engine:
+// - Uses wall.start/end for direction
+// - Uses panel.x0/x1 for position along wall
+// - Uses panel.face (EXTERIOR/INTERIOR) for lateral offset
+// - Offset = ± (wallThickness/2 - panelThickness/2)
+
+interface EnginePanelMeshProps {
+  panel: EnginePanel;
+  wallStart: { x: number; y: number };
+  wallEnd: { x: number; y: number };
+  wallThickness: number;   // Total wall thickness (m)
+  panelThickness: number;  // Single panel/skin thickness (m)
+  courseHeight: number;    // Height of each course (m)
+  isSelected: boolean;
+}
+
+/**
+ * Computes panel transform following engine rules:
+ * 1. dir = normalize(end - start)
+ * 2. n = normalize(cross(UP, dir)) where UP = (0,1,0)
+ * 3. mid = (x0 + x1) / 2
+ * 4. pos = start + dir * mid
+ * 5. side = +1 if EXTERIOR, -1 if INTERIOR
+ * 6. pos += n * side * (wallThickness/2 - panelThickness/2)
+ * 7. pos.y = course * courseHeight + courseHeight/2
+ * 8. quat aligns box X axis to dir
+ */
+function computePanelTransform(
+  panel: EnginePanel,
+  wallStart: { x: number; y: number },
+  wallEnd: { x: number; y: number },
+  wallThickness: number,
+  panelThickness: number,
+  courseHeight: number
+): { position: THREE.Vector3; quaternion: THREE.Quaternion; dimensions: { len: number; height: number; thick: number } } | null {
+  // Validate wall geometry
+  const dx = wallEnd.x - wallStart.x;
+  const dy = wallEnd.y - wallStart.y;
+  const wallLen = Math.sqrt(dx * dx + dy * dy);
+  
+  if (wallLen < 0.001) {
+    console.warn(`[EnginePanelMesh] Invalid wall geometry for panel ${panel.wall_id}: wall length too small`);
+    return null;
+  }
+  
+  // 1. Direction along wall (in XZ plane, Y is up)
+  const dir = new THREE.Vector3(dx / wallLen, 0, dy / wallLen);
+  
+  // 2. Normal: cross(UP, dir) = (-dir.z, 0, dir.x) in Three.js coords (Y is up)
+  // In our XZ plane convention: n = (dir.z, 0, -dir.x)
+  // Actually: cross((0,1,0), (dx,0,dy)) = (1*dy - 0*0, 0*dx - 0*dy, 0*0 - 1*dx) = (dy, 0, -dx) normalized
+  const n = new THREE.Vector3(dir.z, 0, -dir.x);
+  n.normalize();
+  
+  // 3. Mid position along wall
+  const mid = (panel.x0 + panel.x1) / 2;
+  
+  // 4. Base position on wall centerline
+  const pos = new THREE.Vector3(
+    wallStart.x + dir.x * mid,
+    0,
+    wallStart.y + dir.z * mid
+  );
+  
+  // 5. Side offset based on face
+  const face = panel.face;
+  if (!face) {
+    console.warn(`[EnginePanelMesh] Panel ${panel.wall_id} course ${panel.course} missing 'face' field - defaulting to EXTERIOR`);
+  }
+  const side = (face === 'INTERIOR') ? -1 : +1;  // EXTERIOR or undefined = +1
+  
+  // 6. Lateral offset to position panel against correct face
+  const lateralOffset = side * (wallThickness / 2 - panelThickness / 2);
+  pos.add(n.clone().multiplyScalar(lateralOffset));
+  
+  // 7. Height based on course
+  pos.y = panel.course * courseHeight + courseHeight / 2;
+  
+  // 8. Quaternion to align box X axis with wall direction
+  const quat = new THREE.Quaternion();
+  quat.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
+  
+  // 9. Panel dimensions
+  const len = Math.max(0.001, panel.x1 - panel.x0);
+  const height = courseHeight;
+  const thick = panelThickness;
+  
+  return { position: pos, quaternion: quat, dimensions: { len, height, thick } };
+}
+
+function EnginePanelMesh({ panel, wallStart, wallEnd, wallThickness, panelThickness, courseHeight, isSelected }: EnginePanelMeshProps) {
+  const transform = useMemo(() => 
+    computePanelTransform(panel, wallStart, wallEnd, wallThickness, panelThickness, courseHeight),
+    [panel, wallStart, wallEnd, wallThickness, panelThickness, courseHeight]
+  );
+  
+  if (!transform) return null;
+  
+  const { position, quaternion, dimensions } = transform;
+  const { len, height, thick } = dimensions;
+  
+  // Panel color based on type
+  const panelColor = panel.type === 'FULL' ? COLORS.PANEL_FULL : COLORS.PANEL_CUT;
+  const displayColor = isSelected ? COLORS.SELECTED : panelColor;
+  
+  // Stripe color based on face
+  const stripeColor = panel.face === 'EXTERIOR' ? COLORS.STRIPE_EXTERIOR : COLORS.STRIPE_INTERIOR;
+  
+  return (
+    <group position={position} quaternion={quaternion}>
+      {/* Panel box */}
+      <mesh renderOrder={5}>
+        <boxGeometry args={[len, height, thick]} />
+        <meshStandardMaterial
+          color={displayColor}
+          side={THREE.FrontSide}
+          depthWrite={true}
+          depthTest={true}
+          transparent={false}
+          opacity={1}
+        />
+      </mesh>
+      
+      {/* Outline (edges) */}
+      <lineSegments renderOrder={10}>
+        <edgesGeometry args={[new THREE.BoxGeometry(len, height, thick)]} />
+        <lineBasicMaterial color={COLORS.OUTLINE} depthTest={true} depthWrite={false} />
+      </lineSegments>
+      
+      {/* Front stripe */}
+      <mesh position={[0, 0, thick / 2 + 0.002]} renderOrder={20}>
+        <planeGeometry args={[Math.min(0.1, len * 0.6), height * STRIPE_HEIGHT_RATIO]} />
+        <meshBasicMaterial 
+          color={stripeColor} 
+          side={THREE.DoubleSide}
+          depthTest={true}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-4}
+          polygonOffsetUnits={-4}
+        />
+      </mesh>
+      
+      {/* Back stripe */}
+      <mesh position={[0, 0, -thick / 2 - 0.002]} renderOrder={20}>
+        <planeGeometry args={[Math.min(0.1, len * 0.6), height * STRIPE_HEIGHT_RATIO]} />
+        <meshBasicMaterial 
+          color={stripeColor} 
+          side={THREE.DoubleSide}
+          depthTest={true}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-4}
+          polygonOffsetUnits={-4}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// ===== Legacy Panel Skin Mesh (kept for wall fallback) =====
+// Used when panels array is empty - renders walls as continuous surfaces
 
 interface PanelSkinProps {
   x0: number;           // Start position along wall
@@ -1664,7 +1825,7 @@ function WallFallback({ wallGeom, wallHeight, courses, isSelected }: WallFallbac
   );
 }
 
-// ===== Single Wall Renderer =====
+// ===== Single Wall Renderer (Engine-Compliant) =====
 
 interface WallRendererProps {
   wall: GraphWall;
@@ -1683,10 +1844,13 @@ interface WallRendererProps {
   >;
   coreThickness: number;
   skinThickness: number;  // Panel/EPS thickness in meters
+  wallThickness: number;  // Total wall thickness in meters
+  courseHeight: number;   // Course height in meters
   isSelected: boolean;
   onWallClick?: (wallId: string) => void;
   shouldFlipWall?: ShouldFlipWallFn;
   onWallFingerprint?: (wallId: string, fingerprint: WallFingerprint) => void;
+  nodePositions: Map<string, { x: number; y: number }>;  // Node ID -> position lookup
 }
 
 function WallRenderer({
@@ -1699,17 +1863,45 @@ function WallRenderer({
   chainSides,
   coreThickness,
   skinThickness,
+  wallThickness,
+  courseHeight,
   isSelected,
   onWallClick,
   shouldFlipWall,
   onWallFingerprint,
+  nodePositions,
 }: WallRendererProps) {
+  // Get wall start/end from node positions
+  const wallStart = nodePositions.get(wall.start_node);
+  const wallEnd = nodePositions.get(wall.end_node);
+  
+  // Fallback: try to get from offsets if nodes not found
   const wallGeomBase = useMemo(
     () => computeWallGeometry(wall, footprintHull, buildingCentroid, chainSides),
     [wall, footprintHull, buildingCentroid, chainSides]
   );
 
-  // Apply manual flip correction if needed
+  // Validate wall geometry
+  const hasValidNodes = wallStart && wallEnd;
+  const hasValidOffsets = wallGeomBase !== null;
+  
+  if (!hasValidNodes && !hasValidOffsets) {
+    console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry (missing nodes and offsets)`);
+    return null;
+  }
+  
+  // Use node positions if available, otherwise calculate from offset polylines
+  const effectiveStart = wallStart ?? (wallGeomBase ? {
+    x: (wallGeomBase.leftPts[0].x + wallGeomBase.rightPts[0].x) / 2,
+    y: (wallGeomBase.leftPts[0].y + wallGeomBase.rightPts[0].y) / 2,
+  } : { x: 0, y: 0 });
+  
+  const effectiveEnd = wallEnd ?? (wallGeomBase ? {
+    x: (wallGeomBase.leftPts[wallGeomBase.leftPts.length - 1].x + wallGeomBase.rightPts[wallGeomBase.rightPts.length - 1].x) / 2,
+    y: (wallGeomBase.leftPts[wallGeomBase.leftPts.length - 1].y + wallGeomBase.rightPts[wallGeomBase.rightPts.length - 1].y) / 2,
+  } : { x: 1, y: 0 });
+
+  // Apply manual flip correction if needed (for legacy wallGeom)
   const wallGeom = useMemo(() => {
     if (!wallGeomBase) return null;
     
@@ -1729,8 +1921,6 @@ function WallRenderer({
     return wallGeomBase;
   }, [wallGeomBase, shouldFlipWall, wall.id, onWallFingerprint]);
 
-  if (!wallGeom) return null;
-
   const wallPanels = panels.filter(p => p.wall_id === wall.id);
   const hasPanels = wallPanels.length > 0;
 
@@ -1739,10 +1929,35 @@ function WallRenderer({
     onWallClick?.(wall.id);
   };
 
+  // Check if panels have face field
+  const panelsHaveFace = wallPanels.length > 0 && wallPanels.some(p => p.face !== undefined);
+  
+  // Log diagnostic for first wall with panels
+  if (hasPanels && wallPanels.length > 0) {
+    const samplePanel = wallPanels[0];
+    if (samplePanel.face === undefined) {
+      console.warn(`[WallRenderer] Panel ${samplePanel.wall_id} course ${samplePanel.course} missing 'face' field - using legacy dual-skin rendering`);
+    }
+  }
+
   return (
     <group onClick={handleClick}>
-      {hasPanels ? (
-        // Render individual panels
+      {hasPanels && panelsHaveFace ? (
+        // NEW: Engine-compliant panel rendering using panel.face
+        wallPanels.map((panel, idx) => (
+          <EnginePanelMesh
+            key={`eng-panel-${wall.id}-${panel.course}-${idx}`}
+            panel={panel}
+            wallStart={effectiveStart}
+            wallEnd={effectiveEnd}
+            wallThickness={wallThickness}
+            panelThickness={skinThickness}
+            courseHeight={courseHeight}
+            isSelected={isSelected}
+          />
+        ))
+      ) : hasPanels && wallGeom ? (
+        // LEGACY: Dual-skin rendering when panels exist but don't have face field
         wallPanels.map((panel, idx) => {
           const course = courses.find(c => c.index === panel.course);
           if (!course) return null;
@@ -1759,15 +1974,15 @@ function WallRenderer({
             />
           );
         })
-      ) : (
-        // Fallback: render as continuous wall
+      ) : wallGeom ? (
+        // Fallback: render as continuous wall when no panels
         <WallFallback
           wallGeom={wallGeom}
           wallHeight={wallHeight}
           courses={courses}
           isSelected={isSelected}
         />
-      )}
+      ) : null}
     </group>
   );
 }
@@ -1951,7 +2166,7 @@ export function ExternalEngineRenderer({
     [nodes, walls]
   );
 
-  // Apply offset to nodes
+  // Apply offset to nodes and create position lookup map
   const adjustedNodes = useMemo(() => {
     if (centerOffset.x === 0 && centerOffset.y === 0) return nodes;
     return nodes.map(node => ({
@@ -1963,6 +2178,22 @@ export function ExternalEngineRenderer({
       },
     }));
   }, [nodes, centerOffset]);
+
+  // Create node position lookup map for WallRenderer
+  const nodePositions = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    for (const node of adjustedNodes) {
+      const x = px(node.position);
+      const y = py(node.position);
+      if (x !== undefined && y !== undefined) {
+        map.set(node.id, { x, y });
+      }
+    }
+    return map;
+  }, [adjustedNodes]);
+
+  // Course height from API or default
+  const courseHeight = normalizedAnalysis.courseHeight > 0 ? normalizedAnalysis.courseHeight : 0.4;
 
   // Apply offset to walls
   const adjustedWalls = useMemo((): GraphWall[] => {
@@ -2087,10 +2318,13 @@ export function ExternalEngineRenderer({
           chainSides={chainSides}
           coreThickness={coreThickness}
           skinThickness={skinThickness}
+          wallThickness={wallThickness}
+          courseHeight={courseHeight}
           isSelected={wall.id === selectedWallId}
           onWallClick={onWallClick}
           shouldFlipWall={shouldFlipWall}
           onWallFingerprint={onWallFingerprint}
+          nodePositions={nodePositions}
         />
       ))}
 
