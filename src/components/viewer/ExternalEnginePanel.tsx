@@ -22,11 +22,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { EngineMode, ExternalEngineAnalysis, EngineConfig, GraphWall } from '@/types/external-engine';
 
-interface FootprintDebugInfo {
-  pointCount: number;
-  firstPoint: { x: number; y: number } | null;
-}
-
 interface ExternalEnginePanelProps {
   engineMode: EngineMode;
   onEngineModeChange: (mode: EngineMode) => void;
@@ -41,8 +36,6 @@ interface ExternalEnginePanelProps {
   // Debug options
   showFootprintDebug?: boolean;
   onShowFootprintDebugChange?: (value: boolean) => void;
-  // Footprint debug info from engine
-  footprintDebugInfo?: FootprintDebugInfo;
   // Manual corrections
   correctionsCount?: number;
   applyCorrections?: boolean;
@@ -64,7 +57,6 @@ export function ExternalEnginePanel({
   connectionStatus,
   showFootprintDebug = false,
   onShowFootprintDebugChange,
-  footprintDebugInfo,
   correctionsCount = 0,
   applyCorrections = true,
   onApplyCorrectionsChange,
@@ -360,35 +352,15 @@ export function ExternalEnginePanel({
             {analysis && onShowFootprintDebugChange && (
               <>
                 <Separator />
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="footprint-debug" className="text-xs flex items-center gap-2">
-                      🔍 Debug Footprint
-                    </Label>
-                    <Switch
-                      id="footprint-debug"
-                      checked={showFootprintDebug}
-                      onCheckedChange={onShowFootprintDebugChange}
-                    />
-                  </div>
-                  
-                  {/* Footprint Debug Info from Engine */}
-                  {footprintDebugInfo && (
-                    <div className="p-2 bg-muted/50 rounded text-xs font-mono space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Engine footprint points:</span>
-                        <span className={footprintDebugInfo.pointCount >= 3 ? 'text-green-600' : 'text-destructive'}>
-                          {footprintDebugInfo.pointCount}
-                        </span>
-                      </div>
-                      {footprintDebugInfo.firstPoint && (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">First point:</span>
-                          <span>{footprintDebugInfo.firstPoint.x.toFixed(2)}, {footprintDebugInfo.firstPoint.y.toFixed(2)}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="footprint-debug" className="text-xs flex items-center gap-2">
+                    🔍 Debug Footprint
+                  </Label>
+                  <Switch
+                    id="footprint-debug"
+                    checked={showFootprintDebug}
+                    onCheckedChange={onShowFootprintDebugChange}
+                  />
                 </div>
               </>
             )}

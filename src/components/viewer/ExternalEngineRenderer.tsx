@@ -98,198 +98,7 @@ const COLORS = {
   COURSE_LINE: 0x555555,      // Course line color
   NODE: 0x4caf50,             // Green for nodes
   SELECTED: 0x00bcd4,         // Cyan for selected
-  FOOTPRINT_OUTLINE: '#22C55E', // Green for exterior footprint line
 };
-
-// ===== Footprint Extraction from JSON =====
-// Priority: footprint.outer from root of engine response
-// The engine may return either:
-// 1. An ordered polygon [{x,y}, ...] - use directly
-// 2. Unordered points that need reordering via convex hull or similar
-// 3. Segments [{a:{x,y}, b:{x,y}}, ...] - need to reconstruct ordered polygon
-function extractFootprintFromPayload(normalizedData: NormalizedExternalAnalysis): { x: number; y: number }[] | null {
-  // Direct access to footprint.outer (preserved from root of engine response)
-  const footprint = normalizedData.footprint as { outer?: unknown } | undefined;
-  
-  if (!footprint?.outer || !Array.isArray(footprint.outer) || footprint.outer.length < 3) {
-    console.log('[FootprintOutline] No footprint.outer in engine response');
-    return null;
-  }
-  
-  const outerArray = footprint.outer;
-  
-  // Check if it's segments format (objects with 'a' and 'b' properties)
-  const firstItem = outerArray[0];
-  const isSegmentFormat = firstItem && typeof firstItem === 'object' && 
-    (('a' in firstItem && 'b' in firstItem));
-  
-  if (isSegmentFormat) {
-    // Convert segments to ordered polygon using half-edge face-walking
-    console.log('[FootprintOutline] Detected segment format, reconstructing polygon from', outerArray.length, 'segments');
-    
-    const segments: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
-    for (const seg of outerArray) {
-      if (seg && typeof seg === 'object') {
-        const segObj = seg as Record<string, unknown>;
-        const a = toVec2(segObj.a);
-        const b = toVec2(segObj.b);
-        // Filter out zero-length segments
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        if (Math.sqrt(dx*dx + dy*dy) > 0.001) {
-          segments.push({ a, b });
-        }
-      }
-    }
-    
-    if (segments.length >= 3) {
-      // Use the existing half-edge algorithm to find the outer polygon
-      const orderedPoly = findOuterPolygonFromSegments(segments, 0.05);
-      if (orderedPoly.length >= 3) {
-        console.log('[FootprintOutline] Reconstructed polygon with', orderedPoly.length, 'vertices from segments');
-        return orderedPoly;
-      }
-    }
-    
-    console.log('[FootprintOutline] Failed to reconstruct polygon from segments');
-    return null;
-  }
-  
-  // Points format - check if they form a valid ordered polygon
-  const pts = filterValidPoints(outerArray);
-  if (pts.length < 3) {
-    console.log('[FootprintOutline] Not enough valid points');
-    return null;
-  }
-  
-  // Validate that points form a reasonable polygon (no excessive self-intersection)
-  // Quick heuristic: if the bounding box diagonal / perimeter ratio is reasonable
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  let perimeter = 0;
-  for (let i = 0; i < pts.length; i++) {
-    minX = Math.min(minX, pts[i].x);
-    maxX = Math.max(maxX, pts[i].x);
-    minY = Math.min(minY, pts[i].y);
-    maxY = Math.max(maxY, pts[i].y);
-    const next = pts[(i + 1) % pts.length];
-    const dx = next.x - pts[i].x;
-    const dy = next.y - pts[i].y;
-    perimeter += Math.sqrt(dx*dx + dy*dy);
-  }
-  
-  const diagonal = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
-  const ratio = perimeter / diagonal;
-  
-  // A reasonable polygon has perimeter/diagonal ratio between 2 (square) and ~20 (very concave)
-  // If ratio is extremely high (>50), points are likely unordered
-  if (ratio > 50 && pts.length > 10) {
-    console.log('[FootprintOutline] Points appear unordered (perimeter/diagonal ratio:', ratio.toFixed(2), '), reconstructing...');
-    
-    // Convert unordered points to segments by treating consecutive pairs as edges
-    // This is a fallback - ideally the engine should send ordered data
-    // Instead, use convex hull as fallback
-    const hull = computeConvexHull(pts);
-    if (hull.length >= 3) {
-      console.log('[FootprintOutline] Using convex hull with', hull.length, 'vertices');
-      return hull;
-    }
-  }
-  
-  console.log('[FootprintOutline] Using', pts.length, 'ordered points from engine');
-  return pts;
-}
-
-// Simple convex hull (Graham scan) for fallback
-function computeConvexHull(points: { x: number; y: number }[]): { x: number; y: number }[] {
-  if (points.length < 3) return points;
-  
-  // Find lowest point (and leftmost if tie)
-  let lowest = 0;
-  for (let i = 1; i < points.length; i++) {
-    if (points[i].y < points[lowest].y || 
-        (points[i].y === points[lowest].y && points[i].x < points[lowest].x)) {
-      lowest = i;
-    }
-  }
-  
-  const pivot = points[lowest];
-  
-  // Sort by polar angle
-  const sorted = points
-    .filter((_, i) => i !== lowest)
-    .map(p => ({
-      point: p,
-      angle: Math.atan2(p.y - pivot.y, p.x - pivot.x),
-      dist: Math.hypot(p.x - pivot.x, p.y - pivot.y),
-    }))
-    .sort((a, b) => a.angle - b.angle || a.dist - b.dist)
-    .map(p => p.point);
-  
-  const hull: { x: number; y: number }[] = [pivot];
-  
-  for (const p of sorted) {
-    while (hull.length > 1) {
-      const a = hull[hull.length - 2];
-      const b = hull[hull.length - 1];
-      const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-      if (cross <= 0) {
-        hull.pop();
-      } else {
-        break;
-      }
-    }
-    hull.push(p);
-  }
-  
-  return hull;
-}
-
-// ===== Footprint Outline Line Component =====
-interface FootprintOutlineProps {
-  footprintPoints: { x: number; y: number }[];
-  centerOffset: { x: number; y: number };
-}
-
-function FootprintOutlineLine({ footprintPoints, centerOffset }: FootprintOutlineProps) {
-  // Convert 2D footprint points to 3D line points (XZ plane, Y slightly above ground)
-  const linePoints = useMemo(() => {
-    if (footprintPoints.length < 3) return [];
-    
-    const pts: [number, number, number][] = footprintPoints.map(p => [
-      p.x + centerOffset.x,  // X
-      0.001,                  // Y slightly above ground to avoid z-fighting
-      p.y + centerOffset.y,  // Z (2D Y -> 3D Z)
-    ]);
-    
-    // Close the loop by repeating the first point
-    pts.push(pts[0]);
-    
-    return pts;
-  }, [footprintPoints, centerOffset]);
-
-  if (linePoints.length < 4) return null;
-
-  return (
-    <Line
-      points={linePoints}
-      color={COLORS.FOOTPRINT_OUTLINE}
-      lineWidth={2}
-      transparent
-      opacity={0.9}
-    />
-  );
-}
-
-// ===== No Footprint Warning =====
-function NoFootprintWarning() {
-  return (
-    <Html position={[0, 2, 0]} center>
-      <div className="bg-amber-500/90 text-white px-3 py-1.5 rounded-md text-sm font-medium shadow-lg whitespace-nowrap">
-        ⚠️ No footprint returned by engine
-      </div>
-    </Html>
-  );
-}
 
 // ===== Angle normalization for fingerprints =====
 // Walls have 180° symmetry, so normalize to [0, π)
@@ -1117,7 +926,6 @@ function calculateCenterOffset(
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
 
-  // From nodes
   for (const node of nodes) {
     const x = px(node.position);
     const y = py(node.position);
@@ -1129,7 +937,6 @@ function calculateCenterOffset(
     }
   }
 
-  // From wall offsets
   for (const wall of walls) {
     const leftPts = filterValidPoints((wall.offsets?.left as unknown[]) || []);
     const rightPts = filterValidPoints((wall.offsets?.right as unknown[]) || []);
@@ -1139,38 +946,11 @@ function calculateCenterOffset(
       minY = Math.min(minY, p.y);
       maxY = Math.max(maxY, p.y);
     }
-    
-    // Also check direct start/end coords on walls
-    if (wall.start) {
-      const sx = px(wall.start);
-      const sy = py(wall.start);
-      if (sx !== undefined && sy !== undefined) {
-        minX = Math.min(minX, sx);
-        maxX = Math.max(maxX, sx);
-        minY = Math.min(minY, sy);
-        maxY = Math.max(maxY, sy);
-      }
-    }
-    if (wall.end) {
-      const ex = px(wall.end);
-      const ey = py(wall.end);
-      if (ex !== undefined && ey !== undefined) {
-        minX = Math.min(minX, ex);
-        maxX = Math.max(maxX, ex);
-        minY = Math.min(minY, ey);
-        maxY = Math.max(maxY, ey);
-      }
-    }
   }
 
-  if (!isFinite(minX) || !isFinite(minY)) {
-    console.log('[CenterOffset] No valid geometry found, using (0,0)');
-    return { x: 0, y: 0 };
-  }
+  if (!isFinite(minX) || !isFinite(minY)) return { x: 0, y: 0 };
 
-  const offset = { x: -(minX + maxX) / 2, y: -(minY + maxY) / 2 };
-  console.log('[CenterOffset] Calculated:', { minX, maxX, minY, maxY, offset });
-  return offset;
+  return { x: -(minX + maxX) / 2, y: -(minY + maxY) / 2 };
 }
 
 // ===== Engine-Compliant Panel Renderer =====
@@ -2091,122 +1871,35 @@ function WallRenderer({
   onWallFingerprint,
   nodePositions,
 }: WallRendererProps) {
-  // Get wall start/end from node positions lookup
-  const wallStartFromNode = nodePositions.get(wall.start_node);
-  const wallEndFromNode = nodePositions.get(wall.end_node);
+  // Get wall start/end from node positions
+  const wallStart = nodePositions.get(wall.start_node);
+  const wallEnd = nodePositions.get(wall.end_node);
   
-  // Fallback 1: try to get start/end directly from wall object (some engines provide this)
-  const startFromWallDirect = useMemo(() => {
-    if (!wall.start) return null;
-    const x = px(wall.start);
-    const y = py(wall.start);
-    if (x === undefined || y === undefined) return null;
-    return { x, y };
-  }, [wall.start]);
-  
-  const endFromWallDirect = useMemo(() => {
-    if (!wall.end) return null;
-    const x = px(wall.end);
-    const y = py(wall.end);
-    if (x === undefined || y === undefined) return null;
-    return { x, y };
-  }, [wall.end]);
-  
-  // Fallback 2: calculate from axis.u and length (if axis exists)
-  const startEndFromAxis = useMemo(() => {
-    if (!wall.axis?.u || !wall.length || wall.length < 0.001) return null;
-    const ux = px(wall.axis.u) ?? 0;
-    const uy = py(wall.axis.u) ?? 0;
-    const uLen = Math.sqrt(ux * ux + uy * uy);
-    if (uLen < 1e-9) return null;
-    
-    // Use origin or any reference point - the center offset will adjust
-    // For now, just create a wall centered at origin along the axis direction
-    const halfLen = wall.length / 2;
-    return {
-      start: { x: -ux * halfLen / uLen, y: -uy * halfLen / uLen },
-      end: { x: ux * halfLen / uLen, y: uy * halfLen / uLen },
-    };
-  }, [wall.axis, wall.length]);
-
-  // Fallback 3: try to get from offsets if nothing else works
+  // Fallback: try to get from offsets if nodes not found
   const wallGeomBase = useMemo(
     () => computeWallGeometry(wall, footprintHull, buildingCentroid, chainSides),
     [wall, footprintHull, buildingCentroid, chainSides]
   );
 
-  // Calculate start/end from offset polylines (centerline = average of left/right)
-  const startFromOffsets = useMemo(() => {
-    if (!wallGeomBase || wallGeomBase.leftPts.length === 0 || wallGeomBase.rightPts.length === 0) return null;
-    return {
-      x: (wallGeomBase.leftPts[0].x + wallGeomBase.rightPts[0].x) / 2,
-      y: (wallGeomBase.leftPts[0].y + wallGeomBase.rightPts[0].y) / 2,
-    };
-  }, [wallGeomBase]);
+  // Validate wall geometry
+  const hasValidNodes = wallStart && wallEnd;
+  const hasValidOffsets = wallGeomBase !== null;
   
-  const endFromOffsets = useMemo(() => {
-    if (!wallGeomBase || wallGeomBase.leftPts.length === 0 || wallGeomBase.rightPts.length === 0) return null;
-    const lastIdx = Math.min(wallGeomBase.leftPts.length - 1, wallGeomBase.rightPts.length - 1);
-    return {
-      x: (wallGeomBase.leftPts[lastIdx].x + wallGeomBase.rightPts[lastIdx].x) / 2,
-      y: (wallGeomBase.leftPts[lastIdx].y + wallGeomBase.rightPts[lastIdx].y) / 2,
-    };
-  }, [wallGeomBase]);
-
-  // Validate wall geometry - need at least one source of start/end points
-  const hasValidNodes = !!wallStartFromNode && !!wallEndFromNode;
-  const hasValidDirect = !!startFromWallDirect && !!endFromWallDirect;
-  const hasValidAxis = startEndFromAxis !== null;
-  const hasValidOffsets = !!startFromOffsets && !!endFromOffsets;
-  
-  if (!hasValidNodes && !hasValidDirect && !hasValidAxis && !hasValidOffsets) {
-    console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry:`, {
-      start_node: wall.start_node,
-      end_node: wall.end_node,
-      hasNodePositions: nodePositions.size,
-      hasDirectCoords: !!(wall.start || wall.end),
-      hasAxis: !!wall.axis?.u,
-      hasOffsets: !!wall.offsets,
-    });
+  if (!hasValidNodes && !hasValidOffsets) {
+    console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry (missing nodes and offsets)`);
     return null;
   }
   
-  // Choose the best start/end pair.
-  // IMPORTANT: some payloads have valid node refs but degenerate coords (start=end).
-  // In that case, fall back to offsets/direct coords instead of skipping the wall.
-  const EPS_LEN = 0.001;
-  const candidates: Array<{ src: 'nodes' | 'direct' | 'axis' | 'offsets'; start: { x: number; y: number }; end: { x: number; y: number } }> = [];
-  if (wallStartFromNode && wallEndFromNode) candidates.push({ src: 'nodes', start: wallStartFromNode, end: wallEndFromNode });
-  if (startFromWallDirect && endFromWallDirect) candidates.push({ src: 'direct', start: startFromWallDirect, end: endFromWallDirect });
-  if (startEndFromAxis?.start && startEndFromAxis?.end) candidates.push({ src: 'axis', start: startEndFromAxis.start, end: startEndFromAxis.end });
-  if (startFromOffsets && endFromOffsets) candidates.push({ src: 'offsets', start: startFromOffsets, end: endFromOffsets });
-
-  const chosen = (() => {
-    for (const c of candidates) {
-      const dx = c.end.x - c.start.x;
-      const dy = c.end.y - c.start.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len >= EPS_LEN) return { ...c, len };
-    }
-    // If everything is degenerate, keep first candidate for diagnostics.
-    const first = candidates[0];
-    if (!first) return null;
-    const dx = first.end.x - first.start.x;
-    const dy = first.end.y - first.start.y;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    return { ...first, len };
-  })();
-
-  if (!chosen || chosen.len < EPS_LEN) {
-    console.warn(`[WallRenderer] Wall ${wall.id} has zero length (all sources) - skipping:`, {
-      candidates: candidates.map((c) => ({ src: c.src, start: c.start, end: c.end })),
-      sources: { hasValidNodes, hasValidDirect, hasValidAxis, hasValidOffsets },
-    });
-    return null;
-  }
-
-  const effectiveStart = chosen.start;
-  const effectiveEnd = chosen.end;
+  // Use node positions if available, otherwise calculate from offset polylines
+  const effectiveStart = wallStart ?? (wallGeomBase ? {
+    x: (wallGeomBase.leftPts[0].x + wallGeomBase.rightPts[0].x) / 2,
+    y: (wallGeomBase.leftPts[0].y + wallGeomBase.rightPts[0].y) / 2,
+  } : { x: 0, y: 0 });
+  
+  const effectiveEnd = wallEnd ?? (wallGeomBase ? {
+    x: (wallGeomBase.leftPts[wallGeomBase.leftPts.length - 1].x + wallGeomBase.rightPts[wallGeomBase.rightPts.length - 1].x) / 2,
+    y: (wallGeomBase.leftPts[wallGeomBase.leftPts.length - 1].y + wallGeomBase.rightPts[wallGeomBase.rightPts.length - 1].y) / 2,
+  } : { x: 1, y: 0 });
 
   // Apply manual flip correction if needed (for legacy wallGeom)
   const wallGeom = useMemo(() => {
@@ -2459,19 +2152,12 @@ export function ExternalEngineRenderer({
   // Use dynamic panel thickness from API (or default)
   const skinThickness = panelThickness > 0 ? panelThickness : DEFAULT_EPS_THICKNESS;
   
-  // Extract exterior footprint directly from normalizedAnalysis.footprint.outer
-  const exteriorFootprint = useMemo(() => {
-    return extractFootprintFromPayload(normalizedAnalysis);
-  }, [normalizedAnalysis]);
-  
   // Log thickness values for debugging
   console.log('[ExternalEngineRenderer] Thickness values:', {
     wallThickness: wallThickness.toFixed(4),
     panelThickness: panelThickness.toFixed(4),
     coreThickness: coreThickness.toFixed(4),
     skinThickness: skinThickness.toFixed(4),
-    hasExteriorFootprint: exteriorFootprint !== null,
-    exteriorFootprintPoints: exteriorFootprint?.length ?? 0,
   });
 
   // Calculate auto-centering offset
@@ -2494,11 +2180,8 @@ export function ExternalEngineRenderer({
   }, [nodes, centerOffset]);
 
   // Create node position lookup map for WallRenderer
-  // Also extract direct start/end coords from walls if nodes aren't available
   const nodePositions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
-    
-    // First, add all nodes from the nodes array
     for (const node of adjustedNodes) {
       const x = px(node.position);
       const y = py(node.position);
@@ -2506,57 +2189,8 @@ export function ExternalEngineRenderer({
         map.set(node.id, { x, y });
       }
     }
-    
-    // If walls have direct start/end coords, add synthetic node entries
-    // This handles engines that send coords instead of node references
-    for (const wall of walls) {
-      const startId = wall.start_node;
-      const endId = wall.end_node;
-      
-      // Check if we need to extract from wall.start
-      if (startId && !map.has(startId) && wall.start) {
-        const x = px(wall.start);
-        const y = py(wall.start);
-        if (x !== undefined && y !== undefined) {
-          // Apply center offset
-          map.set(startId, { x: x + centerOffset.x, y: y + centerOffset.y });
-        }
-      }
-      
-      // Check if we need to extract from wall.end
-      if (endId && !map.has(endId) && wall.end) {
-        const x = px(wall.end);
-        const y = py(wall.end);
-        if (x !== undefined && y !== undefined) {
-          // Apply center offset
-          map.set(endId, { x: x + centerOffset.x, y: y + centerOffset.y });
-        }
-      }
-    }
-    
-    // Log node mapping diagnostics
-    const wallNodeIds = new Set<string>();
-    const wallsWithDirectCoords = { start: 0, end: 0 };
-    for (const w of walls) {
-      if (w.start_node) wallNodeIds.add(w.start_node);
-      if (w.end_node) wallNodeIds.add(w.end_node);
-      if (w.start) wallsWithDirectCoords.start++;
-      if (w.end) wallsWithDirectCoords.end++;
-    }
-    const missingNodes = [...wallNodeIds].filter(id => !map.has(id));
-    
-    console.log('[ExternalEngineRenderer] Node mapping:', {
-      nodesFromPayload: adjustedNodes.length,
-      mappedNodes: map.size,
-      wallsCount: walls.length,
-      wallNodeRefs: wallNodeIds.size,
-      wallsWithDirectCoords,
-      missingNodeRefs: missingNodes.length,
-      missingNodes: missingNodes.slice(0, 5), // Show first 5 missing
-    });
-    
     return map;
-  }, [adjustedNodes, walls, centerOffset.x, centerOffset.y]);
+  }, [adjustedNodes]);
 
   // Course height from API or default
   const courseHeight = normalizedAnalysis.courseHeight > 0 ? normalizedAnalysis.courseHeight : 0.4;
@@ -2708,19 +2342,6 @@ export function ExternalEngineRenderer({
           exteriorWallCount={wallStats.exteriorCount}
           totalWallCount={wallStats.valid}
         />
-      )}
-
-      {/* Exterior Footprint Outline from Engine */}
-      {exteriorFootprint && exteriorFootprint.length >= 3 && (
-        <FootprintOutlineLine
-          footprintPoints={exteriorFootprint}
-          centerOffset={centerOffset}
-        />
-      )}
-
-      {/* Warning if no footprint returned */}
-      {!exteriorFootprint && walls.length > 0 && (
-        <NoFootprintWarning />
       )}
     </group>
   );
