@@ -103,21 +103,145 @@ const COLORS = {
 
 // ===== Footprint Extraction from JSON =====
 // Priority: footprint.outer from root of engine response
-// The normalizedAnalysis.footprint is preserved from the raw API response
+// The engine may return either:
+// 1. An ordered polygon [{x,y}, ...] - use directly
+// 2. Unordered points that need reordering via convex hull or similar
+// 3. Segments [{a:{x,y}, b:{x,y}}, ...] - need to reconstruct ordered polygon
 function extractFootprintFromPayload(normalizedData: NormalizedExternalAnalysis): { x: number; y: number }[] | null {
   // Direct access to footprint.outer (preserved from root of engine response)
   const footprint = normalizedData.footprint as { outer?: unknown } | undefined;
   
-  if (footprint?.outer && Array.isArray(footprint.outer) && footprint.outer.length >= 3) {
-    const pts = filterValidPoints(footprint.outer);
-    if (pts.length >= 3) {
-      console.log('[FootprintOutline] Found footprint.outer with', pts.length, 'points. First:', pts[0]);
-      return pts;
+  if (!footprint?.outer || !Array.isArray(footprint.outer) || footprint.outer.length < 3) {
+    console.log('[FootprintOutline] No footprint.outer in engine response');
+    return null;
+  }
+  
+  const outerArray = footprint.outer;
+  
+  // Check if it's segments format (objects with 'a' and 'b' properties)
+  const firstItem = outerArray[0];
+  const isSegmentFormat = firstItem && typeof firstItem === 'object' && 
+    (('a' in firstItem && 'b' in firstItem));
+  
+  if (isSegmentFormat) {
+    // Convert segments to ordered polygon using half-edge face-walking
+    console.log('[FootprintOutline] Detected segment format, reconstructing polygon from', outerArray.length, 'segments');
+    
+    const segments: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
+    for (const seg of outerArray) {
+      if (seg && typeof seg === 'object') {
+        const segObj = seg as Record<string, unknown>;
+        const a = toVec2(segObj.a);
+        const b = toVec2(segObj.b);
+        // Filter out zero-length segments
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        if (Math.sqrt(dx*dx + dy*dy) > 0.001) {
+          segments.push({ a, b });
+        }
+      }
+    }
+    
+    if (segments.length >= 3) {
+      // Use the existing half-edge algorithm to find the outer polygon
+      const orderedPoly = findOuterPolygonFromSegments(segments, 0.05);
+      if (orderedPoly.length >= 3) {
+        console.log('[FootprintOutline] Reconstructed polygon with', orderedPoly.length, 'vertices from segments');
+        return orderedPoly;
+      }
+    }
+    
+    console.log('[FootprintOutline] Failed to reconstruct polygon from segments');
+    return null;
+  }
+  
+  // Points format - check if they form a valid ordered polygon
+  const pts = filterValidPoints(outerArray);
+  if (pts.length < 3) {
+    console.log('[FootprintOutline] Not enough valid points');
+    return null;
+  }
+  
+  // Validate that points form a reasonable polygon (no excessive self-intersection)
+  // Quick heuristic: if the bounding box diagonal / perimeter ratio is reasonable
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let perimeter = 0;
+  for (let i = 0; i < pts.length; i++) {
+    minX = Math.min(minX, pts[i].x);
+    maxX = Math.max(maxX, pts[i].x);
+    minY = Math.min(minY, pts[i].y);
+    maxY = Math.max(maxY, pts[i].y);
+    const next = pts[(i + 1) % pts.length];
+    const dx = next.x - pts[i].x;
+    const dy = next.y - pts[i].y;
+    perimeter += Math.sqrt(dx*dx + dy*dy);
+  }
+  
+  const diagonal = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
+  const ratio = perimeter / diagonal;
+  
+  // A reasonable polygon has perimeter/diagonal ratio between 2 (square) and ~20 (very concave)
+  // If ratio is extremely high (>50), points are likely unordered
+  if (ratio > 50 && pts.length > 10) {
+    console.log('[FootprintOutline] Points appear unordered (perimeter/diagonal ratio:', ratio.toFixed(2), '), reconstructing...');
+    
+    // Convert unordered points to segments by treating consecutive pairs as edges
+    // This is a fallback - ideally the engine should send ordered data
+    // Instead, use convex hull as fallback
+    const hull = computeConvexHull(pts);
+    if (hull.length >= 3) {
+      console.log('[FootprintOutline] Using convex hull with', hull.length, 'vertices');
+      return hull;
     }
   }
   
-  console.log('[FootprintOutline] No footprint.outer in engine response');
-  return null;
+  console.log('[FootprintOutline] Using', pts.length, 'ordered points from engine');
+  return pts;
+}
+
+// Simple convex hull (Graham scan) for fallback
+function computeConvexHull(points: { x: number; y: number }[]): { x: number; y: number }[] {
+  if (points.length < 3) return points;
+  
+  // Find lowest point (and leftmost if tie)
+  let lowest = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].y < points[lowest].y || 
+        (points[i].y === points[lowest].y && points[i].x < points[lowest].x)) {
+      lowest = i;
+    }
+  }
+  
+  const pivot = points[lowest];
+  
+  // Sort by polar angle
+  const sorted = points
+    .filter((_, i) => i !== lowest)
+    .map(p => ({
+      point: p,
+      angle: Math.atan2(p.y - pivot.y, p.x - pivot.x),
+      dist: Math.hypot(p.x - pivot.x, p.y - pivot.y),
+    }))
+    .sort((a, b) => a.angle - b.angle || a.dist - b.dist)
+    .map(p => p.point);
+  
+  const hull: { x: number; y: number }[] = [pivot];
+  
+  for (const p of sorted) {
+    while (hull.length > 1) {
+      const a = hull[hull.length - 2];
+      const b = hull[hull.length - 1];
+      const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+      if (cross <= 0) {
+        hull.pop();
+      } else {
+        break;
+      }
+    }
+    hull.push(p);
+  }
+  
+  return hull;
 }
 
 // ===== Footprint Outline Line Component =====
