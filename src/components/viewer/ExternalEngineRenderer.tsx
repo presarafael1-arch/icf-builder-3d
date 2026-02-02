@@ -98,7 +98,111 @@ const COLORS = {
   COURSE_LINE: 0x555555,      // Course line color
   NODE: 0x4caf50,             // Green for nodes
   SELECTED: 0x00bcd4,         // Cyan for selected
+  FOOTPRINT_OUTLINE: '#22C55E', // Green for exterior footprint line
 };
+
+// ===== Footprint Extraction from JSON =====
+// Try keys in order: footprint.outer, outer_footprint, outline, perimeter
+function extractFootprintFromPayload(analysis: unknown): { x: number; y: number }[] | null {
+  if (!analysis || typeof analysis !== 'object') return null;
+  
+  const root = analysis as Record<string, unknown>;
+  
+  // Priority 1: footprint.outer
+  if (root.footprint && typeof root.footprint === 'object') {
+    const fp = root.footprint as Record<string, unknown>;
+    if (Array.isArray(fp.outer) && fp.outer.length > 0) {
+      const pts = filterValidPoints(fp.outer);
+      if (pts.length >= 3) {
+        console.log('[FootprintOutline] Found footprint.outer with', pts.length, 'points');
+        return pts;
+      }
+    }
+  }
+  
+  // Priority 2: outer_footprint
+  if (Array.isArray(root.outer_footprint) && root.outer_footprint.length > 0) {
+    const pts = filterValidPoints(root.outer_footprint);
+    if (pts.length >= 3) {
+      console.log('[FootprintOutline] Found outer_footprint with', pts.length, 'points');
+      return pts;
+    }
+  }
+  
+  // Priority 3: outline
+  if (Array.isArray(root.outline) && root.outline.length > 0) {
+    const pts = filterValidPoints(root.outline);
+    if (pts.length >= 3) {
+      console.log('[FootprintOutline] Found outline with', pts.length, 'points');
+      return pts;
+    }
+  }
+  
+  // Priority 4: perimeter
+  if (Array.isArray(root.perimeter) && root.perimeter.length > 0) {
+    const pts = filterValidPoints(root.perimeter);
+    if (pts.length >= 3) {
+      console.log('[FootprintOutline] Found perimeter with', pts.length, 'points');
+      return pts;
+    }
+  }
+  
+  // Also check in nested 'analysis' object
+  if (root.analysis && typeof root.analysis === 'object') {
+    const nested = extractFootprintFromPayload(root.analysis);
+    if (nested) return nested;
+  }
+  
+  console.log('[FootprintOutline] No footprint found in payload. Checked: footprint.outer, outer_footprint, outline, perimeter');
+  return null;
+}
+
+// ===== Footprint Outline Line Component =====
+interface FootprintOutlineProps {
+  footprintPoints: { x: number; y: number }[];
+  centerOffset: { x: number; y: number };
+}
+
+function FootprintOutlineLine({ footprintPoints, centerOffset }: FootprintOutlineProps) {
+  // Convert 2D footprint points to 3D line points (XZ plane, Y slightly above ground)
+  const linePoints = useMemo(() => {
+    if (footprintPoints.length < 3) return [];
+    
+    const pts: [number, number, number][] = footprintPoints.map(p => [
+      p.x + centerOffset.x,  // X
+      0.001,                  // Y slightly above ground to avoid z-fighting
+      p.y + centerOffset.y,  // Z (2D Y -> 3D Z)
+    ]);
+    
+    // Close the loop by repeating the first point
+    pts.push(pts[0]);
+    
+    return pts;
+  }, [footprintPoints, centerOffset]);
+
+  if (linePoints.length < 4) return null;
+
+  return (
+    <Line
+      points={linePoints}
+      color={COLORS.FOOTPRINT_OUTLINE}
+      lineWidth={2}
+      transparent
+      opacity={0.9}
+    />
+  );
+}
+
+// ===== No Footprint Warning =====
+function NoFootprintWarning() {
+  return (
+    <Html position={[0, 2, 0]} center>
+      <div className="bg-amber-500/90 text-white px-3 py-1.5 rounded-md text-sm font-medium shadow-lg whitespace-nowrap">
+        ⚠️ No footprint returned by engine
+      </div>
+    </Html>
+  );
+}
 
 // ===== Angle normalization for fingerprints =====
 // Walls have 180° symmetry, so normalize to [0, π)
@@ -2268,12 +2372,21 @@ export function ExternalEngineRenderer({
   // Use dynamic panel thickness from API (or default)
   const skinThickness = panelThickness > 0 ? panelThickness : DEFAULT_EPS_THICKNESS;
   
+  // Extract exterior footprint from payload (try multiple keys)
+  const exteriorFootprint = useMemo(() => {
+    // Try to extract from the raw analysis object stored in normalizedAnalysis
+    const rawAnalysis = normalizedAnalysis.analysis ?? normalizedAnalysis.meta ?? normalizedAnalysis.footprint ?? normalizedAnalysis;
+    return extractFootprintFromPayload(rawAnalysis);
+  }, [normalizedAnalysis]);
+  
   // Log thickness values for debugging
   console.log('[ExternalEngineRenderer] Thickness values:', {
     wallThickness: wallThickness.toFixed(4),
     panelThickness: panelThickness.toFixed(4),
     coreThickness: coreThickness.toFixed(4),
     skinThickness: skinThickness.toFixed(4),
+    hasExteriorFootprint: exteriorFootprint !== null,
+    exteriorFootprintPoints: exteriorFootprint?.length ?? 0,
   });
 
   // Calculate auto-centering offset
@@ -2510,6 +2623,19 @@ export function ExternalEngineRenderer({
           exteriorWallCount={wallStats.exteriorCount}
           totalWallCount={wallStats.valid}
         />
+      )}
+
+      {/* Exterior Footprint Outline from Engine */}
+      {exteriorFootprint && exteriorFootprint.length >= 3 && (
+        <FootprintOutlineLine
+          footprintPoints={exteriorFootprint}
+          centerOffset={centerOffset}
+        />
+      )}
+
+      {/* Warning if no footprint returned */}
+      {!exteriorFootprint && walls.length > 0 && (
+        <NoFootprintWarning />
       )}
     </group>
   );
