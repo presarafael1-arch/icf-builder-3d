@@ -102,137 +102,21 @@ const COLORS = {
 };
 
 // ===== Footprint Extraction from JSON =====
-// Try keys in order: footprint.outer, outer_footprint, outline, perimeter
-// Fallback: build from graph nodes (corner nodes with degree=2)
-function extractFootprintFromPayload(analysis: unknown): { x: number; y: number }[] | null {
-  if (!analysis || typeof analysis !== 'object') return null;
+// Priority: footprint.outer from root of engine response
+// The normalizedAnalysis.footprint is preserved from the raw API response
+function extractFootprintFromPayload(normalizedData: NormalizedExternalAnalysis): { x: number; y: number }[] | null {
+  // Direct access to footprint.outer (preserved from root of engine response)
+  const footprint = normalizedData.footprint as { outer?: unknown } | undefined;
   
-  const root = analysis as Record<string, unknown>;
-  
-  // Priority 1: footprint.outer
-  if (root.footprint && typeof root.footprint === 'object') {
-    const fp = root.footprint as Record<string, unknown>;
-    if (Array.isArray(fp.outer) && fp.outer.length > 0) {
-      const pts = filterValidPoints(fp.outer);
-      if (pts.length >= 3) {
-        console.log('[FootprintOutline] Found footprint.outer with', pts.length, 'points');
-        return pts;
-      }
-    }
-  }
-  
-  // Priority 2: outer_footprint
-  if (Array.isArray(root.outer_footprint) && root.outer_footprint.length > 0) {
-    const pts = filterValidPoints(root.outer_footprint);
+  if (footprint?.outer && Array.isArray(footprint.outer) && footprint.outer.length >= 3) {
+    const pts = filterValidPoints(footprint.outer);
     if (pts.length >= 3) {
-      console.log('[FootprintOutline] Found outer_footprint with', pts.length, 'points');
+      console.log('[FootprintOutline] Found footprint.outer with', pts.length, 'points. First:', pts[0]);
       return pts;
     }
   }
   
-  // Priority 3: outline
-  if (Array.isArray(root.outline) && root.outline.length > 0) {
-    const pts = filterValidPoints(root.outline);
-    if (pts.length >= 3) {
-      console.log('[FootprintOutline] Found outline with', pts.length, 'points');
-      return pts;
-    }
-  }
-  
-  // Priority 4: perimeter
-  if (Array.isArray(root.perimeter) && root.perimeter.length > 0) {
-    const pts = filterValidPoints(root.perimeter);
-    if (pts.length >= 3) {
-      console.log('[FootprintOutline] Found perimeter with', pts.length, 'points');
-      return pts;
-    }
-  }
-  
-  // Also check in nested 'analysis' object
-  if (root.analysis && typeof root.analysis === 'object') {
-    const nested = extractFootprintFromPayload(root.analysis);
-    if (nested) return nested;
-  }
-  
-  // Priority 5 (Fallback): Build footprint from graph nodes
-  // Look for nodes with degree=2 (corner nodes forming outer boundary)
-  const graphData = (root.analysis as Record<string, unknown>)?.graph ?? 
-                    (root as Record<string, unknown>).graph;
-  
-  if (graphData && typeof graphData === 'object') {
-    const graph = graphData as Record<string, unknown>;
-    const nodes = graph.nodes as Array<{ id?: number; pt?: unknown; degree?: number }> | undefined;
-    const walls = graph.walls as Array<{ start_node?: number; end_node?: number; offsets?: { left?: unknown[]; right?: unknown[] } }> | undefined;
-    
-    if (nodes && walls && nodes.length >= 3) {
-      // Build adjacency from walls
-      const adjacency = new Map<number, Set<number>>();
-      for (const w of walls) {
-        if (w.start_node != null && w.end_node != null) {
-          if (!adjacency.has(w.start_node)) adjacency.set(w.start_node, new Set());
-          if (!adjacency.has(w.end_node)) adjacency.set(w.end_node, new Set());
-          adjacency.get(w.start_node)!.add(w.end_node);
-          adjacency.get(w.end_node)!.add(w.start_node);
-        }
-      }
-      
-      // Find corner nodes: degree=2 from adjacency (not from node.degree which may include T-junctions)
-      const cornerNodes = nodes.filter(n => 
-        n.id != null && adjacency.get(n.id)?.size === 2 && isValidPt(n.pt)
-      );
-      
-      if (cornerNodes.length >= 3) {
-        // Order nodes by walking the boundary
-        const orderedPoints: { x: number; y: number }[] = [];
-        const visited = new Set<number>();
-        
-        // Start from first corner node
-        let currentId = cornerNodes[0].id!;
-        let prevId: number | null = null;
-        
-        while (!visited.has(currentId) && orderedPoints.length < cornerNodes.length + 1) {
-          visited.add(currentId);
-          const node = nodes.find(n => n.id === currentId);
-          if (node && isValidPt(node.pt)) {
-            orderedPoints.push(toVec2(node.pt));
-          }
-          
-          // Find next unvisited neighbor that is also a corner
-          const neighbors = adjacency.get(currentId);
-          if (!neighbors) break;
-          
-          let nextId: number | null = null;
-          for (const nId of neighbors) {
-            if (nId !== prevId && cornerNodes.some(cn => cn.id === nId)) {
-              nextId = nId;
-              break;
-            }
-          }
-          
-          if (nextId === null) {
-            // No corner neighbor, try to follow through intermediate nodes
-            for (const nId of neighbors) {
-              if (nId !== prevId && !visited.has(nId)) {
-                nextId = nId;
-                break;
-              }
-            }
-          }
-          
-          if (nextId === null) break;
-          prevId = currentId;
-          currentId = nextId;
-        }
-        
-        if (orderedPoints.length >= 3) {
-          console.log('[FootprintOutline] Built footprint from graph nodes with', orderedPoints.length, 'corner points');
-          return orderedPoints;
-        }
-      }
-    }
-  }
-  
-  console.log('[FootprintOutline] No footprint found in payload. Checked: footprint.outer, outer_footprint, outline, perimeter, graph.nodes');
+  console.log('[FootprintOutline] No footprint.outer in engine response');
   return null;
 }
 
@@ -2451,11 +2335,9 @@ export function ExternalEngineRenderer({
   // Use dynamic panel thickness from API (or default)
   const skinThickness = panelThickness > 0 ? panelThickness : DEFAULT_EPS_THICKNESS;
   
-  // Extract exterior footprint from payload (try multiple keys)
+  // Extract exterior footprint directly from normalizedAnalysis.footprint.outer
   const exteriorFootprint = useMemo(() => {
-    // Try to extract from the raw analysis object stored in normalizedAnalysis
-    const rawAnalysis = normalizedAnalysis.analysis ?? normalizedAnalysis.meta ?? normalizedAnalysis.footprint ?? normalizedAnalysis;
-    return extractFootprintFromPayload(rawAnalysis);
+    return extractFootprintFromPayload(normalizedAnalysis);
   }, [normalizedAnalysis]);
   
   // Log thickness values for debugging
