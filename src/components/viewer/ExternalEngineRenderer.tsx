@@ -1963,10 +1963,10 @@ function WallRenderer({
   }, [wallGeomBase]);
 
   // Validate wall geometry - need at least one source of start/end points
-  const hasValidNodes = wallStartFromNode && wallEndFromNode;
-  const hasValidDirect = startFromWallDirect && endFromWallDirect;
+  const hasValidNodes = !!wallStartFromNode && !!wallEndFromNode;
+  const hasValidDirect = !!startFromWallDirect && !!endFromWallDirect;
   const hasValidAxis = startEndFromAxis !== null;
-  const hasValidOffsets = startFromOffsets && endFromOffsets;
+  const hasValidOffsets = !!startFromOffsets && !!endFromOffsets;
   
   if (!hasValidNodes && !hasValidDirect && !hasValidAxis && !hasValidOffsets) {
     console.warn(`[WallRenderer] Wall ${wall.id} has no valid geometry:`, {
@@ -1980,24 +1980,42 @@ function WallRenderer({
     return null;
   }
   
-  // Priority: node positions > direct coords > axis-derived > offset-derived
-  const effectiveStart = wallStartFromNode ?? startFromWallDirect ?? startEndFromAxis?.start ?? startFromOffsets ?? { x: 0, y: 0 };
-  const effectiveEnd = wallEndFromNode ?? endFromWallDirect ?? startEndFromAxis?.end ?? endFromOffsets ?? { x: 1, y: 0 };
-  
-  // Validate that start != end (wall has actual length)
-  const dx = effectiveEnd.x - effectiveStart.x;
-  const dy = effectiveEnd.y - effectiveStart.y;
-  const wallLen = Math.sqrt(dx * dx + dy * dy);
-  
-  if (wallLen < 0.001) {
-    console.warn(`[WallRenderer] Wall ${wall.id} has zero length - skipping:`, {
-      start: effectiveStart,
-      end: effectiveEnd,
-      wallLen,
+  // Choose the best start/end pair.
+  // IMPORTANT: some payloads have valid node refs but degenerate coords (start=end).
+  // In that case, fall back to offsets/direct coords instead of skipping the wall.
+  const EPS_LEN = 0.001;
+  const candidates: Array<{ src: 'nodes' | 'direct' | 'axis' | 'offsets'; start: { x: number; y: number }; end: { x: number; y: number } }> = [];
+  if (wallStartFromNode && wallEndFromNode) candidates.push({ src: 'nodes', start: wallStartFromNode, end: wallEndFromNode });
+  if (startFromWallDirect && endFromWallDirect) candidates.push({ src: 'direct', start: startFromWallDirect, end: endFromWallDirect });
+  if (startEndFromAxis?.start && startEndFromAxis?.end) candidates.push({ src: 'axis', start: startEndFromAxis.start, end: startEndFromAxis.end });
+  if (startFromOffsets && endFromOffsets) candidates.push({ src: 'offsets', start: startFromOffsets, end: endFromOffsets });
+
+  const chosen = (() => {
+    for (const c of candidates) {
+      const dx = c.end.x - c.start.x;
+      const dy = c.end.y - c.start.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len >= EPS_LEN) return { ...c, len };
+    }
+    // If everything is degenerate, keep first candidate for diagnostics.
+    const first = candidates[0];
+    if (!first) return null;
+    const dx = first.end.x - first.start.x;
+    const dy = first.end.y - first.start.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    return { ...first, len };
+  })();
+
+  if (!chosen || chosen.len < EPS_LEN) {
+    console.warn(`[WallRenderer] Wall ${wall.id} has zero length (all sources) - skipping:`, {
+      candidates: candidates.map((c) => ({ src: c.src, start: c.start, end: c.end })),
       sources: { hasValidNodes, hasValidDirect, hasValidAxis, hasValidOffsets },
     });
     return null;
   }
+
+  const effectiveStart = chosen.start;
+  const effectiveEnd = chosen.end;
 
   // Apply manual flip correction if needed (for legacy wallGeom)
   const wallGeom = useMemo(() => {
@@ -2340,7 +2358,7 @@ export function ExternalEngineRenderer({
     });
     
     return map;
-  }, [adjustedNodes, walls]);
+  }, [adjustedNodes, walls, centerOffset.x, centerOffset.y]);
 
   // Course height from API or default
   const courseHeight = normalizedAnalysis.courseHeight > 0 ? normalizedAnalysis.courseHeight : 0.4;
