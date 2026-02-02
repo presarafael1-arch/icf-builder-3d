@@ -323,6 +323,31 @@ export default function ProjectEditor() {
     return flipped;
   }, [chainOverrides]);
   
+  // Footprint debug info from engine for the panel
+  const footprintDebugInfo = useMemo(() => {
+    const footprint = normalizedExternalAnalysis?.footprint as { outer?: unknown } | undefined;
+    const outer = footprint?.outer;
+    
+    if (!outer || !Array.isArray(outer)) {
+      return { pointCount: 0, firstPoint: null };
+    }
+    
+    const firstPt = outer[0];
+    let firstPoint: { x: number; y: number } | null = null;
+    
+    if (firstPt) {
+      if (Array.isArray(firstPt) && firstPt.length >= 2) {
+        firstPoint = { x: firstPt[0], y: firstPt[1] };
+      } else if (typeof firstPt === 'object' && 'x' in firstPt && 'y' in firstPt) {
+        firstPoint = { x: (firstPt as { x: number; y: number }).x, y: (firstPt as { x: number; y: number }).y };
+      }
+    }
+    
+    return {
+      pointCount: outer.length,
+      firstPoint,
+    };
+  }, [normalizedExternalAnalysis?.footprint]);
   // New wall form
   const [newWall, setNewWall] = useState({
     startX: 0,
@@ -1097,6 +1122,7 @@ export default function ProjectEditor() {
               connectionStatus={connectionStatus}
               showFootprintDebug={showFootprintDebug}
               onShowFootprintDebugChange={setShowFootprintDebug}
+              footprintDebugInfo={footprintDebugInfo}
               // Manual corrections
               correctionsCount={wallCorrections.length}
               applyCorrections={applyCorrections}
