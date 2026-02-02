@@ -103,6 +103,7 @@ const COLORS = {
 
 // ===== Footprint Extraction from JSON =====
 // Try keys in order: footprint.outer, outer_footprint, outline, perimeter
+// Fallback: build from graph nodes (corner nodes with degree=2)
 function extractFootprintFromPayload(analysis: unknown): { x: number; y: number }[] | null {
   if (!analysis || typeof analysis !== 'object') return null;
   
@@ -153,7 +154,85 @@ function extractFootprintFromPayload(analysis: unknown): { x: number; y: number 
     if (nested) return nested;
   }
   
-  console.log('[FootprintOutline] No footprint found in payload. Checked: footprint.outer, outer_footprint, outline, perimeter');
+  // Priority 5 (Fallback): Build footprint from graph nodes
+  // Look for nodes with degree=2 (corner nodes forming outer boundary)
+  const graphData = (root.analysis as Record<string, unknown>)?.graph ?? 
+                    (root as Record<string, unknown>).graph;
+  
+  if (graphData && typeof graphData === 'object') {
+    const graph = graphData as Record<string, unknown>;
+    const nodes = graph.nodes as Array<{ id?: number; pt?: unknown; degree?: number }> | undefined;
+    const walls = graph.walls as Array<{ start_node?: number; end_node?: number; offsets?: { left?: unknown[]; right?: unknown[] } }> | undefined;
+    
+    if (nodes && walls && nodes.length >= 3) {
+      // Build adjacency from walls
+      const adjacency = new Map<number, Set<number>>();
+      for (const w of walls) {
+        if (w.start_node != null && w.end_node != null) {
+          if (!adjacency.has(w.start_node)) adjacency.set(w.start_node, new Set());
+          if (!adjacency.has(w.end_node)) adjacency.set(w.end_node, new Set());
+          adjacency.get(w.start_node)!.add(w.end_node);
+          adjacency.get(w.end_node)!.add(w.start_node);
+        }
+      }
+      
+      // Find corner nodes: degree=2 from adjacency (not from node.degree which may include T-junctions)
+      const cornerNodes = nodes.filter(n => 
+        n.id != null && adjacency.get(n.id)?.size === 2 && isValidPt(n.pt)
+      );
+      
+      if (cornerNodes.length >= 3) {
+        // Order nodes by walking the boundary
+        const orderedPoints: { x: number; y: number }[] = [];
+        const visited = new Set<number>();
+        
+        // Start from first corner node
+        let currentId = cornerNodes[0].id!;
+        let prevId: number | null = null;
+        
+        while (!visited.has(currentId) && orderedPoints.length < cornerNodes.length + 1) {
+          visited.add(currentId);
+          const node = nodes.find(n => n.id === currentId);
+          if (node && isValidPt(node.pt)) {
+            orderedPoints.push(toVec2(node.pt));
+          }
+          
+          // Find next unvisited neighbor that is also a corner
+          const neighbors = adjacency.get(currentId);
+          if (!neighbors) break;
+          
+          let nextId: number | null = null;
+          for (const nId of neighbors) {
+            if (nId !== prevId && cornerNodes.some(cn => cn.id === nId)) {
+              nextId = nId;
+              break;
+            }
+          }
+          
+          if (nextId === null) {
+            // No corner neighbor, try to follow through intermediate nodes
+            for (const nId of neighbors) {
+              if (nId !== prevId && !visited.has(nId)) {
+                nextId = nId;
+                break;
+              }
+            }
+          }
+          
+          if (nextId === null) break;
+          prevId = currentId;
+          currentId = nextId;
+        }
+        
+        if (orderedPoints.length >= 3) {
+          console.log('[FootprintOutline] Built footprint from graph nodes with', orderedPoints.length, 'corner points');
+          return orderedPoints;
+        }
+      }
+    }
+  }
+  
+  console.log('[FootprintOutline] No footprint found in payload. Checked: footprint.outer, outer_footprint, outline, perimeter, graph.nodes');
   return null;
 }
 
