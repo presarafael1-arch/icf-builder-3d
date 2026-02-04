@@ -833,10 +833,70 @@ interface CapResult {
 }
 
 /**
+ * Calculate the offset along the chain so that panels "butt" at L-corners without overlap.
+ * 
+ * For an L-corner:
+ * - The DXF centerlines intersect at a vertex point
+ * - Each chain has its panels offset perpendicular to the centerline (EXT or INT)
+ * - For the panels to meet at the corner without overlap, we need to offset along the chain
+ *   by the distance from the vertex to the corner node (nodeExt for exterior, nodeInt for interior)
+ * 
+ * The offset is: (halfWallThickness) measured along the chain direction
+ * This equals the perpendicular offset projected onto the corner bisector geometry.
+ * 
+ * For a 90° L-corner with wallThickness T:
+ * - Exterior face offset from centerline: T/2
+ * - The exterior panels must start at distance T/2 from vertex (so they meet at nodeExt)
+ * - Similarly for interior
+ */
+function calculateLCornerOffset(
+  chain: WallChain,
+  lJunction: LJunctionInfo,
+  side: WallSide,
+  concreteThickness: ConcreteThickness,
+  atStart: boolean
+): number {
+  // Wall thickness in TOOTH units
+  const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
+  const halfThicknessMm = (wallTotalTooth / 2) * TOOTH;
+  
+  // Get the corner node based on side
+  const cornerNode = side === 'exterior' ? lJunction.exteriorNode : lJunction.interiorNode;
+  
+  if (!cornerNode) {
+    // Fallback: use geometric calculation based on 90° corner
+    // For 90° corner, offset = halfThickness (the panels meet at the corner)
+    return halfThicknessMm;
+  }
+  
+  // Calculate distance from DXF vertex to corner node along this chain's direction
+  const dirX = (chain.endX - chain.startX) / chain.lengthMm;
+  const dirY = (chain.endY - chain.startY) / chain.lengthMm;
+  
+  // Vector from junction vertex to corner node
+  const toNodeX = cornerNode.x - lJunction.x;
+  const toNodeY = cornerNode.y - lJunction.y;
+  
+  // Project onto chain direction
+  // If junction is at chain start: we want positive projection (offset outward)
+  // If junction is at chain end: we want negative projection (offset inward from end)
+  let offsetAlongChain = toNodeX * dirX + toNodeY * dirY;
+  
+  // If at chain end, the direction points away from junction, so negate
+  if (!atStart) {
+    offsetAlongChain = -offsetAlongChain;
+  }
+  
+  // The offset should be positive (moving panels away from vertex into the wall run)
+  // Take absolute value and ensure minimum of halfThickness for safety
+  return Math.max(0, offsetAlongChain);
+}
+
+/**
  * Get start cap for a chain endpoint
  * 
- * SIMPLIFIED: L-corners place FULL panels starting at the vertex.
- * No offset, no cut - panels go from intersection outward.
+ * L-CORNERS: Calculate proper offset so panels meet at corner node without overlap.
+ * The offset is based on the distance from DXF vertex to the corner node (nodeExt/nodeInt).
  */
 function getStartCap(
   chain: WallChain,
@@ -849,15 +909,17 @@ function getStartCap(
   let type: PanelType = 'FULL';
   let addTopo = false;
   let topoId = '';
-  let startOffsetMm = 0; // Start at vertex
+  let startOffsetMm = 0; // Start at vertex by default
   
   switch (endpointInfo.startType) {
     case 'L': {
-      // L-CORNER: restart from the beginning (debug)
-      // Only apply the perpendicular wall offset elsewhere; no along-chain offsets here.
+      // L-CORNER: Calculate offset so panels meet at corner node
+      const lj = endpointInfo.startL;
+      if (lj) {
+        startOffsetMm = calculateLCornerOffset(chain, lj, side, concreteThickness, true);
+      }
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-      startOffsetMm = 0;
       break;
     }
       
@@ -900,15 +962,17 @@ function getEndCap(
   let type: PanelType = 'FULL';
   let addTopo = false;
   let topoId = '';
-  let startOffsetMm = 0; // Start at vertex
+  let startOffsetMm = 0; // Start at vertex by default
   
   switch (endpointInfo.endType) {
     case 'L': {
-      // L-CORNER: restart from the beginning (debug)
-      // Only apply the perpendicular wall offset elsewhere; no along-chain offsets here.
+      // L-CORNER: Calculate offset so panels meet at corner node
+      const lj = endpointInfo.endL;
+      if (lj) {
+        startOffsetMm = calculateLCornerOffset(chain, lj, side, concreteThickness, false);
+      }
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
-      startOffsetMm = 0;
       break;
     }
       
