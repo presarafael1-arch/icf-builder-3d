@@ -835,61 +835,40 @@ interface CapResult {
 /**
  * Calculate the offset along the chain so that panels "butt" at L-corners without overlap.
  * 
- * For an L-corner:
- * - The DXF centerlines intersect at a vertex point
- * - Each chain has its panels offset perpendicular to the centerline (EXT or INT)
- * - For the panels to meet at the corner without overlap, we need to offset along the chain
- *   by the distance from the vertex to the corner node (nodeExt for exterior, nodeInt for interior)
+ * For a 90° L-corner, two walls meet at a vertex. To form a perfect 90° corner:
+ * - ANCHOR wall: panels extend TO the corner point (no offset from vertex)
+ * - FOLLOW wall: panels start AFTER the corner (offset = wall thickness)
  * 
- * The offset is: (halfWallThickness) measured along the chain direction
- * This equals the perpendicular offset projected onto the corner bisector geometry.
+ * This creates a "butt joint" where:
+ * - ANCHOR panels run full length to the corner face
+ * - FOLLOW panels butt against the ANCHOR panels' side
  * 
- * For a 90° L-corner with wallThickness T:
- * - Exterior face offset from centerline: T/2
- * - The exterior panels must start at distance T/2 from vertex (so they meet at nodeExt)
- * - Similarly for interior
+ * The primary chain is the ANCHOR (its panels "own" the corner).
+ * The secondary chain is the FOLLOW (its panels butt against the ANCHOR).
  */
 function calculateLCornerOffset(
   chain: WallChain,
   lJunction: LJunctionInfo,
   side: WallSide,
   concreteThickness: ConcreteThickness,
-  atStart: boolean
+  atStart: boolean,
+  isPrimary: boolean
 ): number {
-  // Wall thickness in TOOTH units
+  // Wall thickness in mm
   const wallTotalTooth = concreteThickness === '150' ? 4 : 5;
-  const halfThicknessMm = (wallTotalTooth / 2) * TOOTH;
+  const wallThicknessMm = wallTotalTooth * TOOTH;
   
-  // Get the corner node based on side
-  const cornerNode = side === 'exterior' ? lJunction.exteriorNode : lJunction.interiorNode;
+  // For a 90° L-corner butt joint:
+  // - ANCHOR (primary): offset = 0 (panels go to the vertex, then extend by their thickness)
+  // - FOLLOW (secondary): offset = wallThickness (panels start after the ANCHOR's thickness)
   
-  if (!cornerNode) {
-    // Fallback: use geometric calculation based on 90° corner
-    // For 90° corner, offset = halfThickness (the panels meet at the corner)
-    return halfThicknessMm;
+  if (isPrimary) {
+    // ANCHOR: no offset along chain - panels extend to corner
+    return 0;
+  } else {
+    // FOLLOW: offset by wall thickness so panels butt against ANCHOR
+    return wallThicknessMm;
   }
-  
-  // Calculate distance from DXF vertex to corner node along this chain's direction
-  const dirX = (chain.endX - chain.startX) / chain.lengthMm;
-  const dirY = (chain.endY - chain.startY) / chain.lengthMm;
-  
-  // Vector from junction vertex to corner node
-  const toNodeX = cornerNode.x - lJunction.x;
-  const toNodeY = cornerNode.y - lJunction.y;
-  
-  // Project onto chain direction
-  // If junction is at chain start: we want positive projection (offset outward)
-  // If junction is at chain end: we want negative projection (offset inward from end)
-  let offsetAlongChain = toNodeX * dirX + toNodeY * dirY;
-  
-  // If at chain end, the direction points away from junction, so negate
-  if (!atStart) {
-    offsetAlongChain = -offsetAlongChain;
-  }
-  
-  // The offset should be positive (moving panels away from vertex into the wall run)
-  // Take absolute value and ensure minimum of halfThickness for safety
-  return Math.max(0, offsetAlongChain);
 }
 
 /**
@@ -916,7 +895,8 @@ function getStartCap(
       // L-CORNER: Calculate offset so panels meet at corner node
       const lj = endpointInfo.startL;
       if (lj) {
-        startOffsetMm = calculateLCornerOffset(chain, lj, side, concreteThickness, true);
+        const isPrimary = endpointInfo.isPrimaryAtStart;
+        startOffsetMm = calculateLCornerOffset(chain, lj, side, concreteThickness, true, isPrimary);
       }
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
@@ -969,7 +949,8 @@ function getEndCap(
       // L-CORNER: Calculate offset so panels meet at corner node
       const lj = endpointInfo.endL;
       if (lj) {
-        startOffsetMm = calculateLCornerOffset(chain, lj, side, concreteThickness, false);
+        const isPrimary = endpointInfo.isPrimaryAtEnd;
+        startOffsetMm = calculateLCornerOffset(chain, lj, side, concreteThickness, false, isPrimary);
       }
       reservationMm = PANEL_WIDTH;
       type = 'FULL';
